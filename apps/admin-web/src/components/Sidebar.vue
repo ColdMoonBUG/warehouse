@@ -2,7 +2,7 @@
   <div class="sidebar-root">
     <div class="brand" :class="{ mini: collapsed }">
       <span class="dot" />
-      <span class="name">Warehouse</span>
+      <span class="name">ERP-zjy</span>
     </div>
     <el-menu
       :default-active="active"

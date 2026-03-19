@@ -16,7 +16,9 @@ const loadAMap = (() => {
     if ((window as any).AMap) return Promise.resolve()
     if (pending) return pending
     const key = import.meta.env.VITE_AMAP_KEY
+    const security = import.meta.env.VITE_AMAP_SECURITY
     if (!key) return Promise.reject(new Error('VITE_AMAP_KEY is missing'))
+    if (security) (window as any)._AMapSecurityConfig = { securityJsCode: security }
     const url = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.PlaceSearch,AMap.Geocoder,AMap.AutoComplete`
     pending = new Promise((resolve, reject) => {
       const script = document.createElement('script')

@@ -69,7 +69,7 @@
           <el-input v-model="pwdForm.password" type="password" show-password />
         </el-form-item>
         <el-form-item label="手势">
-          <GestureUnlock hint="请绘制手势密码" :min-points="4" show-reset @complete="onGestureComplete" />
+          <GestureUnlock ref="gestureRef" hint="请绘制手势密码" :min-points="4" show-reset @complete="onGestureComplete" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -101,6 +101,7 @@ const rules = {
 
 const pwdDlg = ref(false)
 const pwdRef = ref()
+const gestureRef = ref()
 const pwdForm = ref<{ id?: string; password?: string; gesture?: string }>({})
 const pwdRules = {
   password: [{ required: false, message: '请输入新密码' }]
@@ -145,6 +146,8 @@ async function del(id: string) {
 function openPwd(row: Account) {
   pwdForm.value = { id: row.id, password: '', gesture: '' }
   pwdDlg.value = true
+  pwdRef.value?.resetFields?.()
+  gestureRef.value?.reset?.()
 }
 
 function onGestureComplete(pattern: string) {
