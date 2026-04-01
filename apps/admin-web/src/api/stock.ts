@@ -1,101 +1,72 @@
-import { stockDb, ledgerDb, inboundDb, transferDb, warehouseDb, genId, now } from '@/mock/storage'
-import type { InboundDoc, TransferDoc } from '@/types'
+import request from '@/utils/request'
+import type { Warehouse, StockItem, InboundDoc, InboundLine, TransferDoc, TransferLine } from '@/types'
 
-export function getWarehouses() {
-  warehouseDb.ensureMain()
-  warehouseDb.syncVehicles()
-  return Promise.resolve(warehouseDb.list())
+// ========== 仓库 ==========
+
+export async function getWarehouses(): Promise<Warehouse[]> {
+  const res = await request.get('/warehouse/list')
+  return res.data
 }
 
-export function getStock(warehouseId?: string) {
-  const all = stockDb.list()
-  return Promise.resolve(warehouseId ? all.filter(s => s.warehouseId === warehouseId) : all)
+// ========== 库存 ==========
+
+export async function getStock(warehouseId?: string): Promise<StockItem[]> {
+  const res = await request.get('/stock/list', { params: { warehouseId } })
+  return res.data
 }
 
-// --- Inbound ---
-export function getInbounds() {
-  return Promise.resolve(inboundDb.list().sort((a, b) => b.createdAt.localeCompare(a.createdAt)))
+// ========== 入库 ==========
+
+export async function getInbounds(): Promise<InboundDoc[]> {
+  const res = await request.get('/inbound/list')
+  return res.data
 }
 
-export function saveInbound(doc: InboundDoc) {
-  const list = inboundDb.list()
-  const idx = list.findIndex(d => d.id === doc.id)
-  if (idx >= 0) list[idx] = doc
-  else list.push(doc)
-  inboundDb.save(list)
-  return Promise.resolve(doc)
+export async function getInboundById(id: string): Promise<InboundDoc | null> {
+  const res = await request.get(`/inbound/detail/${id}`)
+  return res.data
 }
 
-export function postInbound(id: string) {
-  const list = inboundDb.list()
-  const doc = list.find(d => d.id === id)
-  if (!doc || doc.status !== 'draft') return Promise.reject(new Error('单据状态异常'))
-  doc.status = 'posted'
-  for (const line of doc.lines) {
-    stockDb.adjust('main', line.productId, line.qty)
-    ledgerDb.add({ id: genId(), bizType: 'inbound', docId: id, warehouseId: 'main', productId: line.productId, qty: line.qty, createdAt: now() })
-  }
-  inboundDb.save(list)
-  return Promise.resolve()
+export async function saveInbound(doc: Partial<InboundDoc>, lines: InboundLine[]) {
+  const payload = { ...doc } as any
+  delete payload.createdAt
+  delete payload.updatedAt
+  const res = await request.post('/inbound/save', { doc: payload, lines })
+  return res.data as InboundDoc
 }
 
-export function voidInbound(id: string) {
-  const list = inboundDb.list()
-  const doc = list.find(d => d.id === id)
-  if (!doc || doc.status !== 'posted') return Promise.reject(new Error('只能作废已过账单据'))
-  doc.status = 'voided'
-  for (const line of doc.lines) {
-    stockDb.adjust('main', line.productId, -line.qty)
-    ledgerDb.add({ id: genId(), bizType: 'inbound', docId: id, warehouseId: 'main', productId: line.productId, qty: -line.qty, createdAt: now() })
-  }
-  inboundDb.save(list)
-  return Promise.resolve()
+export async function postInbound(id: string) {
+  await request.post(`/inbound/post/${id}`)
 }
 
-// --- Transfer ---
-export function getTransfers() {
-  return Promise.resolve(transferDb.list().sort((a, b) => b.createdAt.localeCompare(a.createdAt)))
+export async function voidInbound(id: string) {
+  await request.post(`/inbound/void/${id}`)
 }
 
-export function saveTransfer(doc: TransferDoc) {
-  const list = transferDb.list()
-  const idx = list.findIndex(d => d.id === doc.id)
-  if (idx >= 0) list[idx] = doc
-  else list.push(doc)
-  transferDb.save(list)
-  return Promise.resolve(doc)
+// ========== 调拨 ==========
+
+export async function getTransfers(): Promise<TransferDoc[]> {
+  const res = await request.get('/transfer/list')
+  return res.data
 }
 
-export function postTransfer(id: string) {
-  const list = transferDb.list()
-  const doc = list.find(d => d.id === id)
-  if (!doc || doc.status !== 'draft') return Promise.reject(new Error('单据状态异常'))
-  for (const line of doc.lines) {
-    const s = stockDb.get(doc.fromWarehouseId, line.productId)
-    if (!s || s.qty < line.qty) return Promise.reject(new Error(`库存不足：${line.productId} 当前库存 ${s?.qty ?? 0}，需要 ${line.qty}`))
-  }
-  doc.status = 'posted'
-  for (const line of doc.lines) {
-    stockDb.adjust(doc.fromWarehouseId, line.productId, -line.qty)
-    stockDb.adjust(doc.toWarehouseId, line.productId, line.qty)
-    ledgerDb.add({ id: genId(), bizType: 'transfer', docId: id, warehouseId: doc.fromWarehouseId, productId: line.productId, qty: -line.qty, createdAt: now() })
-    ledgerDb.add({ id: genId(), bizType: 'transfer', docId: id, warehouseId: doc.toWarehouseId, productId: line.productId, qty: line.qty, createdAt: now() })
-  }
-  transferDb.save(list)
-  return Promise.resolve()
+export async function getTransferById(id: string): Promise<TransferDoc | null> {
+  const res = await request.get(`/transfer/detail/${id}`)
+  return res.data
 }
 
-export function voidTransfer(id: string) {
-  const list = transferDb.list()
-  const doc = list.find(d => d.id === id)
-  if (!doc || doc.status !== 'posted') return Promise.reject(new Error('只能作废已过账单据'))
-  doc.status = 'voided'
-  for (const line of doc.lines) {
-    stockDb.adjust(doc.fromWarehouseId, line.productId, line.qty)
-    stockDb.adjust(doc.toWarehouseId, line.productId, -line.qty)
-    ledgerDb.add({ id: genId(), bizType: 'transfer', docId: id, warehouseId: doc.fromWarehouseId, productId: line.productId, qty: line.qty, createdAt: now() })
-    ledgerDb.add({ id: genId(), bizType: 'transfer', docId: id, warehouseId: doc.toWarehouseId, productId: line.productId, qty: -line.qty, createdAt: now() })
-  }
-  transferDb.save(list)
-  return Promise.resolve()
+export async function saveTransfer(doc: Partial<TransferDoc>, lines: TransferLine[]) {
+  const payload = { ...doc } as any
+  delete payload.createdAt
+  delete payload.updatedAt
+  const res = await request.post('/transfer/save', { doc: payload, lines })
+  return res.data as TransferDoc
+}
+
+export async function postTransfer(id: string) {
+  await request.post(`/transfer/post/${id}`)
+}
+
+export async function voidTransfer(id: string) {
+  await request.post(`/transfer/void/${id}`)
 }

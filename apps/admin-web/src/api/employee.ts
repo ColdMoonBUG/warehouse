@@ -1,35 +1,19 @@
-import { employeeDb, warehouseDb, genId, now } from '@/mock/storage'
+import request from '@/utils/request'
 import type { Employee } from '@/types'
 
-export function getEmployees() {
-  return Promise.resolve(employeeDb.list())
+export async function getEmployees(): Promise<Employee[]> {
+  const res = await request.get('/employee/list')
+  return res.data
 }
 
-export function saveEmployee(data: Partial<Employee> & { name: string; code: string }) {
-  const list = employeeDb.list()
-  if (data.id) {
-    const idx = list.findIndex(e => e.id === data.id)
-    if (idx >= 0) list[idx] = { ...list[idx], ...data }
-  } else {
-    const emp = { ...data, id: genId(), status: 'active', createdAt: now() } as Employee
-    list.push(emp)
-    employeeDb.save(list)
-    warehouseDb.syncVehicles()
-    return Promise.resolve()
-  }
-  employeeDb.save(list)
-  return Promise.resolve()
+export async function saveEmployee(data: Partial<Employee> & { name: string; code: string }) {
+  await request.post('/employee/save', data)
 }
 
-export function toggleEmployee(id: string) {
-  const list = employeeDb.list()
-  const item = list.find(e => e.id === id)
-  if (item) item.status = item.status === 'active' ? 'inactive' : 'active'
-  employeeDb.save(list)
-  return Promise.resolve()
+export async function toggleEmployee(id: string) {
+  await request.post(`/employee/toggle/${id}`)
 }
 
-export function deleteEmployee(id: string) {
-  employeeDb.save(employeeDb.list().filter(e => e.id !== id))
-  return Promise.resolve()
+export async function deleteEmployee(id: string) {
+  await request.post(`/employee/delete/${id}`)
 }

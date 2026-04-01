@@ -1,0 +1,95 @@
+{
+    "name" : "车销系统",
+    "appid" : "__UNI__819D7DA",
+    "description" : "食品中间商车销管理系统",
+    "versionName" : "1.0.0",
+    "versionCode" : "100",
+    "transformPx" : false,
+    "app-plus" : {
+        "usingComponents" : true,
+        "nvueStyleCompiler" : "uni-app",
+        "compilerVersion" : 3,
+        "splashscreen" : {
+            "alwaysShowBeforeRender" : true,
+            "waiting" : true,
+            "autoclose" : true,
+            "delay" : 0
+        },
+        "modules" : {
+            "Geolocation" : {},
+            "Maps" : {},
+            "Bluetooth" : {}
+        },
+        "distribute" : {
+            "sdkConfigs" : {
+                "maps" : {
+                    "amap" : {
+                        "appkey_android" : "f4b4dc7f2c6ab34d28831cf946effcc8",
+                        "appkey_ios" : "f4b4dc7f2c6ab34d28831cf946effcc8"
+                    }
+                }
+            },
+            "android" : {
+                "permissions" : [
+                    "<uses-permission android:name=\"android.permission.INTERNET\"/>",
+                    "<uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\"/>",
+                    "<uses-permission android:name=\"android.permission.ACCESS_WIFI_STATE\"/>",
+                    "<uses-permission android:name=\"android.permission.ACCESS_COARSE_LOCATION\"/>",
+                    "<uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\"/>",
+                    "<uses-permission android:name=\"android.permission.BLUETOOTH\"/>",
+                    "<uses-permission android:name=\"android.permission.BLUETOOTH_ADMIN\"/>",
+                    "<uses-permission android:name=\"android.permission.BLUETOOTH_CONNECT\"/>",
+                    "<uses-permission android:name=\"android.permission.BLUETOOTH_SCAN\"/>",
+                    "<uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\"/>",
+                    "<uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\"/>"
+                ]
+            },
+            "ios" : {
+                "infoPlist" : {
+                    "NSLocationWhenInUseUsageDescription" : "需要获取您的位置信息用于地图定位",
+                    "NSBluetoothAlwaysUsageDescription" : "需要蓝牙权限用于连接打印机",
+                    "NSBluetoothPeripheralUsageDescription" : "需要蓝牙权限用于连接打印机"
+                },
+                "dSYMs" : false
+            }
+        }
+    },
+    "mp-weixin" : {
+        "appid" : "",
+        "setting" : {
+            "urlCheck" : false,
+            "es6" : true,
+            "minified" : true,
+            "postcss" : true
+        },
+        "requiredPrivateInfos" : [ "getLocation" ],
+        "permission" : {
+            "scope.userLocation" : {
+                "desc" : "需要获取您的位置信息用于地图定位"
+            }
+        }
+    },
+    "h5" : {
+        "title" : "车销系统",
+        "router" : {
+            "mode" : "hash"
+        },
+        "devServer" : {
+            "port" : 8081
+        },
+        "sdkConfigs" : {
+            "maps" : {
+                "amap" : {
+                    "key" : "f4b4dc7f2c6ab34d28831cf946effcc8",
+                    "securityJsCode" : "0adf33f1a11156ea53556fda70b65432"
+                }
+            }
+        }
+    },
+    "uniStatistics" : {
+        "enable" : false,
+        "version" : "2"
+    },
+    "vueVersion" : "3",
+    "locale" : "auto"
+}

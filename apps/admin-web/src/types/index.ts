@@ -20,6 +20,7 @@ export interface Supplier {
   name: string
   contact?: string
   phone?: string
+  address?: string
   status: Status
   createdAt: string
 }
@@ -28,13 +29,14 @@ export interface Product {
   id: string
   code: string
   name: string
+  imageUrl?: string
+  barcode?: string
   supplierId: string
   unit: string
   boxQty: number
   shelfDays: number
   purchasePrice: number
   salePrice: number
-  commission: number
   status: Status
   createdAt: string
 }
@@ -73,6 +75,7 @@ export interface SaleDoc {
   code: string
   employeeId: string
   storeId: string
+  warehouseId?: string
   date: string
   remark?: string
   status: DocStatus
@@ -83,7 +86,7 @@ export interface SaleDoc {
 export interface Warehouse {
   id: string
   name: string
-  type: 'main' | 'vehicle'
+  type: 'main' | 'vehicle' | 'return'
   employeeId?: string
 }
 
@@ -141,5 +144,27 @@ export interface TransferDoc {
   remark?: string
   status: DocStatus
   lines: TransferLine[]
+  createdAt: string
+}
+
+export interface ReturnLine {
+  id: string
+  productId: string
+  qty: number
+  price: number
+}
+
+export interface ReturnDoc {
+  id: string
+  code: string
+  employeeId: string
+  storeId: string
+  date: string
+  returnType: 'vehicle_return' | 'warehouse_return'
+  fromWarehouseId: string
+  toWarehouseId?: string
+  remark?: string
+  status: DocStatus
+  lines: ReturnLine[]
   createdAt: string
 }

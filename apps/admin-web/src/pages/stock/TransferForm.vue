@@ -75,10 +75,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getTransfers, saveTransfer, postTransfer, voidTransfer, getWarehouses } from '@/api/stock'
+import { getTransferById, getTransfers, saveTransfer, postTransfer, voidTransfer, getWarehouses } from '@/api/stock'
 import { getProducts } from '@/api/product'
 import type { TransferDoc, TransferLine, Warehouse, Product } from '@/types'
 import dayjs from 'dayjs'
@@ -87,10 +87,8 @@ const route = useRoute()
 const warehouses = ref<Warehouse[]>([])
 const products = ref<Product[]>([])
 
-function gId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6) }
-
 const doc = ref<TransferDoc>({
-  id: gId(), code: 'TR' + Date.now().toString().slice(-8),
+  id: '', code: '',
   fromWarehouseId: 'main', toWarehouseId: '',
   date: dayjs().format('YYYY-MM-DD'), remark: '',
   status: 'draft', lines: [], createdAt: new Date().toISOString()
@@ -98,6 +96,7 @@ const doc = ref<TransferDoc>({
 
 function statusLabel(s: string) { return ({draft:'草稿',posted:'已过账',voided:'已作废'} as any)[s]||s }
 function statusType(s: string) { return ({draft:'info',posted:'success',voided:'danger'} as any)[s]||'' }
+function gId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6) }
 
 function addLine() { doc.value.lines.push({ id: gId(), productId: '', boxQty: 0, qty: 0 }) }
 function onBoxChange(row: TransferLine) {
@@ -105,18 +104,31 @@ function onBoxChange(row: TransferLine) {
   if (p) row.qty = row.boxQty * p.boxQty
 }
 
-async function saveDraft() { await saveTransfer(doc.value); ElMessage.success('草稿已保存') }
+async function saveDraft() {
+  const saved = await saveTransfer(doc.value, doc.value.lines)
+  if (saved) doc.value = saved as any
+  if (!doc.value.id) {
+    const list = await getTransfers()
+    if (list[0]) doc.value = list[0]
+  }
+  ElMessage.success('草稿已保存')
+}
 
 async function post() {
   if (!doc.value.fromWarehouseId || !doc.value.toWarehouseId) { ElMessage.error('请选择调出/调入仓'); return }
   if (doc.value.fromWarehouseId === doc.value.toWarehouseId) { ElMessage.error('调出和调入仓不能相同'); return }
   if (!doc.value.lines.length) { ElMessage.error('请添加明细'); return }
-  await saveTransfer(doc.value)
+  const saved = await saveTransfer(doc.value, doc.value.lines)
+  if (saved) doc.value = saved as any
+  if (!doc.value.id) {
+    const list = await getTransfers()
+    if (list[0]) doc.value = list[0]
+  }
   try {
     await postTransfer(doc.value.id)
-    const list = await getTransfers()
-    const u = list.find(d => d.id === doc.value.id)
-    if (u) doc.value = u
+    const list2 = await getTransfers()
+    const u2 = list2.find(d => d.id === doc.value.id)
+    if (u2) doc.value = u2
     ElMessage.success('过账成功')
   } catch(e: any) {
     ElMessage.error(e.message || '过账失败')
@@ -132,14 +144,32 @@ async function voidDoc() {
   ElMessage.success('已作废并反冲库存')
 }
 
+async function loadDetail(id: string) {
+  if (id && id !== 'new') {
+    const detail = await getTransferById(id)
+    if (detail) {
+      doc.value = detail
+      return
+    }
+  }
+
+  doc.value = {
+    id: '', code: '',
+    fromWarehouseId: 'main', toWarehouseId: '',
+    date: dayjs().format('YYYY-MM-DD'), remark: '',
+    status: 'draft', lines: [], createdAt: new Date().toISOString()
+  }
+}
+
+watch(() => route.params.id, (id) => {
+  if (typeof id === 'string') {
+    loadDetail(id)
+  }
+})
+
 onMounted(async () => {
   ;[warehouses.value, products.value] = await Promise.all([getWarehouses(), getProducts()])
-  const id = route.params.id as string
-  if (id && id !== 'new') {
-    const list = await getTransfers()
-    const found = list.find(d => d.id === id)
-    if (found) doc.value = found
-  }
+  await loadDetail(route.params.id as string)
 })
 </script>
 

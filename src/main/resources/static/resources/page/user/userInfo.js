@@ -15,7 +15,7 @@ layui.use(['form','layer','upload','laydate',"address"],function(){
     //上传头像
     upload.render({
         elem: '.userFaceBtn',
-        url: '../../json/userface.json',
+        url: '/api/static/userface',
         method : "get",  //此处是为了演示之用，实际使用中请将此删除，默认用post方式提交
         done: function(res, index, upload){
             var num = parseInt(4*Math.random());  //生成0-4的随机数，随机显示一个头像信息

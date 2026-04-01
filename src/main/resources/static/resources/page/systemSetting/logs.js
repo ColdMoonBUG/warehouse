@@ -4,7 +4,7 @@ layui.use(['table'],function(){
 	//系统日志
     table.render({
         elem: '#logs',
-        url : '../../json/logs.json',
+        url : '/api/static/logs',
         cellMinWidth : 95,
         page : true,
         height : "full-20",

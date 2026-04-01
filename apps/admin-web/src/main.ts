@@ -6,9 +6,6 @@ import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import 'element-plus/dist/index.css'
 import './style.css'
 import router from './router'
-import { seedIfEmpty } from './mock/seed'
-
-seedIfEmpty()
 
 const loadAMap = (() => {
   let pending: Promise<void> | null = null

@@ -39,6 +39,7 @@
         <el-menu-item v-if="!isSales" index="/stock/inbound">入库单</el-menu-item>
         <el-menu-item v-if="!isSales" index="/stock/transfer">出库单</el-menu-item>
         <el-menu-item index="/stock/sale">销售单</el-menu-item>
+        <el-menu-item index="/stock/return">退货单</el-menu-item>
       </el-sub-menu>
     </el-menu>
   </div>

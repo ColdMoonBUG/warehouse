@@ -83,10 +83,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getInbounds, saveInbound, postInbound, voidInbound } from '@/api/stock'
+import { getInboundById, getInbounds, saveInbound, postInbound, voidInbound } from '@/api/stock'
 import { getSuppliers } from '@/api/supplier'
 import { getProducts } from '@/api/product'
 import type { InboundDoc, InboundLine, Supplier, Product } from '@/types'
@@ -96,20 +96,23 @@ const route = useRoute()
 const suppliers = ref<Supplier[]>([])
 const products = ref<Product[]>([])
 
-function gId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6) }
-
 const doc = ref<InboundDoc>({
-  id: gId(), code: 'IN' + Date.now().toString().slice(-8),
+  id: '', code: '',
   supplierId: '', date: dayjs().format('YYYY-MM-DD'),
   remark: '', status: 'draft', lines: [], createdAt: new Date().toISOString()
 })
 
+function genLineId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+}
+
 function statusLabel(s: string) { return ({draft:'草稿',posted:'已过账',voided:'已作废'} as any)[s]||s }
-function statusType(s: string) { return ({draft:'info',posted:'success',voided:'danger'} as any)[s]||'' }
 
 function addLine() {
-  doc.value.lines.push({ id: gId(), productId: '', boxQty: 0, qty: 0, price: 0 })
+  doc.value.lines.push({ id: genLineId(), productId: '', boxQty: 0, qty: 0, price: 0 })
 }
+function statusType(s: string) { return ({draft:'info',posted:'success',voided:'danger'} as any)[s]||'' }
+
 function onProductChange(row: InboundLine) {
   const p = products.value.find(p => p.id === row.productId)
   if (p) row.price = p.purchasePrice
@@ -124,15 +127,28 @@ function calcExpDate(row: InboundLine) {
   if (p && row.mfgDate) row.expDate = dayjs(row.mfgDate).add(p.shelfDays,'day').format('YYYY-MM-DD')
 }
 
-async function saveDraft() { await saveInbound(doc.value); ElMessage.success('草稿已保存') }
+async function saveDraft() {
+  const saved = await saveInbound(doc.value, doc.value.lines)
+  if (saved) doc.value = saved as any
+  if (!doc.value.id) {
+    const list = await getInbounds()
+    if (list[0]) doc.value = list[0]
+  }
+  ElMessage.success('草稿已保存')
+}
 
 async function post() {
   if (!doc.value.supplierId) { ElMessage.error('请选择厂家'); return }
   if (!doc.value.lines.length) { ElMessage.error('请添加明细'); return }
-  await saveInbound(doc.value)
+  const saved = await saveInbound(doc.value, doc.value.lines)
+  if (saved) doc.value = saved as any
+  if (!doc.value.id) {
+    const list = await getInbounds()
+    if (list[0]) doc.value = list[0]
+  }
   await postInbound(doc.value.id)
-  const list = await getInbounds()
-  const u = list.find(d => d.id === doc.value.id)
+  const listAfterPost = await getInbounds()
+  const u = listAfterPost.find(d => d.id === doc.value.id)
   if (u) doc.value = u
   ElMessage.success('过账成功')
 }
@@ -146,14 +162,31 @@ async function voidDoc() {
   ElMessage.success('已作废并反冲库存')
 }
 
+async function loadDetail(id: string) {
+  if (id && id !== 'new') {
+    const detail = await getInboundById(id)
+    if (detail) {
+      doc.value = detail
+      return
+    }
+  }
+
+  doc.value = {
+    id: '', code: '',
+    supplierId: '', date: dayjs().format('YYYY-MM-DD'),
+    remark: '', status: 'draft', lines: [], createdAt: new Date().toISOString()
+  }
+}
+
+watch(() => route.params.id, (id) => {
+  if (typeof id === 'string') {
+    loadDetail(id)
+  }
+})
+
 onMounted(async () => {
   ;[suppliers.value, products.value] = await Promise.all([getSuppliers(), getProducts()])
-  const id = route.params.id as string
-  if (id && id !== 'new') {
-    const list = await getInbounds()
-    const found = list.find(d => d.id === id)
-    if (found) doc.value = found
-  }
+  await loadDetail(route.params.id as string)
 })
 </script>
 

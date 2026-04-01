@@ -18,7 +18,9 @@
       </div>
       <el-main class="content">
         <slot>
-          <router-view />
+          <router-view v-slot="{ Component, route }">
+            <component :is="Component" :key="route.fullPath" />
+          </router-view>
         </slot>
       </el-main>
     </el-container>

@@ -63,6 +63,7 @@ const current = ref<Account | null>(null)
 const step = ref<'select'|'gesture'|'password'>('select')
 const pwd = ref('')
 
+
 onMounted(async () => {
   accounts.value = (await getAccounts()).filter(a => a.status === 'active')
 })
@@ -72,18 +73,18 @@ function selectAccount(acc: Account) {
   step.value = acc.gestureHash ? 'gesture' : 'password'
 }
 
-function onGesture(pattern: string) {
+async function onGesture(pattern: string) {
   try {
-    loginByGesture(current.value!.username, pattern)
+    await loginByGesture(current.value!.username, pattern)
     router.replace('/')
   } catch (e: any) {
     ElMessage.error(e.message)
   }
 }
 
-function onPassword() {
+async function onPassword() {
   try {
-    loginByPassword(current.value!.username, pwd.value)
+    await loginByPassword(current.value!.username, pwd.value)
     router.replace('/')
   } catch (e: any) {
     ElMessage.error(e.message)

@@ -1,0 +1,283 @@
+{
+  "pages": [
+    {
+      "path": "pages/login/index",
+      "style": {
+        "navigationBarTitleText": "选择账户",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/login/gesture",
+      "style": {
+        "navigationBarTitleText": "手势解锁",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/login/password",
+      "style": {
+        "navigationBarTitleText": "密码登录",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/login/select-employee",
+      "style": {
+        "navigationBarTitleText": "选择业务员",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/login/set-gesture",
+      "style": {
+        "navigationBarTitleText": "设置手势密码",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/map/index",
+      "style": {
+        "navigationBarTitleText": "首页",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/map/pick",
+      "style": {
+        "navigationBarTitleText": "选择位置",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/sales/index",
+      "style": {
+        "navigationBarTitleText": "销退",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/sales/create",
+      "style": {
+        "navigationBarTitleText": "创建销单",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/sales/detail",
+      "style": {
+        "navigationBarTitleText": "销单详情",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/return/index",
+      "style": {
+        "navigationBarTitleText": "退货",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/return/create",
+      "style": {
+        "navigationBarTitleText": "创建退货单",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/return/detail",
+      "style": {
+        "navigationBarTitleText": "退货单详情",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/settings/index",
+      "style": {
+        "navigationBarTitleText": "设置",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/settings/store-list",
+      "style": {
+        "navigationBarTitleText": "超市管理",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/settings/store-add",
+      "style": {
+        "navigationBarTitleText": "新增超市",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/admin/product/index",
+      "style": {
+        "navigationBarTitleText": "商品管理",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/admin/supplier/index",
+      "style": {
+        "navigationBarTitleText": "供应商管理",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/admin/stock/index",
+      "style": {
+        "navigationBarTitleText": "库存查询",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/admin/inbound/index",
+      "style": {
+        "navigationBarTitleText": "入库单",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/admin/outbound/index",
+      "style": {
+        "navigationBarTitleText": "出库单",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/admin/transfer/index",
+      "style": {
+        "navigationBarTitleText": "调拨单",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/admin/employee/index",
+      "style": {
+        "navigationBarTitleText": "业务员管理",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/admin/product/form",
+      "style": {
+        "navigationBarTitleText": "商品",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/admin/supplier/form",
+      "style": {
+        "navigationBarTitleText": "供应商",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/admin/inbound/form",
+      "style": {
+        "navigationBarTitleText": "入库单",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/admin/outbound/form",
+      "style": {
+        "navigationBarTitleText": "出库单",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/admin/transfer/form",
+      "style": {
+        "navigationBarTitleText": "调拨单",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/admin/employee/form",
+      "style": {
+        "navigationBarTitleText": "业务员",
+        "navigationStyle": "custom"
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "车销系统",
+    "navigationBarBackgroundColor": "#FFFFFF",
+    "backgroundColor": "#F5F5F5"
+  },
+  "tabBar": {
+    "color": "#999999",
+    "selectedColor": "#1890FF",
+    "borderStyle": "white",
+    "backgroundColor": "#FFFFFF",
+    "list": [
+      {
+        "pagePath": "pages/map/index",
+        "text": "地图"
+      },
+      {
+        "pagePath": "pages/sales/index",
+        "text": "销退"
+      },
+      {
+        "pagePath": "pages/settings/index",
+        "text": "我的"
+      }
+    ]
+  },
+  "tabBarAdmin": {
+    "color": "#999999",
+    "selectedColor": "#1890FF",
+    "borderStyle": "white",
+    "backgroundColor": "#FFFFFF",
+    "list": [
+      {
+        "pagePath": "pages/admin/outbound/index",
+        "text": "出入库"
+      },
+      {
+        "pagePath": "pages/sales/index",
+        "text": "销退"
+      },
+      {
+        "pagePath": "pages/settings/index",
+        "text": "我的"
+      }
+    ]
+  },
+  "tabBarSales": {
+    "color": "#999999",
+    "selectedColor": "#1890FF",
+    "borderStyle": "white",
+    "backgroundColor": "#FFFFFF",
+    "list": [
+      {
+        "pagePath": "pages/map/index",
+        "text": "地图"
+      },
+      {
+        "pagePath": "pages/sales/index",
+        "text": "销退"
+      },
+      {
+        "pagePath": "pages/settings/index",
+        "text": "我的"
+      }
+    ]
+  },
+	"condition" : { //模式配置，仅开发期间生效
+		"current": 0, //当前激活的模式(list 的索引项)
+		"list": [
+			{
+				"name": "", //模式名称
+				"path": "", //启动页面，必选
+				"query": "" //启动参数，在页面的onLoad函数里面得到
+			}
+		]
+	}
+}

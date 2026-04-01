@@ -32,6 +32,13 @@
             </el-form-item>
           </el-col>
           <el-col :span="isMobile?24:8">
+            <el-form-item label="车库">
+              <el-select v-model="doc.warehouseId" style="width:100%" placeholder="选择车库">
+                <el-option v-for="w in vehicleWarehouses" :key="w.id" :label="w.name" :value="w.id" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="isMobile?24:8">
             <el-form-item label="日期">
               <el-date-picker v-model="doc.date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
             </el-form-item>
@@ -107,80 +114,119 @@
       </div>
 
       <div class="total-row">
-        合计：¥{{ doc.lines.reduce((s,l)=>s+l.qty*l.price,0).toFixed(2) }}
+        合计：¥{{ amountSum().toFixed(2) }}
+        <span class="commission">提成：¥{{ commissionSum().toFixed(2) }}</span>
       </div>
     </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getSales, saveSale, postSale, voidSale } from '@/api/sale'
+import { getSaleById, saveSale, postSale, voidSale } from '@/api/sale'
 import { getEmployees } from '@/api/employee'
 import { getStores } from '@/api/store'
 import { getProducts } from '@/api/product'
-import type { SaleDoc, SaleLine, Employee, Store, Product } from '@/types'
+import { getWarehouses } from '@/api/stock'
+import type { SaleDoc, SaleLine, Employee, Store, Product, Warehouse } from '@/types'
 import dayjs from 'dayjs'
 
 const route = useRoute()
 const employees = ref<Employee[]>([])
 const stores = ref<Store[]>([])
 const products = ref<Product[]>([])
+const warehouses = ref<Warehouse[]>([])
 const isMobile = ref(window.innerWidth < 768)
 
 function onResize() { isMobile.value = window.innerWidth < 768 }
 
-function gId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6) }
-
 const doc = ref<SaleDoc>({
-  id: gId(), code: 'SA' + Date.now().toString().slice(-8),
-  employeeId: '', storeId: '',
+  id: '', code: '',
+  employeeId: '', storeId: '', warehouseId: '',
   date: dayjs().format('YYYY-MM-DD'), remark: '',
   status: 'draft', lines: [], createdAt: new Date().toISOString()
 })
 
 function statusLabel(s: string) { return ({draft:'草稿',posted:'已过账',voided:'已作废'} as any)[s]||s }
+const vehicleWarehouses = computed(() => warehouses.value.filter(w => w.type === 'vehicle'))
+
 function statusType(s: string) { return ({draft:'info',posted:'success',voided:'danger'} as any)[s]||'' }
 
-function addLine() { doc.value.lines.push({ id: gId(), productId: '', qty: 1, price: 0 }) }
+function genLineId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+}
+
+function addLine() { doc.value.lines.push({ id: genLineId(), productId: '', qty: 1, price: 0 }) }
 function onProductChange(row: SaleLine) {
   const p = products.value.find(p => p.id === row.productId)
   if (p) row.price = p.salePrice
 }
 
-async function saveDraft() { await saveSale(doc.value); ElMessage.success('草稿已保存') }
+function amountSum() {
+  return doc.value.lines.reduce((s, l) => s + l.qty * l.price, 0)
+}
+function commissionSum() {
+  return amountSum() * 0.06
+}
+
+async function saveDraft() {
+  const saved = await saveSale(doc.value, doc.value.lines)
+  if (saved) doc.value = saved as any
+  ElMessage.success('草稿已保存')
+}
 
 async function post() {
   if (!doc.value.employeeId) { ElMessage.error('请选择业务员'); return }
   if (!doc.value.storeId) { ElMessage.error('请选择门店'); return }
+  if (!doc.value.warehouseId) { ElMessage.error('请选择车库'); return }
+  if (doc.value.warehouseId === 'main') { ElMessage.error('销售必须从车库出库'); return }
   if (!doc.value.lines.length) { ElMessage.error('请添加明细'); return }
-  await saveSale(doc.value)
+  const saved = await saveSale(doc.value, doc.value.lines)
+  if (saved) doc.value = saved as any
   await postSale(doc.value.id)
-  const list = await getSales()
-  const u = list.find(d => d.id === doc.value.id)
-  if (u) doc.value = u
+  const detail = await getSaleById(doc.value.id)
+  if (detail) doc.value = detail
   ElMessage.success('过账成功')
 }
 
 async function voidDoc() {
   await ElMessageBox.confirm('确认作废？','提示',{type:'warning'})
   await voidSale(doc.value.id)
-  const list = await getSales()
-  const u = list.find(d => d.id === doc.value.id)
-  if (u) doc.value = u
+  const detail = await getSaleById(doc.value.id)
+  if (detail) doc.value = detail
   ElMessage.success('已作废')
 }
 
-onMounted(async () => {
-  ;[employees.value, stores.value, products.value] = await Promise.all([getEmployees(), getStores(), getProducts()])
-  const id = route.params.id as string
+async function loadDetail(id: string) {
   if (id && id !== 'new') {
-    const list = await getSales()
-    const found = list.find(d => d.id === id)
-    if (found) doc.value = found
+    const detail = await getSaleById(id)
+    if (detail) {
+      doc.value = detail
+      return
+    }
   }
+
+  doc.value = {
+    id: '', code: '',
+    employeeId: '', storeId: '', warehouseId: vehicleWarehouses.value[0]?.id || '',
+    date: dayjs().format('YYYY-MM-DD'), remark: '',
+    status: 'draft', lines: [], createdAt: new Date().toISOString()
+  }
+}
+
+watch(() => route.params.id, (id) => {
+  if (typeof id === 'string') {
+    loadDetail(id)
+  }
+})
+
+onMounted(async () => {
+  ;[employees.value, stores.value, products.value, warehouses.value] = await Promise.all([getEmployees(), getStores(), getProducts(), getWarehouses()])
+  if (!doc.value.warehouseId) doc.value.warehouseId = vehicleWarehouses.value[0]?.id || ''
+  await loadDetail(route.params.id as string)
+  if (!doc.value.warehouseId) doc.value.warehouseId = vehicleWarehouses.value[0]?.id || ''
   window.addEventListener('resize', onResize)
 })
 onBeforeUnmount(() => window.removeEventListener('resize', onResize))
@@ -195,7 +241,8 @@ onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 .header-left { display:flex; align-items:center; gap:12px; }
 .header-actions { display:flex; gap:8px; }
 .section-row { margin:12px 0; display:flex; justify-content:space-between; align-items:center; }
-.total-row { text-align:right; padding:12px 0; font-weight:600; font-size:15px; }
+.total-row { text-align:right; padding:12px 0; font-weight:600; font-size:15px; display:flex; justify-content:flex-end; gap:16px; flex-wrap:wrap; }
+.total-row .commission { color:#86efac; }
 
 .mobile-lines { display:flex; flex-direction:column; gap:10px; }
 .mobile-line {

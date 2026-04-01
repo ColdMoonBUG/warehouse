@@ -14,6 +14,9 @@ let map: any = null
 let legendEl: HTMLDivElement | null = null
 let infoWindow: any = null
 let markers: Array<{ marker: any; color: string }> = []
+let zoomListener: (() => void) | null = null
+let destroyed = false
+let initToken = 0
 
 const BASE_ZOOM = 13
 const BASE_SIZE = 20
@@ -56,22 +59,54 @@ function storeIcon(AMap: any, color: string, size: number = 18) {
   })
 }
 
+function cleanupMap() {
+  if (zoomListener && map?.off) {
+    map.off('zoomend', zoomListener)
+  }
+  zoomListener = null
+  if (legendEl) legendEl.remove()
+  legendEl = null
+  markers = []
+  infoWindow = null
+  map?.destroy?.()
+  map = null
+}
+
 async function initMap() {
+  const token = ++initToken
   const load = (window as any).__loadAMap
   if (load) await load()
-  const AMap = (window as any).AMap
+  if (destroyed || token !== initToken) return
 
-  map = new AMap.Map('map', {
+  const AMap = (window as any).AMap
+  const container = document.getElementById('map')
+  if (!AMap || !container) return
+
+  cleanupMap()
+
+  const currentMap = new AMap.Map(container, {
     zoom: 13,
     center: [112.5292, 32.9987],
     resizeEnable: true
   })
+  if (destroyed || token !== initToken) {
+    currentMap.destroy?.()
+    return
+  }
 
+  map = currentMap
   infoWindow = new AMap.InfoWindow({ offset: new AMap.Pixel(0, -18) })
 
-  map.on('zoomend', () => refreshMarkerIcons(AMap))
+  zoomListener = () => refreshMarkerIcons(AMap)
+  map.on('zoomend', zoomListener)
 
   const [stores, saleQty] = await Promise.all([getStores(), Promise.resolve(getStoreSaleQty(30))])
+  if (destroyed || token !== initToken || map !== currentMap) {
+    if (map === currentMap) map = null
+    currentMap.destroy?.()
+    return
+  }
+
   const pinned = stores.filter((s: Store) => s.lat && s.lng && s.status === 'active')
   const maxQty = Math.max(...pinned.map((s: Store) => saleQty[s.id] || 0), 1)
 
@@ -88,14 +123,17 @@ async function initMap() {
     const grade = color === '#ef4444' ? '红(高)' : color === '#f97316' ? '橙(中高)' : color === '#eab308' ? '黄(中低)' : '绿(低)'
     const html = `<b>${s.name}</b><br>${s.address || ''}<br>近30天销量：${qty}件 <span style="color:${color}">●</span>${grade}`
     marker.on('click', () => {
+      if (!map || !infoWindow) return
       infoWindow.setContent(html)
       infoWindow.open(map, marker.getPosition())
     })
+    if (destroyed || token !== initToken || map !== currentMap) return
     map.add(marker)
     markers.push({ marker, color })
   }
 
   refreshMarkerIcons(AMap)
+  if (destroyed || token !== initToken || map !== currentMap) return
 
   legendEl = document.createElement('div')
   legendEl.style.cssText = 'background:#fff;padding:8px 12px;border-radius:8px;font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,0.15)'
@@ -107,12 +145,14 @@ async function initMap() {
   map.getContainer().appendChild(legendEl)
 }
 
-onMounted(initMap)
+onMounted(() => {
+  destroyed = false
+  initMap()
+})
 onBeforeUnmount(() => {
-  if (legendEl) legendEl.remove()
-  markers = []
-  map?.destroy()
-  map = null
+  destroyed = true
+  initToken += 1
+  cleanupMap()
 })
 </script>
 

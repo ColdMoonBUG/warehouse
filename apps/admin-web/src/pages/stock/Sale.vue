@@ -105,7 +105,10 @@ function filter() {
 }
 
 async function load() {
-  ;[list.value, employees.value, stores.value] = await Promise.all([getSales(), getEmployees(), getStores()])
+  const [salesRes, employeeRes, storeRes] = await Promise.all([getSales(), getEmployees(), getStores()])
+  list.value = salesRes.list
+  employees.value = employeeRes
+  stores.value = storeRes
   filter()
 }
 onMounted(() => {

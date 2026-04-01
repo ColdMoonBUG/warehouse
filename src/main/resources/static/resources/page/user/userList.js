@@ -8,7 +8,7 @@ layui.use(['form','layer','table','laytpl'],function(){
     //用户列表
     var tableIns = table.render({
         elem: '#userList',
-        url : '../../json/userList.json',
+        url : '/api/static/userList',
         cellMinWidth : 95,
         page : true,
         height : "full-125",

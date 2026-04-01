@@ -38,32 +38,21 @@ public class LoginController {
     @RequestMapping("login")
     public ResultObj login(UserVo userVo,String code,HttpSession session){
 
-        //获得存储在session中的验证码
-        String sessionCode = (String) session.getAttribute("code");
-        if (code!=null&&sessionCode.equals(code)){
-            Subject subject = SecurityUtils.getSubject();
-            AuthenticationToken token = new UsernamePasswordToken(userVo.getLoginname(),userVo.getPwd());
-            try {
-                //对用户进行认证登陆
-                subject.login(token);
-                //通过subject获取以认证活动的user
-                ActiverUser activerUser = (ActiverUser) subject.getPrincipal();
-                //将user存储到session中
-                WebUtils.getSession().setAttribute("user",activerUser.getUser());
-                //记录登陆日志
-                Loginfo entity = new Loginfo();
-                entity.setLoginname(activerUser.getUser().getName()+"-"+activerUser.getUser().getLoginname());
-                entity.setLoginip(WebUtils.getRequest().getRemoteAddr());
-                entity.setLogintime(new Date());
-                loginfoService.save(entity);
-
-                return ResultObj.LOGIN_SUCCESS;
-            } catch (AuthenticationException e) {
-                e.printStackTrace();
-                return ResultObj.LOGIN_ERROR_PASS;
-            }
-        }else {
-            return ResultObj.LOGIN_ERROR_CODE;
+        Subject subject = SecurityUtils.getSubject();
+        AuthenticationToken token = new UsernamePasswordToken(userVo.getLoginname(),userVo.getPwd());
+        try {
+            subject.login(token);
+            ActiverUser activerUser = (ActiverUser) subject.getPrincipal();
+            WebUtils.getSession().setAttribute("user",activerUser.getUser());
+            Loginfo entity = new Loginfo();
+            entity.setLoginname(activerUser.getUser().getName()+"-"+activerUser.getUser().getLoginname());
+            entity.setLoginip(WebUtils.getRequest().getRemoteAddr());
+            entity.setLogintime(new Date());
+            loginfoService.save(entity);
+            return ResultObj.LOGIN_SUCCESS;
+        } catch (AuthenticationException e) {
+            e.printStackTrace();
+            return ResultObj.LOGIN_ERROR_PASS;
         }
 
     }

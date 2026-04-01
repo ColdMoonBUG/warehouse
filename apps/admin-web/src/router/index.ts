@@ -38,11 +38,14 @@ const router = createRouter({
             { path: 'transfer', component: () => import('@/pages/stock/Transfer.vue'), meta: { title: '出库单', adminOnly: true } },
             { path: 'transfer/:id', component: () => import('@/pages/stock/TransferForm.vue'), meta: { title: '出库单详情', adminOnly: true } },
             { path: 'sale', component: () => import('@/pages/stock/Sale.vue'), meta: { title: '销售单' } },
-            { path: 'sale/:id', component: () => import('@/pages/stock/SaleForm.vue'), meta: { title: '销售单详情' } }
+            { path: 'sale/:id', component: () => import('@/pages/stock/SaleForm.vue'), meta: { title: '销售单详情' } },
+            { path: 'return', component: () => import('@/pages/stock/Return.vue'), meta: { title: '退货单' } },
+            { path: 'return/:id', component: () => import('@/pages/stock/ReturnForm.vue'), meta: { title: '退货单详情' } }
           ]
         },
         {
           path: 'system',
+          redirect: '/system/account',
           meta: { title: '系统管理', adminOnly: true },
           children: [
             { path: 'account', component: () => import('@/pages/system/Account.vue'), meta: { title: '账户管理', adminOnly: true } }

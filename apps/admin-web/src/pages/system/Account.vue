@@ -84,7 +84,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import GestureUnlock from '@/components/GestureUnlock.vue'
-import { getAccounts, saveAccount, toggleAccount, deleteAccount, simpleHash } from '@/api/auth'
+import { getAccounts, saveAccount, toggleAccount, deleteAccount, simpleHash, hashGesture, setPassword, setGesture } from '@/api/auth'
 import { getEmployees } from '@/api/employee'
 import type { Account, Employee, Role } from '@/types'
 
@@ -164,8 +164,10 @@ async function savePwd() {
   if (!acc) return
   const patch: Partial<Account> = { id: acc.id }
   if (pwdForm.value.password) patch.passwordHash = simpleHash(pwdForm.value.password)
-  if (pwdForm.value.gesture) patch.gestureHash = simpleHash(pwdForm.value.gesture)
+  if (pwdForm.value.gesture) patch.gestureHash = hashGesture(pwdForm.value.gesture)
   await saveAccount(patch as any)
+  if (patch.passwordHash) await setPassword(acc.id, patch.passwordHash)
+  if (pwdForm.value.gesture) await setGesture(acc.id, pwdForm.value.gesture)
   pwdDlg.value = false
   ElMessage.success('已保存')
   load()

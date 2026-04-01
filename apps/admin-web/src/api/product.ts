@@ -1,31 +1,19 @@
-import { productDb, genId, now } from '@/mock/storage'
+import request from '@/utils/request'
 import type { Product } from '@/types'
 
-export function getProducts() {
-  return Promise.resolve(productDb.list())
+export async function getProducts(): Promise<Product[]> {
+  const res = await request.get('/product/list')
+  return res.data
 }
 
-export function saveProduct(data: Partial<Product> & { name: string; code: string }) {
-  const list = productDb.list()
-  if (data.id) {
-    const idx = list.findIndex(p => p.id === data.id)
-    if (idx >= 0) list[idx] = { ...list[idx], ...data }
-  } else {
-    list.push({ ...data, id: genId(), status: 'active', createdAt: now() } as Product)
-  }
-  productDb.save(list)
-  return Promise.resolve()
+export async function saveProduct(data: Partial<Product> & { name: string }) {
+  await request.post('/product/save', data)
 }
 
-export function toggleProduct(id: string) {
-  const list = productDb.list()
-  const item = list.find(p => p.id === id)
-  if (item) item.status = item.status === 'active' ? 'inactive' : 'active'
-  productDb.save(list)
-  return Promise.resolve()
+export async function toggleProduct(id: string) {
+  await request.post(`/product/toggle/${id}`)
 }
 
-export function deleteProduct(id: string) {
-  productDb.save(productDb.list().filter(p => p.id !== id))
-  return Promise.resolve()
+export async function deleteProduct(id: string) {
+  await request.post(`/product/delete/${id}`)
 }

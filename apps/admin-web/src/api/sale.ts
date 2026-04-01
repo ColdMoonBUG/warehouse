@@ -1,45 +1,55 @@
-import { saleDb, genId, now } from '@/mock/storage'
-import type { SaleDoc } from '@/types'
+import request from '@/utils/request'
+import type { SaleDoc, SaleLine, Warehouse } from '@/types'
 
-export function getSales() {
-  return Promise.resolve(saleDb.list().sort((a, b) => b.createdAt.localeCompare(a.createdAt)))
+type SaleListResponse = {
+  data?: SaleDoc[]
+  count?: number
 }
 
-export function saveSale(doc: SaleDoc) {
-  const list = saleDb.list()
-  const idx = list.findIndex(d => d.id === doc.id)
-  if (idx >= 0) list[idx] = doc
-  else list.push(doc)
-  saleDb.save(list)
-  return Promise.resolve(doc)
+// 获取销售单列表
+export async function getSales(page = 1, limit = 20): Promise<{ list: SaleDoc[], total: number }> {
+  const res = await request.get('/sale/list', { params: { page, limit } }) as unknown as SaleListResponse
+  return { list: res.data || [], total: res.count || 0 }
 }
 
-export function postSale(id: string) {
-  const list = saleDb.list()
-  const doc = list.find(d => d.id === id)
-  if (!doc || doc.status !== 'draft') return Promise.reject(new Error('单据状态异常'))
-  doc.status = 'posted'
-  saleDb.save(list)
-  return Promise.resolve()
+// 获取销售单详情
+export async function getSaleById(id: string): Promise<SaleDoc | null> {
+  const res = await request.get(`/sale/detail/${id}`)
+  return res.data
 }
 
-export function voidSale(id: string) {
-  const list = saleDb.list()
-  const doc = list.find(d => d.id === id)
-  if (!doc || doc.status !== 'posted') return Promise.reject(new Error('只能作废已过账单据'))
-  doc.status = 'voided'
-  saleDb.save(list)
-  return Promise.resolve()
+// 保存销售单
+export async function saveSale(doc: Partial<SaleDoc>, lines: SaleLine[]) {
+  const payload = { ...doc } as any
+  delete payload.createdAt
+  delete payload.updatedAt
+  const res = await request.post('/sale/save', { doc: payload, lines })
+  return res.data as SaleDoc
 }
 
-// 按门店统计最近N天销售总件数
-export function getStoreSaleQty(days = 30): Record<string, number> {
-  const cutoff = new Date(Date.now() - days * 86400000).toISOString()
-  const docs = saleDb.list().filter(d => d.status === 'posted' && d.date >= cutoff.slice(0, 10))
-  const result: Record<string, number> = {}
-  for (const doc of docs) {
-    const total = doc.lines.reduce((s, l) => s + l.qty, 0)
-    result[doc.storeId] = (result[doc.storeId] || 0) + total
-  }
-  return result
+// 过账
+export async function postSale(id: string) {
+  await request.post(`/sale/post/${id}`)
+}
+
+// 作废
+export async function voidSale(id: string) {
+  await request.post(`/sale/void/${id}`)
+}
+
+// 删除
+export async function deleteSale(id: string) {
+  await request.post(`/sale/delete/${id}`)
+}
+
+// 获取仓库列表
+export async function getWarehouses(): Promise<Warehouse[]> {
+  const res = await request.get('/warehouse/list')
+  return res.data
+}
+
+// 按门店统计销量
+export async function getStoreSaleQty(days = 30): Promise<Record<string, number>> {
+  const res = await request.get('/sale/storeSaleQty', { params: { days } })
+  return res.data || {}
 }
