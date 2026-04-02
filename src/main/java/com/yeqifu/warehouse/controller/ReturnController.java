@@ -67,6 +67,7 @@ public class ReturnController {
             lines = java.util.Collections.emptyList();
         }
         vo.setLines(lines);
+        normalizeLines(lines);
         if (doc.getStatus() == null || doc.getStatus().isEmpty()) doc.setStatus("draft");
         if (doc.getDocDate() == null) doc.setDocDate(new Date());
         if (doc.getReturnType() == null || doc.getReturnType().isEmpty()) doc.setReturnType("vehicle_return");
@@ -142,7 +143,7 @@ public class ReturnController {
                 ledger.setId(IdUtils.randomId());
                 ledger.setBizType("return");
                 ledger.setDocId(id);
-                ledger.setEmployeeId(doc.getEmployeeId());
+                ledger.setSalespersonId(doc.getSalespersonId());
                 ledger.setStoreId(doc.getStoreId());
                 ledger.setProductId(line.getProductId());
                 ledger.setQty(qty);
@@ -194,7 +195,7 @@ public class ReturnController {
                 ledger.setId(IdUtils.randomId());
                 ledger.setBizType("void_return");
                 ledger.setDocId(id);
-                ledger.setEmployeeId(doc.getEmployeeId());
+                ledger.setSalespersonId(doc.getSalespersonId());
                 ledger.setStoreId(doc.getStoreId());
                 ledger.setProductId(line.getProductId());
                 ledger.setQty(qty);
@@ -210,6 +211,17 @@ public class ReturnController {
         } catch (RuntimeException e) {
             TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
             return Result.error(e.getMessage());
+        }
+    }
+
+    private void normalizeLines(List<ReturnLine> lines) {
+        for (ReturnLine line : lines) {
+            if (line.getBoxQty() == null || line.getBoxQty() < 0) {
+                line.setBoxQty(0);
+            }
+            if (line.getQty() == null || line.getQty() < 0) {
+                line.setQty(0);
+            }
         }
     }
 

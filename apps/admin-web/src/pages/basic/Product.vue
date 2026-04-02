@@ -20,7 +20,7 @@
         <el-table-column label="厂家" width="120">
           <template #default="{row}">{{ supplierName(row.supplierId) }}</template>
         </el-table-column>
-        <el-table-column prop="boxQty" label="每箱数量" width="90" />
+        <el-table-column prop="boxQty" label="每箱袋数" width="100" />
         <el-table-column prop="shelfDays" label="保质期(天)" width="100" />
         <el-table-column prop="purchasePrice" label="进价" width="80" />
         <el-table-column prop="salePrice" label="供货价" width="80" />
@@ -61,10 +61,12 @@
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="单位" prop="unit"><el-input v-model="form.unit" placeholder="袋/盒" /></el-form-item>
+            <el-form-item label="单位">
+              <el-input :model-value="'袋'" disabled />
+            </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="每箱数量" prop="boxQty">
+            <el-form-item label="每箱袋数" prop="boxQty">
               <el-input-number v-model="form.boxQty" :min="1" style="width:100%" />
             </el-form-item>
           </el-col>
@@ -115,7 +117,7 @@ const form = ref<Partial<Product>>({})
 const rules = {
   name: [{ required: true, message: '请输入名称' }],
   supplierId: [{ required: true, message: '请选择厂家' }],
-  boxQty: [{ required: true, message: '请输入每箱数量' }],
+  boxQty: [{ required: true, message: '请输入每箱袋数' }],
   purchasePrice: [{ required: true, message: '请输入进价' }],
   salePrice: [{ required: true, message: '请输入供货价' }],
   barcode: [{ required: false }]
@@ -131,12 +133,13 @@ async function load() {
 onMounted(load)
 
 function openForm(row?: Product) {
-  form.value = row ? { ...row } : { boxQty: 1, purchasePrice: 0, salePrice: 0 }
+  form.value = row ? { ...row, unit: '袋' } : { unit: '袋', boxQty: 1, purchasePrice: 0, salePrice: 0 }
   dlg.value = true
 }
 
 async function submit() {
   await formRef.value.validate()
+  form.value.unit = '袋'
   await saveProduct(form.value as any)
   dlg.value = false
   ElMessage.success('保存成功')

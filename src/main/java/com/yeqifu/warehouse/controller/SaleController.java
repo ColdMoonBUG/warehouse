@@ -8,8 +8,10 @@ import com.yeqifu.warehouse.common.Result;
 import com.yeqifu.warehouse.entity.SaleDoc;
 import com.yeqifu.warehouse.entity.SaleLine;
 import com.yeqifu.warehouse.entity.Ledger;
+import com.yeqifu.warehouse.entity.Product;
 import com.yeqifu.warehouse.entity.Stock;
 import com.yeqifu.warehouse.mapper.LedgerMapper;
+import com.yeqifu.warehouse.mapper.ProductMapper;
 import com.yeqifu.warehouse.mapper.SaleDocMapper;
 import com.yeqifu.warehouse.mapper.SaleLineMapper;
 import com.yeqifu.warehouse.mapper.StockMapper;
@@ -38,6 +40,9 @@ public class SaleController {
 
     @Autowired
     private StockMapper stockMapper;
+
+    @Autowired
+    private ProductMapper productMapper;
 
     @Autowired
     private LedgerMapper ledgerMapper;
@@ -86,6 +91,8 @@ public class SaleController {
             lines = java.util.Collections.emptyList();
         }
         vo.setLines(lines);
+
+        normalizeLines(lines);
 
         // 计算总数量和总金额
         int totalQty = 0;
@@ -141,6 +148,10 @@ public class SaleController {
                 new LambdaQueryWrapper<SaleLine>().eq(SaleLine::getDocId, id)
             );
             String fromWarehouseId = doc.getWarehouseId() == null || doc.getWarehouseId().isEmpty() ? MAIN_WAREHOUSE_ID : doc.getWarehouseId();
+            String stockError = validateSaleStock(fromWarehouseId, lines);
+            if (stockError != null) {
+                return Result.error(stockError);
+            }
             for (SaleLine line : lines) {
                 int qty = line.getQty() == null ? 0 : line.getQty();
                 BigDecimal price = line.getPrice() == null ? BigDecimal.ZERO : line.getPrice();
@@ -154,7 +165,7 @@ public class SaleController {
                 ledger.setId(IdUtils.randomId());
                 ledger.setBizType("sale");
                 ledger.setDocId(id);
-                ledger.setEmployeeId(doc.getEmployeeId());
+                ledger.setSalespersonId(doc.getSalespersonId());
                 ledger.setStoreId(doc.getStoreId());
                 ledger.setProductId(line.getProductId());
                 ledger.setQty(qty);
@@ -198,7 +209,7 @@ public class SaleController {
                 ledger.setId(IdUtils.randomId());
                 ledger.setBizType("void_sale");
                 ledger.setDocId(id);
-                ledger.setEmployeeId(doc.getEmployeeId());
+                ledger.setSalespersonId(doc.getSalespersonId());
                 ledger.setStoreId(doc.getStoreId());
                 ledger.setProductId(line.getProductId());
                 ledger.setQty(qty);
@@ -243,6 +254,46 @@ public class SaleController {
             map.put(doc.getStoreId(), map.getOrDefault(doc.getStoreId(), 0) + sum);
         }
         return Result.ok(map);
+    }
+
+    private void normalizeLines(List<SaleLine> lines) {
+        for (SaleLine line : lines) {
+            if (line.getBoxQty() == null || line.getBoxQty() < 0) {
+                line.setBoxQty(0);
+            }
+            if (line.getQty() == null || line.getQty() < 0) {
+                line.setQty(0);
+            }
+        }
+    }
+
+    private String validateSaleStock(String warehouseId, List<SaleLine> lines) {
+        java.util.Map<String, Integer> requiredQtyMap = new java.util.HashMap<>();
+        for (SaleLine line : lines) {
+            if (line.getProductId() == null || line.getProductId().isEmpty()) {
+                continue;
+            }
+            int qty = line.getQty() == null ? 0 : line.getQty();
+            requiredQtyMap.put(line.getProductId(), requiredQtyMap.getOrDefault(line.getProductId(), 0) + qty);
+        }
+        for (java.util.Map.Entry<String, Integer> entry : requiredQtyMap.entrySet()) {
+            String productId = entry.getKey();
+            int requiredQty = entry.getValue();
+            LambdaQueryWrapper<Stock> qw = new LambdaQueryWrapper<Stock>()
+                .eq(Stock::getWarehouseId, warehouseId)
+                .eq(Stock::getProductId, productId);
+            Stock stock = stockMapper.selectOne(qw);
+            int currentQty = stock == null || stock.getQty() == null ? 0 : stock.getQty();
+            if (currentQty >= requiredQty) {
+                continue;
+            }
+            Product product = productMapper.selectById(productId);
+            String productName = product == null || product.getName() == null || product.getName().isEmpty()
+                ? productId
+                : product.getName();
+            return productName + "库存不足，车库现有" + currentQty + "袋，销单需要" + requiredQty + "袋";
+        }
+        return null;
     }
 
     private void applyStockDelta(String warehouseId, String productId, Integer delta) {

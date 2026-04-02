@@ -14,6 +14,7 @@ public class OutboundLine implements Serializable {
     private String id;
     private String docId;
     private String productId;
+    private Integer boxQty;
     private Integer qty;
     private BigDecimal price;
     private BigDecimal amount;

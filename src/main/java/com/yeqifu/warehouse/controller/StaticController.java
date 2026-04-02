@@ -55,6 +55,11 @@ public class StaticController {
         return objectMapper.readValue(json, new TypeReference<Object>() {});
     }
 
+    @GetMapping("/health")
+    public Result<String> health() {
+        return Result.ok("UP");
+    }
+
     @GetMapping("/address")
     public Object address() throws Exception {
         String json = loadJson("address", "static/resources/json/address.json");

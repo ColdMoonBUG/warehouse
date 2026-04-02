@@ -32,6 +32,7 @@ public class ProductController {
 
     @PostMapping("/save")
     public Result<Void> save(@RequestBody Product product) {
+        normalizeProduct(product);
         if (product.getId() == null || product.getId().isEmpty()) {
             product.setId(com.yeqifu.warehouse.common.IdUtils.randomId());
             if (product.getCode() == null || product.getCode().isEmpty()) {
@@ -51,6 +52,16 @@ public class ProductController {
             productMapper.updateById(product);
         }
         return Result.ok();
+    }
+
+    private void normalizeProduct(Product product) {
+        if (product == null) {
+            return;
+        }
+        product.setUnit("袋");
+        if (product.getBoxQty() == null || product.getBoxQty() < 1) {
+            product.setBoxQty(1);
+        }
     }
 
     @PostMapping("/toggle/{id}")

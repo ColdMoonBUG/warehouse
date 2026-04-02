@@ -16,7 +16,6 @@ public class LegacyApiController {
     @Autowired private ProductController productController;
     @Autowired private SupplierController supplierController;
     @Autowired private StoreController storeController;
-    @Autowired private EmployeeController employeeController;
     @Autowired private WarehouseController warehouseController;
     @Autowired private StockController stockController;
     @Autowired private InboundController inboundController;
@@ -27,7 +26,10 @@ public class LegacyApiController {
 
     // account
     @GetMapping("/account/list")
-    public Result<List<Account>> accountList() { return accountController.list(); }
+    public Result<List<Account>> accountList(@RequestParam(required = false) String role,
+                                             @RequestParam(required = false, defaultValue = "false") boolean includeInactive) {
+        return accountController.list(role, includeInactive);
+    }
 
     @PostMapping("/account/save")
     public Result<Void> accountSave(@RequestBody Account account) { return accountController.save(account); }
@@ -82,19 +84,6 @@ public class LegacyApiController {
 
     @PostMapping("/store/delete/{id}")
     public Result<Void> storeDelete(@PathVariable String id) { return storeController.delete(id); }
-
-    // employee
-    @GetMapping("/employee/list")
-    public Result<List<Employee>> employeeList() { return employeeController.list(); }
-
-    @PostMapping("/employee/save")
-    public Result<Void> employeeSave(@RequestBody Employee employee) { return employeeController.save(employee); }
-
-    @PostMapping("/employee/toggle/{id}")
-    public Result<Void> employeeToggle(@PathVariable String id) { return employeeController.toggle(id); }
-
-    @PostMapping("/employee/delete/{id}")
-    public Result<Void> employeeDelete(@PathVariable String id) { return employeeController.delete(id); }
 
     // warehouse & stock
     @GetMapping("/warehouse/list")

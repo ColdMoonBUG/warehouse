@@ -7,7 +7,6 @@ export interface Account {
   username: string
   displayName: string
   role: Role
-  employeeId?: string  // 业务员关联员工ID
   passwordHash: string  // 简单hash
   gestureHash?: string  // 手势密码hash
   status: Status
@@ -41,21 +40,12 @@ export interface Product {
   createdAt: string
 }
 
-export interface Employee {
-  id: string
-  code: string
-  name: string
-  phone?: string
-  status: Status
-  createdAt: string
-}
-
 export interface Store {
   id: string
   code?: string
   name: string
   address?: string
-  defaultEmployeeId?: string
+  salespersonId?: string
   lat?: number
   lng?: number
   scale?: 1 | 2 | 3 | 4  // 1=小 2=中 3=大 4=超大
@@ -66,6 +56,8 @@ export interface Store {
 export interface SaleLine {
   id: string
   productId: string
+  boxQty?: number
+  bagQty?: number
   qty: number
   price: number
 }
@@ -73,7 +65,7 @@ export interface SaleLine {
 export interface SaleDoc {
   id: string
   code: string
-  employeeId: string
+  salespersonId: string
   storeId: string
   warehouseId?: string
   date: string
@@ -87,7 +79,7 @@ export interface Warehouse {
   id: string
   name: string
   type: 'main' | 'vehicle' | 'return'
-  employeeId?: string
+  salespersonId?: string
 }
 
 export interface StockItem {
@@ -107,12 +99,94 @@ export interface LedgerEntry {
   createdAt: string
 }
 
+export interface CommissionLedger {
+  id: string
+  bizType: 'sale' | 'void_sale' | 'return' | 'void_return' | string
+  docId: string
+  salespersonId: string
+  storeId?: string
+  productId: string
+  qty: number
+  price: number
+  amount: number
+  commissionRate: number
+  commissionAmount: number
+  settlementId?: string
+  settledAt?: string
+  createdAt: string
+}
+
+export interface CommissionSummary {
+  salespersonId: string
+  salespersonName: string
+  saleAmount: number
+  returnAmount: number
+  totalAmount: number
+  ledgerCount: number
+  lastSettlementId?: string
+  lastSettlementAt?: string
+  lastSettlementAmount?: number
+}
+
+export interface CommissionSettlementSummary {
+  id: string
+  salespersonId: string
+  salespersonName: string
+  settledBy: string
+  settledByName: string
+  saleAmount: number
+  returnAmount: number
+  totalAmount: number
+  ledgerCount: number
+  remark?: string
+  createdAt: string
+}
+
+export interface CommissionSettlementDetail {
+  settlement: CommissionSettlementSummary
+  ledgers: CommissionLedger[]
+}
+
+export interface FinanceSessionAccount {
+  id: string
+  username: string
+  displayName: string
+  role: Role
+  passwordHash: string
+  gestureHash?: string
+  status: Status
+  createdAt: string
+}
+
+export interface CurrentAccountSession {
+  accountId: string
+  username: string
+  displayName: string
+  role: Role
+  expiresAt: string
+}
+
+export interface FinanceSessionPayload {
+  account: FinanceSessionAccount
+  session: CurrentAccountSession
+}
+
+export interface ReturnLine {
+  id: string
+  productId: string
+  boxQty?: number
+  bagQty?: number
+  qty: number
+  price: number
+}
+
 export interface InboundLine {
   id: string
   productId: string
   mfgDate?: string
   expDate?: string
   boxQty: number
+  bagQty?: number
   qty: number
   price: number
 }
@@ -132,6 +206,7 @@ export interface TransferLine {
   id: string
   productId: string
   boxQty: number
+  bagQty?: number
   qty: number
 }
 
@@ -150,6 +225,8 @@ export interface TransferDoc {
 export interface ReturnLine {
   id: string
   productId: string
+  boxQty?: number
+  bagQty?: number
   qty: number
   price: number
 }
@@ -157,7 +234,7 @@ export interface ReturnLine {
 export interface ReturnDoc {
   id: string
   code: string
-  employeeId: string
+  salespersonId: string
   storeId: string
   date: string
   returnType: 'vehicle_return' | 'warehouse_return'

@@ -22,13 +22,6 @@
       }
     },
     {
-      "path": "pages/login/select-employee",
-      "style": {
-        "navigationBarTitleText": "选择业务员",
-        "navigationStyle": "custom"
-      }
-    },
-    {
       "path": "pages/login/set-gesture",
       "style": {
         "navigationBarTitleText": "设置手势密码",
@@ -155,9 +148,9 @@
       }
     },
     {
-      "path": "pages/admin/employee/index",
+      "path": "pages/admin/account/index",
       "style": {
-        "navigationBarTitleText": "业务员管理",
+        "navigationBarTitleText": "账户管理",
         "navigationStyle": "custom"
       }
     },
@@ -197,9 +190,9 @@
       }
     },
     {
-      "path": "pages/admin/employee/form",
+      "path": "pages/admin/account/form",
       "style": {
-        "navigationBarTitleText": "业务员",
+        "navigationBarTitleText": "账户凭据",
         "navigationStyle": "custom"
       }
     }

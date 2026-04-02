@@ -29,3 +29,23 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Local dev artifacts ###
+.claude/
+.playwright-mcp/
+logs/
+backend.log
+admin-*.md
+admin-*.log
+after-login-*.md
+after-login-*.log
+all-console.log
+mobile-*-console.txt
+mobile-*-snapshot.md
+playwright-*.log
+playwright-*.md
+apps/mobile-app/node_modules/
+apps/mobile-app/dist/
+apps/mobile-app/unpackage/
+apps/mobile-app/.hbuilderx/
+nul

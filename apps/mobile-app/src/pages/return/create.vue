@@ -50,22 +50,31 @@
         <text class="label">已选商品</text>
         <view v-if="selectedProducts.length === 0" class="empty">请先选择商品</view>
         <view v-for="p in selectedProducts" :key="p.id" class="product-item">
-          <view class="info">
-            <text class="name">{{ p.name }}</text>
-            <text class="price">¥{{ p.salePrice }}</text>
-            <text class="barcode" v-if="p.barcode">条码: {{ p.barcode }}</text>
-            <text class="package" v-if="productPackageSummary(p)">{{ productPackageSummary(p) }}</text>
+          <view class="item-head">
+            <view class="info">
+              <text class="name">{{ p.name }}</text>
+              <text class="price">¥{{ p.salePrice }}</text>
+              <text class="barcode" v-if="p.barcode">条码: {{ p.barcode }}</text>
+              <text class="package">{{ productPackageSummary(p) }}</text>
+            </view>
+            <button class="btn-remove" @tap="toggleSelect(p)">移除</button>
           </view>
-          <view class="qty">
-            <button class="btn" @tap="decQty(p.id)">-</button>
-            <text class="num">{{ qtyMap[p.id] || 0 }}</text>
-            <button class="btn" @tap="incQty(p.id)">+</button>
+          <view class="qty-grid">
+            <view class="qty-field">
+              <text class="qty-label">箱数</text>
+              <input class="qty-input" v-model.number="qtyMap[p.id].boxQty" type="number" placeholder="0" @blur="syncQty(p.id)" />
+            </view>
+            <view class="qty-field">
+              <text class="qty-label">袋数</text>
+              <input class="qty-input" v-model.number="qtyMap[p.id].bagQty" type="number" placeholder="0" @blur="syncQty(p.id)" />
+            </view>
           </view>
+          <text class="qty-total">共 {{ qtyMap[p.id].qty }} 袋</text>
         </view>
       </view>
 
       <view class="summary">
-        <text>合计数量: {{ totalQty }}</text>
+        <text>合计数量: {{ totalQty }}袋</text>
         <text>合计金额: ¥{{ totalAmount.toFixed(2) }}</text>
       </view>
 
@@ -77,16 +86,23 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useUserStore } from '@/store/user'
-import { getStores, getProducts, getWarehouses, saveReturn, postReturn, getVisibleStoresForSession, hasAssignedStoresForEmployee, isSameEmployeeId } from '@/api'
+import { getStores, getProducts, getWarehouses, saveReturn, postReturn, getVisibleStoresForSalesperson, hasAssignedStoresForSalesperson, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId } from '@/api'
 import type { Store, Product, Warehouse, ReturnDoc, ReturnLine } from '@/types'
-import { genId, formatProductQuickPickLabel, formatProductPackageSummary } from '@/utils'
+import { genId, formatProductQuickPickLabel, formatProductPackageSummary, calcQty, deriveBagQty, normalizeCount, normalizeBoxPackQty } from '@/utils'
+
+interface QtyInput {
+  boxQty: number
+  bagQty: number
+  qty: number
+}
 
 const userStore = useUserStore()
 const stores = ref<Store[]>([])
+const allStores = ref<Store[]>([])
 const products = ref<Product[]>([])
 const warehouses = ref<Warehouse[]>([])
 const selectedStore = ref<Store | null>(null)
-const qtyMap = ref<Record<string, number>>({})
+const qtyMap = ref<Record<string, QtyInput>>({})
 const returnType = ref<'vehicle_return'|'warehouse_return'>('vehicle_return')
 const fromWarehouse = ref<Warehouse | null>(null)
 const toWarehouse = ref<Warehouse | null>(null)
@@ -108,13 +124,22 @@ const typeOptions = [
 const typeLabel = computed(() => typeOptions.find(t => t.value === returnType.value)?.label || '车库退货')
 
 const storeOptions = computed(() => stores.value)
-const vehicleWarehouses = computed(() => warehouses.value.filter(w => w.type === 'vehicle'))
+const sessionSalespersonId = computed(() => getSessionSalespersonId(userStore.currentUser))
+const vehicleWarehouses = computed(() => {
+  const list = warehouses.value.filter(w => w.type === 'vehicle')
+  if (userStore.isAdmin) return list
+  if (!sessionSalespersonId.value) return list
+  return list.filter(w => isSameSalespersonId(w.salespersonId, sessionSalespersonId.value))
+})
 const returnWarehouses = computed(() => warehouses.value.filter(w => w.type === 'return'))
+const effectiveSalespersonId = computed(() => {
+  return getWarehouseSalespersonId(fromWarehouse.value) || sessionSalespersonId.value
+})
 
 const showStoreFallbackHint = computed(() => {
   if (userStore.isAdmin) return false
-  const employeeId = userStore.currentUser?.employeeId
-  return stores.value.length > 0 && !hasAssignedStoresForEmployee(stores.value, employeeId)
+  const salespersonId = effectiveSalespersonId.value
+  return stores.value.length > 0 && !hasAssignedStoresForSalesperson(allStores.value, salespersonId)
 })
 
 const filteredProducts = computed(() => {
@@ -139,36 +164,65 @@ const quickPickText = computed(() => {
   return keyword.value ? '快捷选择筛选结果商品' : '快捷选择商品'
 })
 
-const selectedProducts = computed(() => products.value.filter(p => (qtyMap.value[p.id] || 0) > 0))
+const selectedProducts = computed(() => products.value.filter(p => !!qtyMap.value[p.id]))
 
-function productPackageSummary(product: Product) {
-  return formatProductPackageSummary(product, qtyMap.value[product.id] || 0)
-}
-
-const totalQty = computed(() => Object.values(qtyMap.value).reduce((sum, n) => sum + n, 0))
+const totalQty = computed(() => Object.values(qtyMap.value).reduce((sum, item) => sum + normalizeCount(item.qty), 0))
 const totalAmount = computed(() => {
   let total = 0
-  for (const p of products.value) {
-    const qty = qtyMap.value[p.id] || 0
-    total += qty * (p.salePrice || 0)
+  for (const p of selectedProducts.value) {
+    total += normalizeCount(qtyMap.value[p.id]?.qty) * (p.salePrice || 0)
   }
   return total
 })
-const canSubmit = computed(() => !!selectedStore.value && totalQty.value > 0 && !!fromWarehouse.value && (returnType.value !== 'warehouse_return' || !!toWarehouse.value))
+const canSubmit = computed(() => {
+  if (!selectedStore.value || totalQty.value <= 0 || !fromWarehouse.value) return false
+  if (returnType.value === 'warehouse_return') return !!toWarehouse.value
+  return true
+})
+function currentSalespersonId() {
+  return effectiveSalespersonId.value
+}
 
-function incQty(id: string) { qtyMap.value[id] = (qtyMap.value[id] || 0) + 1 }
-function decQty(id: string) { const cur = qtyMap.value[id] || 0; qtyMap.value[id] = cur > 0 ? cur - 1 : 0 }
+function productById(id: string) {
+  return products.value.find(p => p.id === id)
+}
+
+function createQtyInput(productId: string, qty = 0, boxQty = 0): QtyInput {
+  const packQty = normalizeBoxPackQty(productById(productId)?.boxQty)
+  const safeBoxQty = normalizeCount(boxQty)
+  const safeQty = normalizeCount(qty)
+  return {
+    boxQty: safeBoxQty,
+    bagQty: deriveBagQty(safeQty, safeBoxQty, packQty),
+    qty: safeQty,
+  }
+}
+
+function syncQty(productId: string) {
+  const current = qtyMap.value[productId]
+  if (!current) return
+  current.boxQty = normalizeCount(current.boxQty)
+  current.bagQty = normalizeCount(current.bagQty)
+  current.qty = calcQty(current.boxQty, current.bagQty, productById(productId)?.boxQty)
+}
+
+function productPackageSummary(product: Product) {
+  const current = qtyMap.value[product.id]
+  return formatProductPackageSummary(product, current?.qty || 0, current?.boxQty || 0)
+}
 
 function isSelected(id: string) {
-  return (qtyMap.value[id] || 0) > 0
+  return !!qtyMap.value[id]
 }
 
 function toggleSelect(p: Product) {
   if (isSelected(p.id)) {
-    qtyMap.value[p.id] = 0
+    delete qtyMap.value[p.id]
+    qtyMap.value = { ...qtyMap.value }
     return
   }
-  qtyMap.value[p.id] = 1
+  qtyMap.value[p.id] = createQtyInput(p.id)
+  qtyMap.value = { ...qtyMap.value }
 }
 
 function onQuickPickChange(e: any) {
@@ -178,24 +232,39 @@ function onQuickPickChange(e: any) {
 }
 
 function onStoreChange(e: any) { selectedStore.value = stores.value[Number(e.detail.value)] || null }
-function onFromWarehouseChange(e: any) { fromWarehouse.value = vehicleWarehouses.value[Number(e.detail.value)] || null }
+function onFromWarehouseChange(e: any) {
+  fromWarehouse.value = vehicleWarehouses.value[Number(e.detail.value)] || null
+  syncStoresBySalesperson()
+}
 function onToWarehouseChange(e: any) { toWarehouse.value = returnWarehouses.value[Number(e.detail.value)] || null }
+
+function syncStoresBySalesperson() {
+  const visibleStores = userStore.isAdmin
+    ? allStores.value
+    : getVisibleStoresForSalesperson(allStores.value, currentSalespersonId())
+  stores.value = visibleStores
+  if (!selectedStore.value) return
+  if (visibleStores.some(store => store.id === selectedStore.value?.id)) return
+  selectedStore.value = visibleStores[0] || null
+}
 
 async function loadData() {
   const [storeList, productList, whs] = await Promise.all([getStores(), getProducts(), getWarehouses()])
-  const currentEmployeeId = userStore.currentUser?.employeeId
-  stores.value = getVisibleStoresForSession(storeList, userStore.isAdmin, currentEmployeeId)
+  const salespersonId = getSessionSalespersonId(userStore.currentUser)
+  allStores.value = storeList
   products.value = productList
   warehouses.value = whs
 
   if (!fromWarehouse.value) {
-    if (currentEmployeeId) {
-      fromWarehouse.value = vehicleWarehouses.value.find(w => isSameEmployeeId(w.employeeId, currentEmployeeId)) || null
+    if (salespersonId) {
+      fromWarehouse.value = vehicleWarehouses.value.find(w => isSameSalespersonId(w.salespersonId, salespersonId)) || null
     }
     if (!fromWarehouse.value) {
       fromWarehouse.value = vehicleWarehouses.value[0] || null
     }
   }
+
+  syncStoresBySalesperson()
 
   if (!toWarehouse.value) {
     toWarehouse.value = returnWarehouses.value[0] || null
@@ -203,15 +272,23 @@ async function loadData() {
 }
 
 async function submit() {
+  Object.keys(qtyMap.value).forEach(syncQty)
+
   if (!canSubmit.value || !selectedStore.value) {
     uni.showToast({ title: '请完善信息', icon: 'none' })
     return
   }
-  const lines: ReturnLine[] = products.value
-    .filter(p => (qtyMap.value[p.id] || 0) > 0)
-    .map(p => ({ id: genId(), productId: p.id, qty: qtyMap.value[p.id], price: p.salePrice }))
 
-  // 退货类型切换后，如果未选仓库则提示
+  const lines: ReturnLine[] = selectedProducts.value
+    .map(p => ({
+      id: genId(),
+      productId: p.id,
+      boxQty: normalizeCount(qtyMap.value[p.id]?.boxQty),
+      qty: normalizeCount(qtyMap.value[p.id]?.qty),
+      price: p.salePrice || 0,
+    }))
+    .filter(line => line.qty > 0)
+
   if (!fromWarehouse.value) {
     uni.showToast({ title: '请选择退回车库', icon: 'none' })
     return
@@ -222,7 +299,7 @@ async function submit() {
   }
 
   const draft = {
-    employeeId: userStore.currentUser?.employeeId || '',
+    salespersonId: currentSalespersonId(),
     storeId: selectedStore.value.id,
     date: new Date().toISOString().slice(0, 10),
     status: 'draft',
@@ -268,17 +345,21 @@ onMounted(() => {
 .quick-picker.disabled { color:#c0c4cc; background:#f5f7fa; }
 .scan-hint { color:#94a3b8; font-size:22rpx; }
 .hint { color:#f59e0b; font-size:22rpx; margin-bottom:12rpx; }
-.select-btn { padding:0 20rpx; height:72rpx; background:#1890ff; color:#fff; border-radius:12rpx; font-size:26rpx; line-height:72rpx; }
-.select-btn::after { border:none; }
-.product-item { display:flex; align-items:center; justify-content:space-between; padding: 16rpx 0; border-bottom: 2rpx solid #f0f0f0; }
-.info { display:flex; flex-direction:column; }
+.product-item { padding: 18rpx 0; border-bottom: 2rpx solid #f0f0f0; }
+.product-item:last-child { border-bottom:none; }
+.item-head { display:flex; justify-content:space-between; align-items:flex-start; gap:16rpx; }
+.info { display:flex; flex-direction:column; flex:1; }
 .name { font-size: 30rpx; color:#333; }
 .price { font-size: 24rpx; color:#999; }
 .barcode { font-size: 22rpx; color:#94a3b8; }
-.package { font-size: 22rpx; color:#64748b; }
-.qty { display:flex; align-items:center; }
-.btn { width:56rpx; height:56rpx; border-radius: 8rpx; background:#1890ff; color:#fff; font-size:28rpx; line-height:56rpx; text-align:center; padding:0; }
-.num { width:60rpx; text-align:center; font-size:28rpx; }
+.package { font-size: 22rpx; color:#64748b; margin-top:4rpx; }
+.btn-remove { min-width:108rpx; height:56rpx; padding:0 20rpx; background:#fff1f0; color:#ff4d4f; border-radius:999rpx; font-size:24rpx; line-height:56rpx; border:none; }
+.btn-remove::after { border:none; }
+.qty-grid { display:flex; gap:16rpx; margin-top:16rpx; }
+.qty-field { flex:1; }
+.qty-label { display:block; font-size:24rpx; color:#666; margin-bottom:10rpx; }
+.qty-input { width:100%; min-height:80rpx; box-sizing:border-box; border:2rpx solid #dbe3ee; border-radius:12rpx; padding:0 20rpx; font-size:28rpx; background:#fff; }
+.qty-total { display:block; margin-top:12rpx; font-size:24rpx; color:#475569; }
 .summary { display:flex; justify-content:space-between; padding: 10rpx; color:#333; }
 .btn-submit { width:100%; height:88rpx; background:#1890ff; color:#fff; font-size:32rpx; border-radius:44rpx; border:none; }
 .btn-submit::after { border:none; }

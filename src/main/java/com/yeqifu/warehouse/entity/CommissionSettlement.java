@@ -5,24 +5,28 @@ import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
+
 import java.io.Serializable;
 import java.math.BigDecimal;
 import java.util.Date;
 
 @Data
-@TableName("wh_store")
-public class Store implements Serializable {
+@TableName("wh_commission_settlement")
+public class CommissionSettlement implements Serializable {
     @TableId(type = IdType.INPUT)
     private String id;
-    private String code;
-    private String name;
-    private String address;
     @TableField("salesperson_id")
     private String salespersonId;
-    private BigDecimal lat;
-    private BigDecimal lng;
-    private Integer scale;
-    private String status;
+    @TableField("settled_by")
+    private String settledBy;
+    @TableField("sale_amount")
+    private BigDecimal saleAmount;
+    @TableField("return_amount")
+    private BigDecimal returnAmount;
+    @TableField("total_amount")
+    private BigDecimal totalAmount;
+    @TableField("ledger_count")
+    private Integer ledgerCount;
+    private String remark;
     private Date createdAt;
-    private Date updatedAt;
 }

@@ -19,7 +19,8 @@ public class ReturnDoc implements Serializable {
     @TableId(type = IdType.INPUT)
     private String id;
     private String code;
-    private String employeeId;
+    @TableField("salesperson_id")
+    private String salespersonId;
     private String storeId;
 
     @TableField("doc_date")

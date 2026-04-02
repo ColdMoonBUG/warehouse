@@ -23,7 +23,6 @@ const router = createRouter({
           children: [
             { path: 'supplier', component: () => import('@/pages/basic/Supplier.vue'), meta: { title: '厂家管理', adminOnly: true } },
             { path: 'product', component: () => import('@/pages/basic/Product.vue'), meta: { title: '商品管理', adminOnly: true } },
-            { path: 'employee', component: () => import('@/pages/basic/Employee.vue'), meta: { title: '员工管理', adminOnly: true } },
             { path: 'store', component: () => import('@/pages/basic/Store.vue'), meta: { title: '门店管理', adminOnly: true } }
           ]
         },
@@ -48,7 +47,8 @@ const router = createRouter({
           redirect: '/system/account',
           meta: { title: '系统管理', adminOnly: true },
           children: [
-            { path: 'account', component: () => import('@/pages/system/Account.vue'), meta: { title: '账户管理', adminOnly: true } }
+            { path: 'account', component: () => import('@/pages/system/Account.vue'), meta: { title: '账户管理', adminOnly: true } },
+            { path: 'finance', component: () => import('@/pages/system/Finance.vue'), meta: { title: '财务结清', adminOnly: true } }
           ]
         }
       ]
@@ -68,7 +68,7 @@ router.beforeEach((to) => {
   if (needAdmin && session.role !== 'admin') return '/stock/overview'
 
   if (session.role === 'salesperson') {
-    const allow = to.path === '/dashboard' || to.path === '/stock/overview' || to.path.startsWith('/stock/sale')
+    const allow = to.path === '/dashboard' || to.path === '/stock/overview' || to.path.startsWith('/stock/sale') || to.path.startsWith('/stock/return')
     if (!allow) return '/stock/overview'
   }
   return true

@@ -121,7 +121,7 @@ async function initMap() {
       offset: new AMap.Pixel(-BASE_SIZE / 2, -BASE_SIZE / 2)
     })
     const grade = color === '#ef4444' ? '红(高)' : color === '#f97316' ? '橙(中高)' : color === '#eab308' ? '黄(中低)' : '绿(低)'
-    const html = `<b>${s.name}</b><br>${s.address || ''}<br>近30天销量：${qty}件 <span style="color:${color}">●</span>${grade}`
+    const html = `<b>${s.name}</b><br>${s.address || ''}<br>近30天销量：${qty}袋 <span style="color:${color}">●</span>${grade}`
     marker.on('click', () => {
       if (!map || !infoWindow) return
       infoWindow.setContent(html)

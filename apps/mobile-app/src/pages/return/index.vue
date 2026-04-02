@@ -21,7 +21,7 @@
           <text class="date">{{ doc.date }}</text>
         </view>
         <view class="row">
-          <text class="qty">数量: {{ totalQty(doc) }}</text>
+          <text class="qty">数量: {{ totalQty(doc) }}袋</text>
           <text class="amount">金额: ¥{{ totalAmount(doc).toFixed(2) }}</text>
         </view>
         <view class="row">
@@ -36,7 +36,7 @@
 import { ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
-import { getReturns, getStores } from '@/api'
+import { getReturns, getStores, getSessionSalespersonId, isSameSalespersonId } from '@/api'
 import type { ReturnDoc, Store } from '@/types'
 
 const userStore = useUserStore()
@@ -59,8 +59,8 @@ function storeName(id: string) { return stores.value.find(s => s.id === id)?.nam
 
 async function loadData() {
   const [docs, storeList] = await Promise.all([getReturns(), getStores()])
-  const currentEmployeeId = userStore.currentUser?.employeeId
-  list.value = userStore.isAdmin ? docs : docs.filter(d => d.employeeId === currentEmployeeId)
+  const currentSalespersonId = getSessionSalespersonId(userStore.currentUser)
+  list.value = userStore.isAdmin ? docs : docs.filter(d => isSameSalespersonId(d.salespersonId, currentSalespersonId))
   stores.value = storeList
 }
 

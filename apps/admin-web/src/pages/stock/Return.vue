@@ -9,7 +9,7 @@
       </template>
       <div class="filter-row">
         <el-select v-model="filterEmp" clearable placeholder="业务员" style="width:140px" @change="filter">
-          <el-option v-for="e in employees" :key="e.id" :label="e.name" :value="e.id" />
+          <el-option v-for="account in salespersonAccounts" :key="account.id" :label="account.displayName" :value="account.id" />
         </el-select>
         <el-select v-model="filterStore" clearable placeholder="门店" style="width:160px" @change="filter">
           <el-option v-for="s in stores" :key="s.id" :label="s.name" :value="s.id" />
@@ -25,14 +25,14 @@
             <el-tag :type="statusType(row.status)">{{ statusLabel(row.status) }}</el-tag>
           </div>
           <div class="mobile-meta">
-            <span>{{ empName(row.employeeId) }}</span>
+            <span>{{ salespersonName(row.salespersonId) }}</span>
             <span>·</span>
             <span>{{ storeName(row.storeId) }}</span>
           </div>
           <div class="mobile-meta">
             <span>{{ row.date }}</span>
             <span>·</span>
-            <span>总件数 {{ row.lines.reduce((s:number,l:any)=>s+l.qty,0) }}</span>
+            <span>总袋数 {{ row.lines.reduce((s:number,l:any)=>s+l.qty,0) }}</span>
           </div>
           <div class="mobile-actions">
             <el-button link type="primary" @click="$router.push('/stock/return/'+row.id)">查看/编辑</el-button>
@@ -44,13 +44,13 @@
         <el-table :data="filtered" border stripe>
           <el-table-column prop="code" label="单号" width="160" />
           <el-table-column label="业务员" width="100">
-            <template #default="{row}">{{ empName(row.employeeId) }}</template>
+            <template #default="{row}">{{ salespersonName(row.salespersonId) }}</template>
           </el-table-column>
           <el-table-column label="门店" width="150">
             <template #default="{row}">{{ storeName(row.storeId) }}</template>
           </el-table-column>
           <el-table-column prop="date" label="日期" width="110" />
-          <el-table-column label="总件数" width="90">
+          <el-table-column label="总袋数" width="90">
             <template #default="{row}">{{ row.lines.reduce((s:number,l:any)=>s+l.qty,0) }}</template>
           </el-table-column>
           <el-table-column label="状态" width="100">
@@ -73,29 +73,36 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { getReturns } from '@/api/return'
-import { getEmployees } from '@/api/employee'
+import { getSalespersonAccounts, getSession } from '@/api/auth'
 import { getStores } from '@/api/store'
-import type { ReturnDoc, Employee, Store } from '@/types'
+import type { ReturnDoc, Account, Store } from '@/types'
 
 const list = ref<ReturnDoc[]>([])
 const filtered = ref<ReturnDoc[]>([])
-const employees = ref<Employee[]>([])
+const salespersonAccounts = ref<Account[]>([])
 const stores = ref<Store[]>([])
 const filterEmp = ref('')
 const filterStore = ref('')
 const filterDate = ref<[string,string]|null>(null)
 const isMobile = ref(window.innerWidth < 768)
+const session = getSession()
 
-function empName(id: string) { return employees.value.find(e => e.id === id)?.name || '-' }
+function salespersonName(id: string) { return salespersonAccounts.value.find(account => account.id === id)?.displayName || '-' }
 function storeName(id: string) { return stores.value.find(s => s.id === id)?.name || '-' }
 function statusLabel(s: string) { return ({draft:'草稿',posted:'已过账',voided:'已作废'} as any)[s]||s }
 function statusType(s: string) { return ({draft:'info',posted:'success',voided:'danger'} as any)[s]||'' }
 
 function onResize() { isMobile.value = window.innerWidth < 768 }
 
+function visibleStores(list: Store[]) {
+  if (session?.role !== 'salesperson') return list
+  return list.filter(store => store.salespersonId === session.accountId)
+}
+
 function filter() {
   filtered.value = list.value.filter(d => {
-    if (filterEmp.value && d.employeeId !== filterEmp.value) return false
+    if (session?.role === 'salesperson' && d.salespersonId !== session.accountId) return false
+    if (filterEmp.value && d.salespersonId !== filterEmp.value) return false
     if (filterStore.value && d.storeId !== filterStore.value) return false
     if (filterDate.value) {
       if (d.date < filterDate.value[0] || d.date > filterDate.value[1]) return false
@@ -105,7 +112,19 @@ function filter() {
 }
 
 async function load() {
-  ;[list.value, employees.value, stores.value] = await Promise.all([getReturns(), getEmployees(), getStores()])
+  const [returnList, accountList, storeList] = await Promise.all([getReturns(), getSalespersonAccounts(), getStores()])
+  list.value = returnList
+  salespersonAccounts.value = session?.role === 'salesperson'
+    ? accountList.filter(account => account.id === session.accountId)
+    : accountList
+  stores.value = visibleStores(storeList)
+  if (session?.role === 'salesperson') {
+    filterEmp.value = session.accountId
+  }
+  const allowedStoreIds = new Set(stores.value.map(store => store.id))
+  if (filterStore.value && !allowedStoreIds.has(filterStore.value)) {
+    filterStore.value = ''
+  }
   filter()
 }
 onMounted(() => {

@@ -53,6 +53,11 @@ public class OutboundController {
     public Result<Void> save(@RequestBody OutboundDocVO vo) {
         OutboundDoc doc = vo.getDoc();
         List<OutboundLine> lines = vo.getLines();
+        if (lines == null) {
+            lines = java.util.Collections.emptyList();
+        }
+        vo.setLines(lines);
+        normalizeLines(lines);
         if (doc.getStatus() == null) doc.setStatus("draft");
         if (doc.getDocDate() == null) doc.setDocDate(new Date());
 
@@ -132,6 +137,17 @@ public class OutboundController {
         } catch (RuntimeException e) {
             TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
             return Result.error(e.getMessage());
+        }
+    }
+
+    private void normalizeLines(List<OutboundLine> lines) {
+        for (OutboundLine line : lines) {
+            if (line.getBoxQty() == null || line.getBoxQty() < 0) {
+                line.setBoxQty(0);
+            }
+            if (line.getQty() == null || line.getQty() < 0) {
+                line.setQty(0);
+            }
         }
     }
 

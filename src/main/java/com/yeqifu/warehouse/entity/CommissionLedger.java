@@ -1,6 +1,7 @@
 package com.yeqifu.warehouse.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -15,7 +16,8 @@ public class CommissionLedger implements Serializable {
     private String id;
     private String bizType;
     private String docId;
-    private String employeeId;
+    @TableField("salesperson_id")
+    private String salespersonId;
     private String storeId;
     private String productId;
     private Integer qty;
@@ -23,5 +25,9 @@ public class CommissionLedger implements Serializable {
     private BigDecimal amount;
     private BigDecimal commissionRate;
     private BigDecimal commissionAmount;
+    @TableField("settlement_id")
+    private String settlementId;
+    @TableField("settled_at")
+    private Date settledAt;
     private Date createdAt;
 }

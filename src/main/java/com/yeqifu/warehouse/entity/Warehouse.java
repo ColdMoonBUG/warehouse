@@ -1,6 +1,7 @@
 package com.yeqifu.warehouse.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -14,6 +15,7 @@ public class Warehouse implements Serializable {
     private String id;
     private String name;
     private String type; // main/vehicle
-    private String employeeId;
+    @TableField("salesperson_id")
+    private String salespersonId;
     private Date createdAt;
 }

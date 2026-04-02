@@ -15,10 +15,16 @@ public class Account implements Serializable {
     private String username;
     private String displayName;
     private String role;
-    private String employeeId;
     private String passwordHash;
     private String gestureHash;
     private String status;
     private Date createdAt;
     private Date updatedAt;
+
+    public String getSalespersonId() {
+        return "salesperson".equals(role) ? id : null;
+    }
+
+    public void setSalespersonId(String salespersonId) {
+    }
 }

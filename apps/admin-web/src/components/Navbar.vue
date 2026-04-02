@@ -26,7 +26,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { UserFilled } from '@element-plus/icons-vue'
-import { getSession, logout } from '@/api/auth'
+import { getSession, logoutRemote } from '@/api/auth'
 
 const theme = ref(localStorage.getItem('theme') === 'light')
 
@@ -42,9 +42,9 @@ function applyTheme() {
   localStorage.setItem('theme', theme.value ? 'light' : 'dark')
 }
 
-function onCommand(cmd: string) {
+async function onCommand(cmd: string) {
   if (cmd === 'switch' || cmd === 'logout') {
-    logout()
+    await logoutRemote()
     router.replace('/login')
   }
 }

@@ -1,8 +1,21 @@
-import type { Account, Session, Store, SaleDoc, Employee, Product, ReturnDoc, Warehouse, Supplier, StockItem, InboundDoc, InboundLine, TransferDoc, TransferLine, OutboundDoc, OutboundLine } from '@/types'
+import type { Account, Session, Store, SaleDoc, Salesperson, Product, ReturnDoc, Warehouse, Supplier, StockItem, InboundDoc, InboundLine, TransferDoc, TransferLine, OutboundDoc, OutboundLine } from '@/types'
 import { SESSION_KEY, SESSION_DAYS, BASE_URL, USE_MOCK } from '@/utils/config'
 import { simpleHash } from '@/utils'
-import { accountDb, storeDb, saleDb, employeeDb, productDb, supplierDb, genId, now } from '@/mock/storage'
+import { accountDb, storeDb, saleDb, warehouseDb, productDb, supplierDb, genId, now } from '@/mock/storage'
 const RETURN_STORAGE_KEY = 'wh_return'
+
+type PersistablePackLine = {
+  bagQty?: number
+}
+
+function toPersistedPackLine<T extends PersistablePackLine>(line: T): Omit<T, 'bagQty'> {
+  const { bagQty, ...rest } = line
+  return rest as Omit<T, 'bagQty'>
+}
+
+function toPersistedPackLines<T extends PersistablePackLine>(lines: T[] = []): Array<Omit<T, 'bagQty'>> {
+  return lines.map(line => toPersistedPackLine(line))
+}
 
 interface ApiResult<T> {
   code: number
@@ -16,18 +29,18 @@ export interface UploadResult {
 }
 
 const MOBILE_ACCOUNT_LABELS: Record<string, string> = {
-  e1: '大车',
-  emp001: '大车',
+  admin_root: '管理员',
+  admin: '管理员',
+  管理员: '管理员',
+  sp_big: '大车',
+  bigcar: '大车',
   大车: '大车',
-  大车业务: '大车',
-  e2: '小车',
-  emp002: '小车',
+  sp_small: '小车',
+  smallcar: '小车',
   小车: '小车',
-  小车业务: '小车',
-  e3: '三车',
-  emp003: '三车',
+  sp_third: '三车',
+  thirdcar: '三车',
   三车: '三车',
-  三车业务: '三车',
 }
 
 const MOBILE_ACCOUNT_ORDER = ['管理员', '大车', '小车', '三车']
@@ -42,32 +55,81 @@ function getKnownMobileAccountLabel(value?: string): string {
   return MOBILE_ACCOUNT_LABELS[key] || ''
 }
 
-function normalizeEmployeeId(employeeId?: string): string {
-  return getKnownMobileAccountLabel(employeeId) || normalizeMobileAccountToken(employeeId)
-}
-
 function normalizeDisplayName(displayName?: string): string {
   return getKnownMobileAccountLabel(displayName)
 }
 
-export function isSameEmployeeId(left?: string, right?: string): boolean {
+function normalizeAccountLink(account: Account): Account {
+  if (account.role !== 'salesperson') {
+    return {
+      ...account,
+      salespersonId: account.salespersonId || account.id,
+    }
+  }
+  const salespersonId = account.salespersonId || account.id
+  return {
+    ...account,
+    salespersonId,
+  }
+}
+
+function getSalespersonKey(value?: string): string {
+  return getKnownMobileAccountLabel(value) || normalizeMobileAccountToken(value)
+}
+
+export function isSameSalespersonId(left?: string, right?: string): boolean {
   if (!left || !right) return false
-  return normalizeEmployeeId(left) === normalizeEmployeeId(right)
+  return getSalespersonKey(left) === getSalespersonKey(right)
 }
 
-function isStoreAssignedToEmployee(store: Store, employeeId?: string): boolean {
-  return !!employeeId && isSameEmployeeId(store.defaultEmployeeId, employeeId)
+function getStoreSalespersonId(store: Store): string {
+  return store.salespersonId || ''
 }
 
-export function hasAssignedStoresForEmployee(stores: Store[], employeeId?: string): boolean {
-  return stores.some(store => isStoreAssignedToEmployee(store, employeeId))
+export function getWarehouseSalespersonId(warehouse?: Warehouse | null): string {
+  return warehouse?.salespersonId || ''
 }
 
-export function getVisibleStoresForSession(stores: Store[], isAdmin: boolean, employeeId?: string): Store[] {
-  if (isAdmin) return stores
-  const assignedStores = stores.filter(store => isStoreAssignedToEmployee(store, employeeId))
+function getDocSalespersonId(doc: { salespersonId?: string }): string {
+  return doc.salespersonId || ''
+}
+
+export function getSessionSalespersonId(session?: Session | null): string {
+  if (!session) return ''
+  if (session.role === 'admin') return ''
+  if (session.salespersonId) return session.salespersonId
+  return session.accountId || ''
+}
+
+function isStoreAssignedToSalesperson(store: Store, salespersonId?: string): boolean {
+  return !!salespersonId && isSameSalespersonId(getStoreSalespersonId(store), salespersonId)
+}
+
+export function hasAssignedStoresForSalesperson(stores: Store[], salespersonId?: string): boolean {
+  return stores.some(store => isStoreAssignedToSalesperson(store, salespersonId))
+}
+
+export function getVisibleStoresForSalesperson(stores: Store[], salespersonId?: string): Store[] {
+  const assignedStores = stores.filter(store => isStoreAssignedToSalesperson(store, salespersonId))
   return assignedStores.length ? assignedStores : stores
 }
+
+export function getVisibleStoresForSession(stores: Store[], isAdmin: boolean, salespersonId?: string): Store[] {
+  if (isAdmin) return stores
+  return getVisibleStoresForSalesperson(stores, salespersonId)
+}
+
+export function normalizeSalespersonAccounts(accounts: Account[]): Salesperson[] {
+  return accounts
+    .map(account => normalizeAccountLink(account))
+    .filter((account): account is Salesperson => account.role === 'salesperson')
+}
+
+export function getSalespersonName(accounts: Array<{ salespersonId?: string; id?: string; displayName: string }>, value?: string): string {
+  if (!value) return '-'
+  return accounts.find(account => isSameSalespersonId(account.salespersonId || account.id, value))?.displayName || '-'
+}
+
 
 function request<T>(url: string, method: 'GET' | 'POST', data?: any): Promise<T> {
   const fullUrl = `${BASE_URL}${url}`
@@ -104,35 +166,102 @@ function getRequest<T>(url: string, params?: any): Promise<T> {
   return request<T>(query ? `${url}?${query}` : url, 'GET')
 }
 
-function getMobileAccountLabel(role: Account['role'], employeeId?: string, displayName?: string): string {
+function getMobileAccountLabel(role: Account['role'], salespersonId?: string, displayName?: string): string {
   if (role === 'admin') return '管理员'
-  return getKnownMobileAccountLabel(employeeId) || normalizeDisplayName(displayName)
+  return getKnownMobileAccountLabel(salespersonId) || normalizeDisplayName(displayName)
+}
+
+function normalizeStore(store: Store): Store {
+  return {
+    ...store,
+    salespersonId: store.salespersonId || '',
+  }
+}
+
+function normalizeWarehouse(warehouse: Warehouse): Warehouse {
+  const salespersonId = getWarehouseSalespersonId(warehouse)
+  return {
+    ...warehouse,
+    salespersonId,
+  }
+}
+
+function normalizeSaleDoc(doc: SaleDoc): SaleDoc {
+  const salespersonId = getDocSalespersonId(doc)
+  return {
+    ...doc,
+    salespersonId,
+  }
+}
+
+function normalizeReturnDoc(doc: ReturnDoc): ReturnDoc {
+  const salespersonId = getDocSalespersonId(doc)
+  return {
+    ...doc,
+    salespersonId,
+  }
+}
+
+function normalizeOutboundDoc(doc: OutboundDoc): OutboundDoc {
+  const salespersonId = getDocSalespersonId(doc)
+  return {
+    ...doc,
+    salespersonId,
+  }
+}
+
+function toPersistedSaleDoc(doc: SaleDoc): SaleDoc {
+  const salespersonId = getDocSalespersonId(doc)
+  return {
+    ...doc,
+    salespersonId,
+  }
+}
+
+function toPersistedReturnDoc(doc: ReturnDoc): ReturnDoc {
+  const salespersonId = getDocSalespersonId(doc)
+  return {
+    ...doc,
+    salespersonId,
+  }
+}
+
+function toPersistedOutboundDoc(doc: OutboundDoc): OutboundDoc {
+  const salespersonId = getDocSalespersonId(doc)
+  return {
+    ...doc,
+    salespersonId,
+  }
 }
 
 function normalizeMobileAccount(account: Account): Account {
-  const label = getMobileAccountLabel(account.role, account.employeeId, account.displayName)
+  const linkedAccount = normalizeAccountLink(account)
+  const label = getMobileAccountLabel(linkedAccount.role, linkedAccount.salespersonId, linkedAccount.displayName)
   if (!label) {
     return {
-      ...account,
-      displayName: account.displayName || account.username,
+      ...linkedAccount,
+      displayName: linkedAccount.displayName || linkedAccount.username,
     }
   }
   return {
-    ...account,
+    ...linkedAccount,
     displayName: label,
   }
 }
 
 function normalizeMobileSession(session: Session): Session {
-  const label = getMobileAccountLabel(session.role, session.employeeId, session.displayName)
+  const salespersonId = getSessionSalespersonId(session)
+  const label = getMobileAccountLabel(session.role, salespersonId, session.displayName)
   if (!label) {
     return {
       ...session,
+      salespersonId,
       displayName: session.displayName || session.username,
     }
   }
   return {
     ...session,
+    salespersonId,
     displayName: label,
   }
 }
@@ -163,12 +292,15 @@ export function saveSession(account: Account): Session {
   const normalizedAccount = normalizeMobileAccount(account)
   const exp = new Date()
   exp.setDate(exp.getDate() + SESSION_DAYS)
+  const salespersonId = normalizedAccount.role === 'salesperson'
+    ? (normalizedAccount.salespersonId || normalizedAccount.id || '')
+    : (normalizedAccount.salespersonId || '')
   const session: Session = {
     accountId: normalizedAccount.id,
     username: normalizedAccount.username,
     displayName: normalizedAccount.displayName,
     role: normalizedAccount.role,
-    employeeId: normalizedAccount.employeeId,
+    salespersonId,
     expiresAt: exp.toISOString(),
   }
   uni.setStorageSync(SESSION_KEY, JSON.stringify(session))
@@ -179,12 +311,20 @@ export function logout() {
   uni.removeStorageSync(SESSION_KEY)
 }
 
-export async function getAccounts(): Promise<Account[]> {
+export async function getAccounts(includeInactive = false): Promise<Account[]> {
   if (USE_MOCK) {
-    return normalizeMobileAccounts(accountDb.list().filter(a => a.status === 'active'))
+    const list = includeInactive ? accountDb.list() : accountDb.list().filter(a => a.status === 'active')
+    return normalizeMobileAccounts(list)
   }
-  const accounts = await request<Account[]>('/api/account/list', 'GET')
+  const accounts = await getRequest<Account[]>('/api/account/list', {
+    includeInactive: includeInactive ? 'true' : undefined,
+  })
   return normalizeMobileAccounts(accounts)
+}
+
+export async function getSalespersonAccounts(includeInactive = false): Promise<Salesperson[]> {
+  const accounts = await getAccounts(includeInactive)
+  return normalizeSalespersonAccounts(accounts)
 }
 
 export async function loginByPassword(username: string, password: string): Promise<Session> {
@@ -240,18 +380,45 @@ export async function setGesture(accountId: string, gesture: string): Promise<vo
   })
 }
 
+export async function setPassword(accountId: string, passwordHash: string): Promise<void> {
+  if (USE_MOCK) {
+    const accounts = accountDb.list()
+    const acc = accounts.find(a => a.id === accountId)
+    if (!acc) throw new Error('账户不存在')
+    acc.passwordHash = passwordHash
+    accountDb.save(accounts)
+    return
+  }
+  await request<void>('/api/account/setPassword', 'POST', {
+    id: accountId,
+    passwordHash,
+  })
+}
+
+export async function toggleAccount(id: string): Promise<void> {
+  if (USE_MOCK) {
+    const accounts = accountDb.list()
+    const acc = accounts.find(item => item.id === id)
+    if (!acc) throw new Error('账户不存在')
+    acc.status = acc.status === 'active' ? 'inactive' : 'active'
+    accountDb.save(accounts)
+    return
+  }
+  await request<void>(`/api/account/toggle/${id}`, 'POST')
+}
+
 export async function getStores(): Promise<Store[]> {
   if (USE_MOCK) {
-    return storeDb.list().filter(s => s.status === 'active')
+    return storeDb.list().filter(s => s.status === 'active').map(normalizeStore)
   }
-  return request<Store[]>('/api/store/list', 'GET')
+  return (await request<Store[]>('/api/store/list', 'GET')).map(normalizeStore)
 }
 
 export async function getStoresAll(): Promise<Store[]> {
   if (USE_MOCK) {
-    return storeDb.list()
+    return storeDb.list().map(normalizeStore)
   }
-  return request<Store[]>('/api/store/listAll', 'GET')
+  return (await request<Store[]>('/api/store/listAll', 'GET')).map(normalizeStore)
 }
 
 export async function toggleStore(id: string): Promise<void> {
@@ -282,32 +449,6 @@ export async function saveStore(data: Partial<Store> & { name: string; code?: st
   await request<void>('/api/store/save', 'POST', data)
 }
 
-export async function getEmployees(): Promise<Employee[]> {
-  if (USE_MOCK) {
-    return employeeDb.list().filter(e => e.status === 'active')
-  }
-  return request<Employee[]>('/api/employee/list', 'GET')
-}
-
-export async function getEmployeeDetail(id: string): Promise<Employee | null> {
-  if (USE_MOCK) {
-    return employeeDb.list().find(e => e.id === id) || null
-  }
-  return request<Employee>(`/api/employee/detail/${id}`, 'GET')
-}
-
-export async function saveEmployee(data: Partial<Employee> & { name: string; code: string }) {
-  await request<void>('/api/employee/save', 'POST', data)
-}
-
-export async function toggleEmployee(id: string) {
-  await request<void>(`/api/employee/toggle/${id}`, 'POST')
-}
-
-export async function deleteEmployee(id: string) {
-  await request<void>(`/api/employee/delete/${id}`, 'POST')
-}
-
 export async function getProducts(): Promise<Product[]> {
   if (USE_MOCK) {
     return productDb.list().filter(p => p.status === 'active')
@@ -317,9 +458,9 @@ export async function getProducts(): Promise<Product[]> {
 
 export async function getWarehouses(): Promise<Warehouse[]> {
   if (USE_MOCK) {
-    return []
+    return warehouseDb.ensureMain().map(normalizeWarehouse)
   }
-  return request<Warehouse[]>('/api/warehouse/list', 'GET')
+  return (await request<Warehouse[]>('/api/warehouse/list', 'GET')).map(normalizeWarehouse)
 }
 
 export async function saveWarehouse(data: Partial<Warehouse> & { name: string; type: string }) {
@@ -389,7 +530,7 @@ export async function getInboundDetail(id: string): Promise<InboundDoc | null> {
 }
 
 export async function saveInbound(doc: InboundDoc, lines: InboundLine[]) {
-  await request<void>('/api/inbound/save', 'POST', { doc, lines })
+  await request<void>('/api/inbound/save', 'POST', { doc, lines: toPersistedPackLines(lines) })
 }
 
 export async function postInbound(id: string) {
@@ -409,7 +550,7 @@ export async function getTransferDetail(id: string): Promise<TransferDoc | null>
 }
 
 export async function saveTransfer(doc: TransferDoc, lines: TransferLine[]) {
-  await request<void>('/api/transfer/save', 'POST', { doc, lines })
+  await request<void>('/api/transfer/save', 'POST', { doc, lines: toPersistedPackLines(lines) })
 }
 
 export async function postTransfer(id: string) {
@@ -421,15 +562,23 @@ export async function voidTransfer(id: string) {
 }
 
 export async function getOutbounds(): Promise<OutboundDoc[]> {
-  return request<OutboundDoc[]>('/api/outbound/list', 'GET')
+  if (USE_MOCK) {
+    return []
+  }
+  return (await request<OutboundDoc[]>('/api/outbound/list', 'GET')).map(normalizeOutboundDoc)
 }
 
 export async function getOutboundDetail(id: string): Promise<OutboundDoc | null> {
-  return request<OutboundDoc>(`/api/outbound/detail/${id}`, 'GET')
+  if (USE_MOCK) {
+    return null
+  }
+  const doc = await request<OutboundDoc>(`/api/outbound/detail/${id}`, 'GET')
+  return doc ? normalizeOutboundDoc(doc) : null
 }
 
 export async function saveOutbound(doc: OutboundDoc, lines: OutboundLine[]) {
-  await request<void>('/api/outbound/save', 'POST', { doc, lines })
+  const nextDoc = toPersistedOutboundDoc({ ...doc, lines: toPersistedPackLines(lines) })
+  await request<void>('/api/outbound/save', 'POST', { doc: nextDoc, lines: nextDoc.lines })
 }
 
 export async function postOutbound(id: string) {
@@ -487,22 +636,23 @@ export function getImageUrl(path: string) {
 
 export async function getSales(): Promise<SaleDoc[]> {
   if (USE_MOCK) {
-    return saleDb.list().sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    return saleDb.list().map(normalizeSaleDoc).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   }
-  return request<SaleDoc[]>('/api/sale/list', 'GET')
+  return (await request<SaleDoc[]>('/api/sale/list', 'GET')).map(normalizeSaleDoc)
 }
 
 export async function getSaleDetail(id: string): Promise<SaleDoc | null> {
   if (USE_MOCK) {
     const doc = saleDb.list().find(d => d.id === id)
-    return doc || null
+    return doc ? normalizeSaleDoc(doc) : null
   }
-  return request<SaleDoc>(`/api/sale/detail/${id}`, 'GET')
+  const doc = await request<SaleDoc>(`/api/sale/detail/${id}`, 'GET')
+  return doc ? normalizeSaleDoc(doc) : null
 }
 
 export async function saveSale(doc: SaleDoc): Promise<SaleDoc> {
+  const nextDoc = toPersistedSaleDoc({ ...doc, lines: toPersistedPackLines(doc.lines) })
   if (USE_MOCK) {
-    const nextDoc = { ...doc }
     if (!nextDoc.id) {
       nextDoc.id = genId()
     }
@@ -520,9 +670,10 @@ export async function saveSale(doc: SaleDoc): Promise<SaleDoc> {
       list.push(nextDoc)
     }
     saleDb.save(list)
-    return nextDoc
+    return normalizeSaleDoc(nextDoc)
   }
-  return request<SaleDoc>('/api/sale/save', 'POST', { doc, lines: doc.lines })
+  const saved = await request<SaleDoc>('/api/sale/save', 'POST', { doc: nextDoc, lines: nextDoc.lines })
+  return normalizeSaleDoc(saved)
 }
 
 export async function postSale(id: string): Promise<void> {
@@ -565,9 +716,13 @@ export async function getStoreSaleQty(days = 30): Promise<Record<string, number>
 
 export async function getReturns(): Promise<ReturnDoc[]> {
   if (USE_MOCK) {
-    try { return JSON.parse(localStorage.getItem(RETURN_STORAGE_KEY) || '[]') } catch { return [] }
+    try {
+      return JSON.parse(localStorage.getItem(RETURN_STORAGE_KEY) || '[]').map(normalizeReturnDoc)
+    } catch {
+      return []
+    }
   }
-  return request<ReturnDoc[]>('/api/return/list', 'GET')
+  return (await request<ReturnDoc[]>('/api/return/list', 'GET')).map(normalizeReturnDoc)
 }
 
 export async function getReturnDetail(id: string): Promise<ReturnDoc | null> {
@@ -575,14 +730,15 @@ export async function getReturnDetail(id: string): Promise<ReturnDoc | null> {
     const list = await getReturns()
     return list.find(d => d.id === id) || null
   }
-  return request<ReturnDoc>(`/api/return/detail/${id}`, 'GET')
+  const doc = await request<ReturnDoc>(`/api/return/detail/${id}`, 'GET')
+  return doc ? normalizeReturnDoc(doc) : null
 }
 
 export async function saveReturn(doc: ReturnDoc, lines: ReturnDoc['lines']): Promise<ReturnDoc> {
-  const nextDoc: ReturnDoc = {
+  const nextDoc: ReturnDoc = toPersistedReturnDoc({
     ...doc,
-    lines,
-  }
+    lines: toPersistedPackLines(lines),
+  })
   if (USE_MOCK) {
     if (!nextDoc.id) {
       nextDoc.id = genId()
@@ -595,12 +751,13 @@ export async function saveReturn(doc: ReturnDoc, lines: ReturnDoc['lines']): Pro
     }
     const list = await getReturns()
     const idx = list.findIndex(d => d.id === nextDoc.id)
-    if (idx >= 0) list[idx] = nextDoc
-    else list.push(nextDoc)
-    localStorage.setItem(RETURN_STORAGE_KEY, JSON.stringify(list))
-    return nextDoc
+    if (idx >= 0) list[idx] = normalizeReturnDoc(nextDoc)
+    else list.push(normalizeReturnDoc(nextDoc))
+    localStorage.setItem(RETURN_STORAGE_KEY, JSON.stringify(list.map(toPersistedReturnDoc)))
+    return normalizeReturnDoc(nextDoc)
   }
-  return request<ReturnDoc>('/api/return/save', 'POST', { doc: nextDoc, lines })
+  const saved = await request<ReturnDoc>('/api/return/save', 'POST', { doc: nextDoc, lines: nextDoc.lines })
+  return normalizeReturnDoc(saved)
 }
 
 export async function postReturn(id: string): Promise<void> {

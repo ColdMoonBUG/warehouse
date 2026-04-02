@@ -20,7 +20,7 @@
         </view>
         <view class="row">
           <text class="label">业务员</text>
-          <text class="value">{{ employeeName }}</text>
+          <text class="value">{{ salespersonName }}</text>
         </view>
       </view>
 
@@ -28,13 +28,13 @@
         <view class="card-title">商品明细</view>
         <view v-for="line in doc.lines" :key="line.id" class="line">
           <text class="name">{{ getProductName(line.productId) }}</text>
-          <text class="qty">x{{ line.qty }}</text>
+          <text class="qty">{{ lineQtyText(line) }}</text>
           <text class="price">¥{{ line.price }}</text>
         </view>
       </view>
 
       <view class="summary">
-        <text>合计数量: {{ totalQty }}</text>
+        <text>合计数量: {{ totalQty }}袋</text>
         <text>合计金额: ¥{{ totalAmount.toFixed(2) }}</text>
       </view>
 
@@ -49,9 +49,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
-import { getSaleDetail, getStores, getEmployees, getProducts, voidSale } from '@/api'
-import type { SaleDoc, Store, Employee, Product } from '@/types'
-import { getPageQueryParam } from '@/utils'
+import { getSaleDetail, getStores, getSalespersonAccounts, getProducts, voidSale, isSameSalespersonId } from '@/api'
+import type { SaleDoc, Store, Salesperson, Product } from '@/types'
+import { getPageQueryParam, formatPackSummary, normalizeCount } from '@/utils'
 
 async function voidDoc() {
   if (!doc.value) return
@@ -65,7 +65,7 @@ const userStore = useUserStore()
 
 const doc = ref<SaleDoc | null>(null)
 const stores = ref<Store[]>([])
-const employees = ref<Employee[]>([])
+const salespersons = ref<Salesperson[]>([])
 const products = ref<Product[]>([])
 const docId = ref('')
 
@@ -74,9 +74,9 @@ const storeName = computed(() => {
   return s?.name || '-'
 })
 
-const employeeName = computed(() => {
-  const e = employees.value.find(i => i.id === doc.value?.employeeId)
-  return e?.name || '-'
+const salespersonName = computed(() => {
+  const e = salespersons.value.find(i => isSameSalespersonId(i.salespersonId || i.id, doc.value?.salespersonId))
+  return e?.displayName || '-'
 })
 
 const totalQty = computed(() => {
@@ -93,21 +93,27 @@ function getProductName(id: string) {
   return products.value.find(p => p.id === id)?.name || id
 }
 
+function lineQtyText(line: { productId: string; qty: number; boxQty?: number }) {
+  const product = products.value.find(p => p.id === line.productId)
+  const packQty = product?.boxQty
+  return formatPackSummary(normalizeCount(line.qty), normalizeCount(line.boxQty), packQty)
+}
+
 function printSale() {
   uni.showToast({ title: '打印功能待接入蓝牙', icon: 'none' })
 }
 
 async function loadDetail() {
   if (!docId.value) return
-  const [detail, storeList, empList, productList] = await Promise.all([
+  const [detail, storeList, salespersonList, productList] = await Promise.all([
     getSaleDetail(docId.value),
     getStores(),
-    getEmployees(),
+    getSalespersonAccounts(),
     getProducts(),
   ])
   doc.value = detail
   stores.value = storeList
-  employees.value = empList
+  salespersons.value = salespersonList
   products.value = productList
 }
 

@@ -19,7 +19,8 @@ public class SaleDoc implements Serializable {
     @TableId(type = IdType.INPUT)
     private String id;
     private String code;
-    private String employeeId;
+    @TableField("salesperson_id")
+    private String salespersonId;
     private String storeId;
     private String warehouseId;
 
@@ -38,9 +39,6 @@ public class SaleDoc implements Serializable {
 
     @TableField(exist = false)
     private List<SaleLine> lines;
-
-    @TableField(exist = false)
-    private String employeeName;
 
     @TableField(exist = false)
     private String storeName;

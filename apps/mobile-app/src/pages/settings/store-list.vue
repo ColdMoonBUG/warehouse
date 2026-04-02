@@ -15,8 +15,8 @@
         <view class="info">
           <text class="name">{{ s.name }}</text>
           <text class="meta">状态：{{ s.status === 'active' ? '启用' : '停用' }}</text>
-          <text class="meta" v-if="employeeNameMap[s.defaultEmployeeId || '']">
-            业务员：{{ employeeNameMap[s.defaultEmployeeId || ''] }}
+          <text class="meta" v-if="salespersonName(s)">
+            业务员：{{ salespersonName(s) }}
           </text>
         </view>
         <view class="ops">
@@ -33,25 +33,25 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
-import { getStoresAll, toggleStore, getEmployees } from '@/api'
-import type { Store, Employee } from '@/types'
+import { getStoresAll, toggleStore, getSalespersonAccounts, getSalespersonName } from '@/api'
+import type { Store, Salesperson } from '@/types'
 import { useUserStore } from '@/store/user'
 
 const userStore = useUserStore()
 const stores = ref<Store[]>([])
-const employees = ref<Employee[]>([])
-const employeeNameMap = ref<Record<string, string>>({})
+const salespersons = ref<Salesperson[]>([])
 
 async function loadData() {
-  const [storeList, employeeList] = await Promise.all([
+  const [storeList, salespersonList] = await Promise.all([
     getStoresAll(),
-    getEmployees(),
+    getSalespersonAccounts(),
   ])
   stores.value = storeList
-  employees.value = employeeList
-  const map: Record<string, string> = {}
-  for (const e of employeeList) map[e.id] = e.name
-  employeeNameMap.value = map
+  salespersons.value = salespersonList
+}
+
+function salespersonName(store: Store) {
+  return getSalespersonName(salespersons.value, store.salespersonId)
 }
 
 function guard() {

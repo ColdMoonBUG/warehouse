@@ -12,7 +12,7 @@
         <el-table-column prop="name" label="名称" />
         <el-table-column prop="address" label="地址" />
         <el-table-column label="默认业务员" width="120">
-          <template #default="{row}">{{ empName(row.defaultEmployeeId) }}</template>
+          <template #default="{row}">{{ salespersonName(row.salespersonId) }}</template>
         </el-table-column>
         <el-table-column label="经纬度" width="160">
           <template #default="{row}">{{ row.lat ? `${row.lat},${row.lng}` : '-' }}</template>
@@ -43,8 +43,8 @@
             </el-form-item>
             <el-form-item label="地址"><el-input v-model="form.address" /></el-form-item>
             <el-form-item label="默认业务员">
-              <el-select v-model="form.defaultEmployeeId" clearable placeholder="请选择" style="width:100%">
-                <el-option v-for="e in employees" :key="e.id" :label="e.name" :value="e.id" />
+              <el-select v-model="form.salespersonId" clearable placeholder="请选择" style="width:100%">
+                <el-option v-for="account in salespersonAccounts" :key="account.id" :label="account.displayName" :value="account.id" />
               </el-select>
             </el-form-item>
             <el-form-item label="地址搜索">
@@ -77,11 +77,11 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getStores, saveStore, toggleStore, deleteStore } from '@/api/store'
-import { getEmployees } from '@/api/employee'
-import type { Store, Employee } from '@/types'
+import { getSalespersonAccounts } from '@/api/auth'
+import type { Store, Account } from '@/types'
 
 const list = ref<Store[]>([])
-const employees = ref<Employee[]>([])
+const salespersonAccounts = ref<Account[]>([])
 const dlg = ref(false)
 const formRef = ref()
 const form = ref<Partial<Store>>({})
@@ -95,12 +95,12 @@ const rules = {
 let dlgMap: any = null
 let dlgMarker: any = null
 
-function empName(id?: string) {
-  return employees.value.find(e => e.id === id)?.name || '-'
+function salespersonName(id?: string) {
+  return salespersonAccounts.value.find(account => account.id === id)?.displayName || '-'
 }
 
 async function load() {
-  ;[list.value, employees.value] = await Promise.all([getStores(), getEmployees()])
+  ;[list.value, salespersonAccounts.value] = await Promise.all([getStores(), getSalespersonAccounts()])
 }
 onMounted(load)
 

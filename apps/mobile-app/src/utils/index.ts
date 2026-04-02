@@ -64,17 +64,67 @@ export function formatProductQuickPickLabel(product: { name?: string; barcode?: 
   return product.barcode ? `${name}（${product.barcode}）` : name
 }
 
+// 规范化每箱袋数
+export function normalizeBoxPackQty(boxQty?: number): number {
+  const normalized = Math.floor(Number(boxQty || 0))
+  return normalized > 0 ? normalized : 1
+}
+
+// 规范化数量输入
+export function normalizeCount(value?: number): number {
+  const normalized = Math.floor(Number(value || 0))
+  return normalized > 0 ? normalized : 0
+}
+
+// 计算总袋数
+export function calcQty(boxCount?: number, bagCount?: number, productBoxQty?: number): number {
+  const safeBoxCount = normalizeCount(boxCount)
+  const safeBagCount = normalizeCount(bagCount)
+  const packQty = normalizeBoxPackQty(productBoxQty)
+  return safeBoxCount * packQty + safeBagCount
+}
+
+// 根据总袋数和箱数反推散袋数
+export function deriveBagQty(totalQty?: number, boxCount?: number, productBoxQty?: number): number {
+  const safeTotalQty = normalizeCount(totalQty)
+  const safeBoxCount = normalizeCount(boxCount)
+  const packQty = normalizeBoxPackQty(productBoxQty)
+  return Math.max(safeTotalQty - safeBoxCount * packQty, 0)
+}
+
+// 格式化袋数展示
+export function formatBagQty(qty?: number): string {
+  return `${normalizeCount(qty)}袋`
+}
+
+// 格式化箱袋摘要
+export function formatPackSummary(totalQty?: number, boxCount?: number, productBoxQty?: number): string {
+  const safeTotalQty = normalizeCount(totalQty)
+  if (safeTotalQty <= 0) return ''
+
+  const safeBoxCount = normalizeCount(boxCount)
+  const bagQty = deriveBagQty(safeTotalQty, safeBoxCount, productBoxQty)
+
+  if (safeBoxCount > 0 && bagQty > 0) {
+    return `${safeBoxCount}箱${bagQty}袋（共${safeTotalQty}袋）`
+  }
+  if (safeBoxCount > 0) {
+    return `${safeBoxCount}箱（共${safeTotalQty}袋）`
+  }
+  return `${safeTotalQty}袋`
+}
+
 // 获取商品包装换算提示
-export function formatProductPackageSummary(product: { unit?: string; boxQty?: number }, qty: number): string {
-  const packQty = Number(product.boxQty || 0)
-  if (packQty <= 0 || qty <= 0) return ''
-  const packUnit = product.unit && product.unit !== '件' ? product.unit : '箱'
-  const packCount = qty / packQty
-  const packCountText = packCount
-    .toFixed(2)
-    .replace(/\.00$/, '')
-    .replace(/(\.\d)0$/, '$1')
-  return `折合${packCountText}${packUnit}（${packQty}件/${packUnit}）`
+export function formatProductPackageSummary(
+  product: { unit?: string; boxQty?: number },
+  qty?: number,
+  boxCount?: number
+): string {
+  const packQty = normalizeBoxPackQty(product.boxQty)
+  const parts = [`每箱${packQty}袋`]
+  const summary = formatPackSummary(qty, boxCount, packQty)
+  if (summary) parts.push(summary)
+  return parts.join(' · ')
 }
 
 // 防抖

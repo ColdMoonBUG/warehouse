@@ -54,7 +54,7 @@
           <view class="info-row">
             <text class="label">30天销量</text>
             <text class="value">
-              <text class="qty">{{ selectedStore.saleQty || 0 }}</text> 件
+              <text class="qty">{{ selectedStore.saleQty || 0 }}</text> 袋
             </text>
           </view>
         </view>
@@ -70,14 +70,14 @@
 import { ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
-import { getStores, getStoreSaleQty, getEmployees, getVisibleStoresForSession, hasAssignedStoresForEmployee, isSameEmployeeId } from '@/api'
+import { getStores, getStoreSaleQty, getSalespersonAccounts, getVisibleStoresForSession, hasAssignedStoresForSalesperson, isSameSalespersonId, getSessionSalespersonId } from '@/api'
 import { AMAP_KEY } from '@/utils/config'
-import type { Store, Employee } from '@/types'
+import type { Store, Salesperson } from '@/types'
 
 interface StoreWithSale extends Store {
   saleQty: number
   color: string
-  employeeName?: string
+  salespersonName?: string
 }
 
 const userStore = useUserStore()
@@ -86,7 +86,7 @@ const mapCenter = ref({ latitude: 32.9987, longitude: 112.5292 })
 const mapScale = ref(13)
 const markers = ref<any[]>([])
 const stores = ref<StoreWithSale[]>([])
-const employees = ref<Employee[]>([])
+const salespersons = ref<Salesperson[]>([])
 const selectedStore = ref<StoreWithSale | null>(null)
 
 function gradeColor(qty: number, max: number): string {
@@ -107,23 +107,23 @@ function createMarkerIcon(color: string): string {
 }
 
 async function loadData() {
-  const [storeList, saleQty, empList, loc] = await Promise.all([
+  const [storeList, saleQty, salespersonList, loc] = await Promise.all([
     getStores(),
     getStoreSaleQty(30),
-    getEmployees(),
+    getSalespersonAccounts(),
     uni.getLocation({ type: 'gcj02' }).then(res => res).catch(() => null),
   ])
   if (loc && loc.latitude && loc.longitude) {
     mapCenter.value = { latitude: loc.latitude, longitude: loc.longitude }
   }
 
-  employees.value = empList
+  salespersons.value = salespersonList
 
   const maxQty = Math.max(...Object.values(saleQty), 1)
 
-  const currentEmployeeId = userStore.currentUser?.employeeId
-  const visibleStores = getVisibleStoresForSession(storeList, userStore.isAdmin, currentEmployeeId)
-  if (!userStore.isAdmin && storeList.length > 0 && !hasAssignedStoresForEmployee(storeList, currentEmployeeId)) {
+  const currentSalespersonId = getSessionSalespersonId(userStore.currentUser)
+  const visibleStores = getVisibleStoresForSession(storeList, userStore.isAdmin, currentSalespersonId)
+  if (!userStore.isAdmin && storeList.length > 0 && !hasAssignedStoresForSalesperson(storeList, currentSalespersonId)) {
     uni.showToast({ title: '当前账户未绑定超市，已显示全部启用超市', icon: 'none' })
   }
 
@@ -132,12 +132,12 @@ async function loadData() {
     .map(s => {
       const qty = saleQty[s.id] || 0
       const color = gradeColor(qty, maxQty)
-      const emp = employees.value.find(e => isSameEmployeeId(e.id, s.defaultEmployeeId))
+      const salesperson = salespersons.value.find(item => isSameSalespersonId(item.salespersonId || item.id, s.salespersonId))
       return {
         ...s,
         saleQty: qty,
         color,
-        employeeName: emp?.name,
+        salespersonName: salesperson?.displayName,
       }
     })
 

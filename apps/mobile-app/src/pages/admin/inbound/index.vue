@@ -15,7 +15,7 @@
         </view>
         <view class="row">
           <text class="date">{{ doc.date }}</text>
-          <text class="qty">数量: {{ totalQty(doc) }}</text>
+          <text class="qty">数量: {{ totalQty(doc) }}袋</text>
         </view>
       </view>
     </view>

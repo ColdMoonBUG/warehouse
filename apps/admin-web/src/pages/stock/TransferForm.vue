@@ -49,19 +49,25 @@
       <el-table :data="doc.lines" border>
         <el-table-column label="商品" min-width="180">
           <template #default="{row}">
-            <el-select v-model="row.productId" placeholder="选择商品" :disabled="doc.status!=='draft'" style="width:100%">
+            <el-select v-model="row.productId" placeholder="选择商品" :disabled="doc.status!=='draft'" style="width:100%" @change="onProductChange(row)">
               <el-option v-for="p in products" :key="p.id" :label="p.name" :value="p.id" />
             </el-select>
+            <div class="pack-hint">{{ productPackLabel(getProduct(row.productId)) }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="箱数" width="150">
+        <el-table-column label="箱数" width="120">
           <template #default="{row}">
-            <el-input-number v-model="row.boxQty" :min="0" :disabled="doc.status!=='draft'" controls-position="right" style="width:130px" @change="onBoxChange(row)" />
+            <el-input-number v-model="row.boxQty" :min="0" :disabled="doc.status!=='draft'" controls-position="right" style="width:100px" @change="updateLine(row)" />
           </template>
         </el-table-column>
-        <el-table-column label="件数" width="150">
+        <el-table-column label="袋数" width="120">
           <template #default="{row}">
-            <el-input-number v-model="row.qty" :min="0" :disabled="doc.status!=='draft'" controls-position="right" style="width:130px" />
+            <el-input-number v-model="row.bagQty" :min="0" :disabled="doc.status!=='draft'" controls-position="right" style="width:100px" @change="updateLine(row)" />
+          </template>
+        </el-table-column>
+        <el-table-column label="总袋数" width="140">
+          <template #default="{row}">
+            <el-input-number v-model="row.qty" :min="0" :disabled="doc.status!=='draft'" controls-position="right" style="width:120px" @change="onQtyChange(row)" />
           </template>
         </el-table-column>
         <el-table-column label="操作" width="80">
@@ -80,6 +86,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getTransferById, getTransfers, saveTransfer, postTransfer, voidTransfer, getWarehouses } from '@/api/stock'
 import { getProducts } from '@/api/product'
+import { getPackSize, normalizePackLine, productPackLabel } from '@/utils/pack'
 import type { TransferDoc, TransferLine, Warehouse, Product } from '@/types'
 import dayjs from 'dayjs'
 
@@ -94,22 +101,48 @@ const doc = ref<TransferDoc>({
   status: 'draft', lines: [], createdAt: new Date().toISOString()
 })
 
+function getProduct(productId: string) {
+  return products.value.find(p => p.id === productId)
+}
+
+function normalizeLines(lines: TransferLine[] = []) {
+  return lines.map(line => normalizePackLine({ ...line }, getProduct(line.productId)))
+}
+
+function applyDoc(detail: TransferDoc) {
+  doc.value = {
+    ...detail,
+    lines: normalizeLines(detail.lines)
+  }
+}
+
 function statusLabel(s: string) { return ({draft:'草稿',posted:'已过账',voided:'已作废'} as any)[s]||s }
 function statusType(s: string) { return ({draft:'info',posted:'success',voided:'danger'} as any)[s]||'' }
 function gId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6) }
 
-function addLine() { doc.value.lines.push({ id: gId(), productId: '', boxQty: 0, qty: 0 }) }
-function onBoxChange(row: TransferLine) {
-  const p = products.value.find(p => p.id === row.productId)
-  if (p) row.qty = row.boxQty * p.boxQty
+function addLine() { doc.value.lines.push({ id: gId(), productId: '', boxQty: 0, bagQty: 0, qty: 0 }) }
+
+function updateLine(row: TransferLine) {
+  Object.assign(row, normalizePackLine(row, getProduct(row.productId)))
+}
+
+function onQtyChange(row: TransferLine) {
+  const product = getProduct(row.productId)
+  row.qty = Math.max(0, Math.floor(Number(row.qty) || 0))
+  row.boxQty = Math.floor(row.qty / getPackSize(product))
+  row.bagQty = row.qty - row.boxQty * getPackSize(product)
+}
+
+function onProductChange(row: TransferLine) {
+  updateLine(row)
 }
 
 async function saveDraft() {
   const saved = await saveTransfer(doc.value, doc.value.lines)
-  if (saved) doc.value = saved as any
+  if (saved) applyDoc(saved as TransferDoc)
   if (!doc.value.id) {
     const list = await getTransfers()
-    if (list[0]) doc.value = list[0]
+    if (list[0]) applyDoc(list[0])
   }
   ElMessage.success('草稿已保存')
 }
@@ -119,16 +152,16 @@ async function post() {
   if (doc.value.fromWarehouseId === doc.value.toWarehouseId) { ElMessage.error('调出和调入仓不能相同'); return }
   if (!doc.value.lines.length) { ElMessage.error('请添加明细'); return }
   const saved = await saveTransfer(doc.value, doc.value.lines)
-  if (saved) doc.value = saved as any
+  if (saved) applyDoc(saved as TransferDoc)
   if (!doc.value.id) {
     const list = await getTransfers()
-    if (list[0]) doc.value = list[0]
+    if (list[0]) applyDoc(list[0])
   }
   try {
     await postTransfer(doc.value.id)
     const list2 = await getTransfers()
     const u2 = list2.find(d => d.id === doc.value.id)
-    if (u2) doc.value = u2
+    if (u2) applyDoc(u2)
     ElMessage.success('过账成功')
   } catch(e: any) {
     ElMessage.error(e.message || '过账失败')
@@ -140,7 +173,7 @@ async function voidDoc() {
   await voidTransfer(doc.value.id)
   const list = await getTransfers()
   const u = list.find(d => d.id === doc.value.id)
-  if (u) doc.value = u
+  if (u) applyDoc(u)
   ElMessage.success('已作废并反冲库存')
 }
 
@@ -148,7 +181,7 @@ async function loadDetail(id: string) {
   if (id && id !== 'new') {
     const detail = await getTransferById(id)
     if (detail) {
-      doc.value = detail
+      applyDoc(detail)
       return
     }
   }
@@ -174,6 +207,12 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.pack-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #909399;
+}
+
 :deep(.el-table .cell) {
   padding: 4px 6px;
   overflow: visible;

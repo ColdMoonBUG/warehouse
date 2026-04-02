@@ -59,6 +59,7 @@ public class InboundController {
             lines = java.util.Collections.emptyList();
         }
         vo.setLines(lines);
+        normalizeLines(lines);
         if (doc.getStatus() == null || doc.getStatus().isEmpty()) doc.setStatus("draft");
         if (doc.getDocDate() == null) doc.setDocDate(new Date());
 
@@ -121,6 +122,17 @@ public class InboundController {
         } catch (RuntimeException e) {
             TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
             return Result.error(e.getMessage());
+        }
+    }
+
+    private void normalizeLines(List<InboundLine> lines) {
+        for (InboundLine line : lines) {
+            if (line.getBoxQty() == null || line.getBoxQty() < 0) {
+                line.setBoxQty(0);
+            }
+            if (line.getQty() == null || line.getQty() < 0) {
+                line.setQty(0);
+            }
         }
     }
 

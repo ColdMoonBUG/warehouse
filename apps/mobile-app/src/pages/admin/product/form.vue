@@ -34,12 +34,12 @@
         </picker>
       </view>
       <view class="section">
-        <text class="label">单位</text>
-        <input v-model="form.unit" placeholder="单位(件/箱)" />
+        <text class="label">基础单位</text>
+        <view class="picker"><text>袋</text></view>
       </view>
       <view class="section">
-        <text class="label">箱换算</text>
-        <input v-model.number="form.boxQty" type="number" placeholder="每箱数量" />
+        <text class="label">每箱袋数</text>
+        <input v-model.number="form.boxQty" type="number" placeholder="请输入每箱袋数" />
       </view>
       <view class="section">
         <text class="label">保质期(天)</text>
@@ -68,11 +68,11 @@ import { onLoad } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
 import { getProductDetail, saveProduct, getSuppliers, uploadFile, getImageUrl, toggleProduct } from '@/api'
 import type { Product, Supplier } from '@/types'
-import { getPageQueryParam } from '@/utils'
+import { getPageQueryParam, normalizeBoxPackQty } from '@/utils'
 
 const userStore = useUserStore()
 const suppliers = ref<Supplier[]>([])
-const form = ref<Partial<Product>>({ boxQty: 1, shelfDays: 365 })
+const form = ref<Partial<Product>>({ unit: '袋', boxQty: 1, shelfDays: 365 })
 const previewUrl = ref('')
 const uploading = ref(false)
 const supplierName = computed(() => suppliers.value.find(s => s.id === form.value.supplierId)?.name || '')
@@ -95,7 +95,11 @@ function onSupplierChange(e: any) {
 async function loadEdit(id: string) {
   const product = await getProductDetail(id)
   if (!product) return
-  form.value = { ...product }
+  form.value = {
+    ...product,
+    unit: '袋',
+    boxQty: normalizeBoxPackQty(product.boxQty),
+  }
   if (product.imageUrl) previewUrl.value = getImageUrl(product.imageUrl)
 }
 
@@ -128,6 +132,8 @@ async function submit() {
     uni.showToast({ title: '图片上传中', icon: 'none' })
     return
   }
+  form.value.unit = '袋'
+  form.value.boxQty = normalizeBoxPackQty(form.value.boxQty)
   await saveProduct(form.value as any)
   uni.showToast({ title: '保存成功', icon: 'success' })
   setTimeout(() => uni.navigateBack(), 400)
@@ -163,7 +169,7 @@ onMounted(async () => {
 .section { background:#fff; border-radius:16rpx; padding:20rpx; margin-bottom:16rpx; }
 .label { display:block; font-size:26rpx; color:#666; margin-bottom:10rpx; }
 input { font-size:30rpx; }
-.picker { padding: 20rpx; border:2rpx solid #eee; border-radius:12rpx; font-size:30rpx; }
+.picker { padding: 20rpx; border:2rpx solid #eee; border-radius:12rpx; font-size:30rpx; color:#333; }
 .image-row { display:flex; align-items:center; gap:16rpx; }
 .thumb { width:120rpx; height:120rpx; border-radius:12rpx; }
 .placeholder { display:flex; align-items:center; justify-content:center; color:#999; background:#fafafa; border:1rpx dashed #ddd; }

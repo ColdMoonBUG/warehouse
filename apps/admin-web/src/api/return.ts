@@ -1,4 +1,5 @@
 import request from '@/utils/request'
+import { toPersistedPackLine } from '@/utils/pack'
 import type { ReturnDoc, ReturnLine } from '@/types'
 
 export async function getReturns(): Promise<ReturnDoc[]> {
@@ -15,7 +16,7 @@ export async function saveReturn(doc: Partial<ReturnDoc>, lines: ReturnLine[]) {
   const payload = { ...doc } as any
   delete payload.createdAt
   delete payload.updatedAt
-  const res = await request.post('/return/save', { doc: payload, lines })
+  const res = await request.post('/return/save', { doc: payload, lines: lines.map(line => toPersistedPackLine(line)) })
   return res.data as ReturnDoc
 }
 

@@ -43,6 +43,7 @@ const userStore = useUserStore()
 const username = ref('')
 const displayName = ref('')
 const accountId = ref('')
+const manageMode = ref(false)
 const selectedDots = ref<number[]>([])
 const isError = ref(false)
 const tipText = ref('请绘制手势密码')
@@ -163,6 +164,12 @@ async function onTouchEnd() {
       try {
         await setGesture(accountId.value, gesture)
         uni.showToast({ title: '设置成功', icon: 'success' })
+        if (manageMode.value) {
+          setTimeout(() => {
+            uni.navigateBack()
+          }, 500)
+          return
+        }
         applyRoleTabBar()
         setTimeout(() => {
           switchToRoleHome()
@@ -196,6 +203,10 @@ function resetGesture() {
 }
 
 function skip() {
+  if (manageMode.value) {
+    uni.navigateBack()
+    return
+  }
   applyRoleTabBar()
   switchToRoleHome()
 }
@@ -204,6 +215,7 @@ onLoad((query) => {
   if (query?.username) username.value = query.username
   if (query?.name) displayName.value = decodeURIComponent(query.name)
   if (query?.id) accountId.value = query.id
+  manageMode.value = query?.mode === 'manage'
 })
 
 onMounted(() => {

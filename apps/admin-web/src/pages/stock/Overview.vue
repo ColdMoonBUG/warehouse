@@ -64,12 +64,19 @@
         :class="{ zero: item.qty === 0, low: item.qty > 0 && item.qty <= 10 }"
         shadow="hover"
       >
-        <div class="stock-icon" v-html="productIcon" />
+        <div class="stock-icon">
+          <el-image v-if="item.imageUrl" :src="getImageUrl(item.imageUrl)" class="stock-image" fit="cover">
+            <template #error>
+              <div class="stock-icon-placeholder" v-html="productIcon" />
+            </template>
+          </el-image>
+          <div v-else class="stock-icon-placeholder" v-html="productIcon" />
+        </div>
         <div class="stock-name">{{ item.productName }}</div>
         <div class="stock-code">{{ item.productCode }}</div>
         <div class="stock-qty">
           <span class="qty-num">{{ item.qty }}</span>
-          <span class="qty-unit">件</span>
+          <span class="qty-unit">袋</span>
         </div>
         <el-progress
           :percentage="calcPct(item.qty)"
@@ -92,7 +99,7 @@
       <el-table :data="tableData" border stripe>
         <el-table-column prop="productCode" label="商品编码" width="120" />
         <el-table-column prop="productName" label="商品名称" />
-        <el-table-column label="库存数量" width="200">
+        <el-table-column label="库存袋数" width="200">
           <template #default="{row}">
             <div style="display:flex;align-items:center;gap:8px">
               <span :style="{color:row.qty===0?'#f56c6c':row.qty<=10?'#e6a23c':'#67c23a',fontWeight:700,minWidth:'40px'}">
@@ -124,6 +131,7 @@ import { ref, computed, onMounted } from 'vue'
 import { Refresh as RefreshIcon } from '@element-plus/icons-vue'
 import { getWarehouses, getStock } from '@/api/stock'
 import { getProducts } from '@/api/product'
+import { getImageUrl } from '@/api/upload'
 import type { Warehouse, Product } from '@/types'
 
 const warehouses = ref<Warehouse[]>([])
@@ -223,7 +231,14 @@ async function loadStock() {
   const stock = await getStock(warehouseId.value)
   tableData.value = stock.map(s => {
     const p = products.value.find(p => p.id === s.productId)
-    return { productId: s.productId, productCode: p?.code || s.productId, productName: p?.name || '-', qty: s.qty, updatedAt: s.updatedAt }
+    return {
+      productId: s.productId,
+      productCode: p?.code || s.productId,
+      productName: p?.name || '-',
+      imageUrl: p?.imageUrl || '',
+      qty: s.qty,
+      updatedAt: s.updatedAt
+    }
   })
   sortData()
 }
@@ -266,7 +281,18 @@ onMounted(loadAll)
   height: 56px;
   opacity: 0.9;
 }
-.stock-icon :deep(svg) { width: 100%; height: 100%; display: block; }
+.stock-image {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.stock-icon-placeholder {
+  width: 100%;
+  height: 100%;
+}
+.stock-icon-placeholder :deep(svg) { width: 100%; height: 100%; display: block; }
 .stock-card.zero { border-color: #f56c6c44; background: rgba(245,108,108,0.06); }
 .stock-card.low { border-color: #e6a23c44; background: rgba(230,162,60,0.06); }
 .stock-name { font-size: 15px; font-weight: 600; margin-bottom: 2px; }

@@ -26,7 +26,6 @@
         </template>
         <el-menu-item index="/basic/supplier">厂家管理</el-menu-item>
         <el-menu-item index="/basic/product">商品管理</el-menu-item>
-        <el-menu-item index="/basic/employee">员工管理</el-menu-item>
         <el-menu-item index="/basic/store">门店管理</el-menu-item>
       </el-sub-menu>
 
@@ -40,6 +39,15 @@
         <el-menu-item v-if="!isSales" index="/stock/transfer">出库单</el-menu-item>
         <el-menu-item index="/stock/sale">销售单</el-menu-item>
         <el-menu-item index="/stock/return">退货单</el-menu-item>
+      </el-sub-menu>
+
+      <el-sub-menu v-if="!isSales" index="/system">
+        <template #title>
+          <i class="ri-settings-3-line" />
+          <span>系统管理</span>
+        </template>
+        <el-menu-item index="/system/account">账户管理</el-menu-item>
+        <el-menu-item index="/system/finance">财务结清</el-menu-item>
       </el-sub-menu>
     </el-menu>
   </div>

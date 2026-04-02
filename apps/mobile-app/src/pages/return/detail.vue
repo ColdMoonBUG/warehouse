@@ -9,7 +9,7 @@
         <view class="row"><text class="label">单号</text><text class="value">{{ doc.code }}</text></view>
         <view class="row"><text class="label">日期</text><text class="value">{{ doc.date }}</text></view>
         <view class="row"><text class="label">超市</text><text class="value">{{ storeName }}</text></view>
-        <view class="row"><text class="label">业务员</text><text class="value">{{ employeeName }}</text></view>
+        <view class="row"><text class="label">业务员</text><text class="value">{{ salespersonName }}</text></view>
         <view class="row"><text class="label">类型</text><text class="value">{{ typeText }}</text></view>
       </view>
 
@@ -17,13 +17,13 @@
         <view class="card-title">商品明细</view>
         <view v-for="line in doc.lines" :key="line.id" class="line">
           <text class="name">{{ getProductName(line.productId) }}</text>
-          <text class="qty">x{{ line.qty }}</text>
+          <text class="qty">{{ lineQtyText(line) }}</text>
           <text class="price">¥{{ line.price }}</text>
         </view>
       </view>
 
       <view class="summary">
-        <text>合计数量: {{ totalQty }}</text>
+        <text>合计数量: {{ totalQty }}袋</text>
         <text>合计金额: ¥{{ totalAmount.toFixed(2) }}</text>
       </view>
 
@@ -38,9 +38,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
-import { getReturnDetail, getStores, getEmployees, getProducts, voidReturn } from '@/api'
-import type { ReturnDoc, Store, Employee, Product } from '@/types'
-import { getPageQueryParam } from '@/utils'
+import { getReturnDetail, getStores, getSalespersonAccounts, getProducts, voidReturn, isSameSalespersonId } from '@/api'
+import type { ReturnDoc, Store, Salesperson, Product } from '@/types'
+import { getPageQueryParam, formatPackSummary, normalizeCount } from '@/utils'
 
 async function voidDoc() {
   if (!doc.value) return
@@ -53,30 +53,35 @@ import { useUserStore } from '@/store/user'
 const userStore = useUserStore()
 const doc = ref<ReturnDoc | null>(null)
 const stores = ref<Store[]>([])
-const employees = ref<Employee[]>([])
+const salespersons = ref<Salesperson[]>([])
 const products = ref<Product[]>([])
 const docId = ref('')
 
 const storeName = computed(() => stores.value.find(i => i.id === doc.value?.storeId)?.name || '-')
-const employeeName = computed(() => employees.value.find(i => i.id === doc.value?.employeeId)?.name || '-')
+const salespersonName = computed(() => salespersons.value.find(i => isSameSalespersonId(i.salespersonId || i.id, doc.value?.salespersonId))?.displayName || '-')
 const typeText = computed(() => doc.value?.returnType === 'warehouse_return' ? '回仓' : '车库退货')
 const totalQty = computed(() => doc.value ? doc.value.lines.reduce((s, l) => s + l.qty, 0) : 0)
 const totalAmount = computed(() => doc.value ? doc.value.lines.reduce((s, l) => s + l.qty * l.price, 0) : 0)
 
 function getProductName(id: string) { return products.value.find(p => p.id === id)?.name || id }
+function lineQtyText(line: { productId: string; qty: number; boxQty?: number }) {
+  const product = products.value.find(p => p.id === line.productId)
+  const packQty = product?.boxQty
+  return formatPackSummary(normalizeCount(line.qty), normalizeCount(line.boxQty), packQty)
+}
 function printReturn() { uni.showToast({ title: '打印功能待接入蓝牙', icon: 'none' }) }
 
 async function loadDetail() {
   if (!docId.value) return
-  const [detail, storeList, empList, productList] = await Promise.all([
+  const [detail, storeList, salespersonList, productList] = await Promise.all([
     getReturnDetail(docId.value),
     getStores(),
-    getEmployees(),
+    getSalespersonAccounts(),
     getProducts(),
   ])
   doc.value = detail
   stores.value = storeList
-  employees.value = empList
+  salespersons.value = salespersonList
   products.value = productList
 }
 

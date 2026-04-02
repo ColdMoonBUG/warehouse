@@ -17,7 +17,7 @@
       <view v-for="item in list" :key="item.productId + '-' + item.warehouseId" class="card">
         <view class="row">
           <text class="name">{{ productName(item.productId) }}</text>
-          <text class="qty">数量: {{ item.qty }}</text>
+          <text class="qty">数量: {{ item.qty }}袋</text>
         </view>
         <view class="row">
           <text class="warehouse">仓库: {{ warehouseName(item.warehouseId) }}</text>

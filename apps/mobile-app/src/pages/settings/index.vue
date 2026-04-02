@@ -39,8 +39,8 @@
         <view class="menu-item" v-if="isAdmin" @tap="goTransfer">
           <text class="menu-text">调拨单</text>
         </view>
-        <view class="menu-item" v-if="isAdmin" @tap="goEmployee">
-          <text class="menu-text">业务员管理</text>
+        <view class="menu-item" v-if="isAdmin" @tap="goAccount">
+          <text class="menu-text">账户管理</text>
         </view>
         <view class="menu-item" @tap="goSwitchAccount">
           <text class="menu-text">切换账户</text>
@@ -118,9 +118,9 @@ function goTransfer() {
   uni.navigateTo({ url: '/pages/admin/transfer/index' })
 }
 
-function goEmployee() {
+function goAccount() {
   if (!userStore.isAdmin) return
-  uni.navigateTo({ url: '/pages/admin/employee/index' })
+  uni.navigateTo({ url: '/pages/admin/account/index' })
 }
 
 function goSwitchAccount() {

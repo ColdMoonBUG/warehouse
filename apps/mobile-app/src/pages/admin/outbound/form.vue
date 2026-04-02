@@ -8,8 +8,8 @@
     <view class="content">
       <view class="section">
         <text class="label">业务员</text>
-        <picker mode="selector" :range="employees" range-key="name" @change="onEmployeeChange">
-          <view class="picker"><text>{{ employeeName || '请选择业务员' }}</text></view>
+        <picker mode="selector" :range="salespersons" range-key="displayName" @change="onSalespersonChange">
+          <view class="picker"><text>{{ salespersonName || '请选择业务员' }}</text></view>
         </picker>
       </view>
       <view class="section">
@@ -40,16 +40,21 @@
               <view class="field-box picker-box"><text>{{ productName(l.productId) || '请选择商品' }}</text></view>
             </picker>
           </view>
-          <view class="field-grid">
+          <view class="field-grid field-grid-triple">
             <view class="field">
-              <text class="field-label">数量</text>
-              <input class="field-box input-box" v-model.number="l.qty" type="number" placeholder="请输入数量" />
+              <text class="field-label">箱数</text>
+              <input class="field-box input-box" v-model.number="l.boxQty" type="number" placeholder="0" @blur="syncLineQty(l)" />
+            </view>
+            <view class="field">
+              <text class="field-label">袋数</text>
+              <input class="field-box input-box" v-model.number="l.bagQty" type="number" placeholder="0" @blur="syncLineQty(l)" />
             </view>
             <view class="field">
               <text class="field-label">单价</text>
-              <input class="field-box input-box" v-model.number="l.price" type="number" placeholder="请输入单价" />
+              <input class="field-box input-box" v-model.number="l.price" type="number" placeholder="请输入单价" @blur="syncLineQty(l)" />
             </view>
           </view>
+          <text v-if="lineSummary(l)" class="field-tip">{{ lineSummary(l) }}</text>
         </view>
         <button class="btn-add-line" @tap="addLine">+ 添加一行</button>
       </view>
@@ -67,25 +72,77 @@
 import { ref, computed, onMounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
-import { getOutboundDetail, saveOutbound, postOutbound, voidOutbound, getProducts, getWarehouses, getEmployees, getEmployeeDetail, getProductDetail } from '@/api'
-import type { OutboundDoc, OutboundLine, Product, Warehouse, Employee } from '@/types'
-import { formatDate, getPageQueryParam } from '@/utils'
+import { getOutboundDetail, saveOutbound, postOutbound, voidOutbound, getProducts, getWarehouses, getSalespersonAccounts, getProductDetail, isSameSalespersonId } from '@/api'
+import type { OutboundDoc, OutboundLine, Product, Warehouse, Salesperson } from '@/types'
+import { formatDate, getPageQueryParam, calcQty, deriveBagQty, normalizeBoxPackQty, normalizeCount, formatProductPackageSummary } from '@/utils'
+
+type FormLine = OutboundLine & { bagQty?: number }
 
 const userStore = useUserStore()
-const employees = ref<Employee[]>([])
+const salespersons = ref<Salesperson[]>([])
 const warehouses = ref<Warehouse[]>([])
 const products = ref<Product[]>([])
-const lines = ref<OutboundLine[]>([])
+const lines = ref<FormLine[]>([])
 const form = ref<Partial<OutboundDoc>>({ date: formatDate(new Date(), 'YYYY-MM-DD'), status: 'draft' })
 const queryId = ref('')
 
-const employeeName = computed(() => employees.value.find(e => e.id === form.value.employeeId)?.name || '')
+const salespersonName = computed(() => salespersons.value.find(item => isSameSalespersonId(item.salespersonId || item.id, form.value.salespersonId))?.displayName || '')
 const warehouseName = computed(() => warehouses.value.find(w => w.id === form.value.warehouseId)?.name || '')
 
-async function ensureEmployeeLoaded(id?: string) {
-  if (!id || employees.value.some(e => e.id === id)) return
-  const employee = await getEmployeeDetail(id)
-  if (employee) employees.value = [...employees.value, employee]
+function productById(id: string) {
+  return products.value.find(p => p.id === id)
+}
+
+function productPackQty(productId: string) {
+  return normalizeBoxPackQty(productById(productId)?.boxQty)
+}
+
+function normalizeLine(line?: Partial<FormLine>): FormLine {
+  const productId = line?.productId || ''
+  const boxQty = normalizeCount(line?.boxQty)
+  const qty = normalizeCount(line?.qty)
+  const bagQty = deriveBagQty(qty, boxQty, productPackQty(productId))
+  return {
+    id: line?.id || '',
+    productId,
+    boxQty,
+    bagQty,
+    qty,
+    price: Number(line?.price || 0),
+  }
+}
+
+function syncLineQty(line: FormLine) {
+  line.boxQty = normalizeCount(line.boxQty)
+  line.bagQty = normalizeCount(line.bagQty)
+  line.qty = calcQty(line.boxQty, line.bagQty, productPackQty(line.productId))
+}
+
+function toSubmitLine(line: FormLine): OutboundLine {
+  syncLineQty(line)
+  return {
+    id: line.id,
+    productId: line.productId,
+    boxQty: normalizeCount(line.boxQty),
+    qty: normalizeCount(line.qty),
+    price: Number(line.price || 0),
+  }
+}
+
+function lineSummary(line: FormLine) {
+  const product = productById(line.productId)
+  if (!product) return ''
+  const boxQty = normalizeCount(line.boxQty)
+  const bagQty = normalizeCount(line.bagQty)
+  const qty = calcQty(boxQty, bagQty, product.boxQty)
+  return formatProductPackageSummary(product, qty, boxQty)
+}
+
+async function ensureSalespersonLoaded(id?: string) {
+  if (!id || salespersons.value.some(item => isSameSalespersonId(item.salespersonId || item.id, id))) return
+  const list = await getSalespersonAccounts(true)
+  const salesperson = list.find(item => isSameSalespersonId(item.salespersonId || item.id, id))
+  if (salesperson) salespersons.value = [...salespersons.value, salesperson]
 }
 
 async function ensureProductsLoaded(ids: string[]) {
@@ -97,11 +154,11 @@ async function ensureProductsLoaded(ids: string[]) {
 
 async function applyDoc(doc: OutboundDoc) {
   form.value = { ...doc }
-  lines.value = doc.lines || []
   await Promise.all([
-    ensureEmployeeLoaded(doc.employeeId),
-    ensureProductsLoaded(lines.value.map(line => line.productId)),
+    ensureSalespersonLoaded(doc.salespersonId),
+    ensureProductsLoaded((doc.lines || []).map(line => line.productId)),
   ])
+  lines.value = (doc.lines || []).map(line => normalizeLine(line))
 }
 
 function guard() {
@@ -114,16 +171,17 @@ function guard() {
 }
 
 function addLine() {
-  lines.value.push({ id: '', productId: '', qty: 1, price: 0 })
+  lines.value.push(normalizeLine({ id: '', productId: '', qty: 0, price: 0, boxQty: 0 }))
 }
 
 function removeLine(i: number) {
   lines.value.splice(i, 1)
 }
 
-function onEmployeeChange(e: any) {
+function onSalespersonChange(e: any) {
   const idx = Number(e.detail.value)
-  form.value.employeeId = employees.value[idx]?.id
+  const salesperson = salespersons.value[idx]
+  form.value.salespersonId = salesperson?.salespersonId || salesperson?.id || ''
 }
 
 function onWarehouseChange(e: any) {
@@ -134,10 +192,11 @@ function onWarehouseChange(e: any) {
 function onProductChange(e: any, i: number) {
   const idx = Number(e.detail.value)
   lines.value[i].productId = products.value[idx]?.id || ''
+  syncLineQty(lines.value[i])
 }
 
 function productName(id: string) {
-  return products.value.find(p => p.id === id)?.name || ''
+  return productById(id)?.name || ''
 }
 
 async function loadEdit(id: string) {
@@ -147,7 +206,7 @@ async function loadEdit(id: string) {
 }
 
 async function save() {
-  if (!form.value.employeeId || !form.value.warehouseId) {
+  if (!form.value.salespersonId || !form.value.warehouseId) {
     uni.showToast({ title: '请选择业务员与仓库', icon: 'none' })
     return
   }
@@ -155,7 +214,8 @@ async function save() {
     uni.showToast({ title: '请添加明细', icon: 'none' })
     return
   }
-  await saveOutbound(form.value as OutboundDoc, lines.value)
+  const submitLines = lines.value.map(toSubmitLine)
+  await saveOutbound(form.value as OutboundDoc, submitLines)
   uni.showToast({ title: '保存成功', icon: 'success' })
   setTimeout(() => uni.navigateBack(), 400)
 }
@@ -186,8 +246,8 @@ onLoad((query) => {
 
 onMounted(async () => {
   if (!guard()) return
-  const [emps, whs, pros] = await Promise.all([getEmployees(), getWarehouses(), getProducts()])
-  employees.value = emps
+  const [salespersonList, whs, pros] = await Promise.all([getSalespersonAccounts(true), getWarehouses(), getProducts()])
+  salespersons.value = salespersonList
   warehouses.value = whs
   products.value = pros
   if (queryId.value) await loadEdit(queryId.value)
@@ -211,11 +271,12 @@ onMounted(async () => {
 .field:last-child { margin-bottom:0; }
 .field-label { display:block; font-size:24rpx; color:#666; margin-bottom:10rpx; }
 .field-grid { display:flex; flex-wrap:wrap; gap:16rpx; }
-.field-grid .field { flex:1; min-width:240rpx; }
-.field-grid-single { display:block; }
+.field-grid .field { flex:1; min-width:200rpx; }
+.field-grid-triple .field { min-width:180rpx; }
 .field-box { width:100%; min-height:80rpx; box-sizing:border-box; background:#fff; border:2rpx solid #dbe3ee; border-radius:12rpx; padding:0 20rpx; font-size:28rpx; color:#333; display:flex; align-items:center; }
 .picker-box text { width:100%; color:#333; }
 .input-box { display:block; padding:0 20rpx; line-height:80rpx; margin-bottom:0; }
+.field-tip { display:block; margin-top:4rpx; font-size:22rpx; color:#64748b; }
 input { font-size:28rpx; margin-bottom: 10rpx; }
 .btn-delete { min-width:108rpx; height:60rpx; padding:0 20rpx; background:#fff1f0; color:#ff4d4f; border-radius:999rpx; font-size:24rpx; line-height:60rpx; border:none; }
 .btn-delete::after { border:none; }

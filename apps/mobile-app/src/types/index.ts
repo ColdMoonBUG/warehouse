@@ -7,9 +7,21 @@ export interface Account {
   username: string
   displayName: string
   role: Role
-  employeeId?: string  // 业务员关联员工ID
-  passwordHash: string  // 简单hash
-  gestureHash?: string  // 手势密码hash
+  salespersonId?: string
+  passwordHash: string
+  gestureHash?: string
+  status: Status
+  createdAt: string
+}
+
+export interface Salesperson {
+  id: string
+  username: string
+  displayName: string
+  role: 'salesperson'
+  salespersonId?: string
+  passwordHash: string
+  gestureHash?: string
   status: Status
   createdAt: string
 }
@@ -43,6 +55,7 @@ export interface Product {
 export interface OutboundLine {
   id: string
   productId: string
+  boxQty?: number
   qty: number
   price: number
 }
@@ -50,7 +63,7 @@ export interface OutboundLine {
 export interface OutboundDoc {
   id: string
   code: string
-  employeeId: string
+  salespersonId: string
   warehouseId: string
   date: string
   remark?: string
@@ -59,21 +72,12 @@ export interface OutboundDoc {
   createdAt: string
 }
 
-export interface Employee {
-  id: string
-  code: string
-  name: string
-  phone?: string
-  status: Status
-  createdAt: string
-}
-
 export interface Store {
   id: string
   code?: string
   name: string
   address?: string
-  defaultEmployeeId?: string
+  salespersonId?: string
   lat?: number
   lng?: number
   scale?: 1 | 2 | 3 | 4  // 1=小 2=中 3=大 4=超大
@@ -84,6 +88,7 @@ export interface Store {
 export interface SaleLine {
   id: string
   productId: string
+  boxQty?: number
   qty: number
   price: number
 }
@@ -91,7 +96,7 @@ export interface SaleLine {
 export interface SaleDoc {
   id: string
   code: string
-  employeeId: string
+  salespersonId: string
   storeId: string
   warehouseId?: string
   date: string
@@ -105,7 +110,7 @@ export interface Warehouse {
   id: string
   name: string
   type: 'main' | 'vehicle' | 'return'
-  employeeId?: string
+  salespersonId?: string
 }
 
 export interface StockItem {
@@ -165,11 +170,34 @@ export interface TransferDoc {
   createdAt: string
 }
 
+export interface ReturnLine {
+  id: string
+  productId: string
+  boxQty?: number
+  qty: number
+  price: number
+}
+
+export interface ReturnDoc {
+  id: string
+  code: string
+  salespersonId: string
+  storeId: string
+  date: string
+  returnType: 'vehicle_return' | 'warehouse_return'
+  fromWarehouseId: string
+  toWarehouseId?: string
+  remark?: string
+  status: DocStatus
+  lines: ReturnLine[]
+  createdAt: string
+}
+
 export interface Session {
   accountId: string
   username: string
   displayName: string
   role: Role
-  employeeId?: string
+  salespersonId?: string
   expiresAt: string
 }

@@ -25,7 +25,7 @@
             <text class="date">{{ doc.date }}</text>
           </view>
           <view class="row">
-            <text class="qty">数量: {{ totalQty(doc) }}</text>
+            <text class="qty">数量: {{ totalQty(doc) }}袋</text>
             <text class="amount">金额: ¥{{ totalAmount(doc).toFixed(2) }}</text>
           </view>
         </view>
@@ -46,7 +46,7 @@
             <text class="date">{{ doc.date }}</text>
           </view>
           <view class="row">
-            <text class="qty">数量: {{ totalReturnQty(doc) }}</text>
+            <text class="qty">数量: {{ totalReturnQty(doc) }}袋</text>
             <text class="amount">金额: ¥{{ totalReturnAmount(doc).toFixed(2) }}</text>
           </view>
         </view>
@@ -59,7 +59,7 @@
 import { ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
-import { getSales, getStores, getReturns } from '@/api'
+import { getSales, getStores, getReturns, getSessionSalespersonId, isSameSalespersonId } from '@/api'
 import type { SaleDoc, Store, ReturnDoc } from '@/types'
 
 const userStore = useUserStore()
@@ -76,14 +76,14 @@ function totalReturnAmount(doc: ReturnDoc) { return doc.lines.reduce((s, l) => s
 
 const listReturns = async () => {
   const docs = await getReturns()
-  const currentEmployeeId = userStore.currentUser?.employeeId
-  returns.value = userStore.isAdmin ? docs : docs.filter(d => d.employeeId === currentEmployeeId)
+  const currentSalespersonId = getSessionSalespersonId(userStore.currentUser)
+  returns.value = userStore.isAdmin ? docs : docs.filter(d => isSameSalespersonId(d.salespersonId, currentSalespersonId))
 }
 
 const listSales = async () => {
   const saleList = await getSales()
-  const currentEmployeeId = userStore.currentUser?.employeeId
-  sales.value = userStore.isAdmin ? saleList : saleList.filter(d => d.employeeId === currentEmployeeId)
+  const currentSalespersonId = getSessionSalespersonId(userStore.currentUser)
+  sales.value = userStore.isAdmin ? saleList : saleList.filter(d => isSameSalespersonId(d.salespersonId, currentSalespersonId))
 }
 
 const loadAll = async () => {

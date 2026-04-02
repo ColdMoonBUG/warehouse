@@ -19,15 +19,13 @@
         <el-row :gutter="16">
           <el-col :span="isMobile?24:8">
             <el-form-item label="业务员">
-              <el-select v-model="doc.employeeId" style="width:100%" placeholder="请选择">
-                <el-option v-for="e in employees" :key="e.id" :label="e.name" :value="e.id" />
-              </el-select>
+              <el-input :model-value="currentSalespersonName" disabled placeholder="选择车库后自动带出" />
             </el-form-item>
           </el-col>
           <el-col :span="isMobile?24:8">
             <el-form-item label="门店">
               <el-select v-model="doc.storeId" style="width:100%" placeholder="请选择" filterable>
-                <el-option v-for="s in stores" :key="s.id" :label="s.name" :value="s.id" />
+                <el-option v-for="s in availableStores" :key="s.id" :label="s.name" :value="s.id" />
               </el-select>
             </el-form-item>
           </el-col>
@@ -76,15 +74,30 @@
             <el-select v-model="row.productId" placeholder="选择商品" :disabled="doc.status!=='draft'" style="width:100%" @change="onProductChange(row)">
               <el-option v-for="p in products" :key="p.id" :label="p.name" :value="p.id" />
             </el-select>
+            <div class="pack-hint">{{ productPackLabel(getProduct(row.productId)) }}</div>
+          </div>
+          <div class="line-row cols cols-3">
+            <div class="col">
+              <div class="label">箱数</div>
+              <el-input-number v-model="row.boxQty" :min="0" :disabled="doc.status!=='draft'" controls-position="right" style="width:100%" @change="updateLine(row)" />
+            </div>
+            <div class="col">
+              <div class="label">袋数</div>
+              <el-input-number v-model="row.bagQty" :min="0" :disabled="doc.status!=='draft'" controls-position="right" style="width:100%" @change="updateLine(row)" />
+            </div>
+            <div class="col">
+              <div class="label">总袋数</div>
+              <el-input-number v-model="row.qty" :min="0" :disabled="doc.status!=='draft'" controls-position="right" style="width:100%" @change="onQtyChange(row)" />
+            </div>
           </div>
           <div class="line-row cols">
             <div class="col">
-              <div class="label">数量(件)</div>
-              <el-input-number v-model="row.qty" :min="1" :disabled="doc.status!=='draft'" controls-position="right" style="width:100%" />
-            </div>
-            <div class="col">
               <div class="label">单价</div>
               <el-input-number v-model="row.price" :min="0" :precision="2" :disabled="doc.status!=='draft'" controls-position="right" style="width:100%" />
+            </div>
+            <div class="col summary-col">
+              <div class="label">包装</div>
+              <div class="value">{{ row.boxQty || 0 }}箱{{ row.bagQty || 0 }}袋</div>
             </div>
           </div>
           <div class="line-row">
@@ -104,11 +117,22 @@
               <el-select v-model="row.productId" placeholder="选择商品" :disabled="doc.status!=='draft'" style="width:100%" @change="onProductChange(row)">
                 <el-option v-for="p in products" :key="p.id" :label="p.name" :value="p.id" />
               </el-select>
+              <div class="pack-hint">{{ productPackLabel(getProduct(row.productId)) }}</div>
             </template>
           </el-table-column>
-          <el-table-column label="数量(件)" width="150">
+          <el-table-column label="箱数" width="120">
             <template #default="{row}">
-              <el-input-number v-model="row.qty" :min="1" :disabled="doc.status!=='draft'" controls-position="right" style="width:130px" />
+              <el-input-number v-model="row.boxQty" :min="0" :disabled="doc.status!=='draft'" controls-position="right" style="width:100px" @change="updateLine(row)" />
+            </template>
+          </el-table-column>
+          <el-table-column label="袋数" width="120">
+            <template #default="{row}">
+              <el-input-number v-model="row.bagQty" :min="0" :disabled="doc.status!=='draft'" controls-position="right" style="width:100px" @change="updateLine(row)" />
+            </template>
+          </el-table-column>
+          <el-table-column label="总袋数" width="140">
+            <template #default="{row}">
+              <el-input-number v-model="row.qty" :min="0" :disabled="doc.status!=='draft'" controls-position="right" style="width:120px" @change="onQtyChange(row)" />
             </template>
           </el-table-column>
           <el-table-column label="单价" width="150">
@@ -142,15 +166,17 @@ import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getReturnById, saveReturn, postReturn, voidReturn } from '@/api/return'
-import { getEmployees } from '@/api/employee'
+import { getSalespersonAccounts, getSalespersonName, getSession } from '@/api/auth'
 import { getStores } from '@/api/store'
 import { getProducts } from '@/api/product'
 import { getWarehouses } from '@/api/stock'
-import type { ReturnDoc, ReturnLine, Employee, Store, Product, Warehouse } from '@/types'
+import { normalizePackLine, productPackLabel } from '@/utils/pack'
+import type { ReturnDoc, ReturnLine, Account, Store, Product, Warehouse } from '@/types'
 import dayjs from 'dayjs'
 
 const route = useRoute()
-const employees = ref<Employee[]>([])
+const session = getSession()
+const salespersonAccounts = ref<Account[]>([])
 const stores = ref<Store[]>([])
 const products = ref<Product[]>([])
 const warehouses = ref<Warehouse[]>([])
@@ -158,11 +184,22 @@ const isMobile = ref(window.innerWidth < 768)
 
 function onResize() { isMobile.value = window.innerWidth < 768 }
 
+function getProduct(productId: string) {
+  return products.value.find(p => p.id === productId)
+}
+
+function applyDoc(detail: ReturnDoc) {
+  doc.value = {
+    ...detail,
+    lines: detail.lines.map(line => normalizePackLine({ ...line }, getProduct(line.productId)))
+  }
+}
+
 function gId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6) }
 
 const doc = ref<ReturnDoc>({
   id: '', code: '',
-  employeeId: '', storeId: '',
+  salespersonId: '', storeId: '',
   date: dayjs().format('YYYY-MM-DD'), remark: '',
   status: 'draft', lines: [],
   returnType: 'vehicle_return',
@@ -170,8 +207,20 @@ const doc = ref<ReturnDoc>({
   createdAt: new Date().toISOString()
 })
 
-const vehicleWarehouses = computed(() => warehouses.value.filter(w => w.type === 'vehicle'))
+const vehicleWarehouses = computed(() => {
+  const list = warehouses.value.filter(w => w.type === 'vehicle')
+  if (session?.role === 'salesperson') return list.filter(w => w.salespersonId === session.accountId)
+  return list
+})
 const targetWarehouses = computed(() => warehouses.value.filter(w => w.type !== 'vehicle'))
+const availableStores = computed(() => {
+  if (!doc.value.salespersonId) return stores.value
+  return stores.value.filter(store => store.salespersonId === doc.value.salespersonId)
+})
+const currentWarehouse = computed(() => warehouses.value.find(w => w.id === doc.value.fromWarehouseId))
+const currentSalespersonName = computed(() => {
+  return getSalespersonName(salespersonAccounts.value, doc.value.salespersonId || currentWarehouse.value?.salespersonId)
+})
 
 watch(() => doc.value.returnType, (type) => {
   if (type === 'warehouse_return') {
@@ -184,29 +233,52 @@ watch(() => doc.value.returnType, (type) => {
 function statusLabel(s: string) { return ({draft:'草稿',posted:'已过账',voided:'已作废'} as any)[s]||s }
 function statusType(s: string) { return ({draft:'info',posted:'success',voided:'danger'} as any)[s]||'' }
 
-function addLine() { doc.value.lines.push({ id: gId(), productId: '', qty: 1, price: 0 }) }
+function addLine() { doc.value.lines.push({ id: gId(), productId: '', boxQty: 0, bagQty: 0, qty: 0, price: 0 }) }
+function updateLine(row: ReturnLine) {
+  Object.assign(row, normalizePackLine(row, getProduct(row.productId)))
+}
+function onQtyChange(row: ReturnLine) {
+  Object.assign(row, normalizePackLine({ ...row, bagQty: undefined }, getProduct(row.productId)))
+}
 function onProductChange(row: ReturnLine) {
-  const p = products.value.find(p => p.id === row.productId)
+  const p = getProduct(row.productId)
   if (p) row.price = p.salePrice
+  updateLine(row)
+}
+
+function syncSalespersonFromWarehouse() {
+  if (currentWarehouse.value?.salespersonId) {
+    doc.value.salespersonId = currentWarehouse.value.salespersonId
+    return
+  }
+  if (!doc.value.salespersonId && session?.role === 'salesperson') {
+    doc.value.salespersonId = session.accountId
+  }
+}
+
+function syncStoreFromSalesperson() {
+  if (!doc.value.storeId) return
+  if (availableStores.value.some(store => store.id === doc.value.storeId)) return
+  doc.value.storeId = availableStores.value[0]?.id || ''
 }
 
 async function saveDraft() {
   const saved = await saveReturn(doc.value, doc.value.lines)
-  if (saved) doc.value = saved as any
+  if (saved) applyDoc(saved as ReturnDoc)
   ElMessage.success('草稿已保存')
 }
 
 async function post() {
-  if (!doc.value.employeeId) { ElMessage.error('请选择业务员'); return }
+  if (!doc.value.salespersonId) { ElMessage.error('请选择业务员'); return }
   if (!doc.value.storeId) { ElMessage.error('请选择门店'); return }
   if (!doc.value.lines.length) { ElMessage.error('请添加明细'); return }
   if (!doc.value.fromWarehouseId) { ElMessage.error('请选择来源车库'); return }
   if (doc.value.returnType === 'warehouse_return' && !doc.value.toWarehouseId) { ElMessage.error('请选择目标仓库'); return }
   const saved = await saveReturn(doc.value, doc.value.lines)
-  if (saved) doc.value = saved as any
+  if (saved) applyDoc(saved as ReturnDoc)
   await postReturn(doc.value.id)
   const detail = await getReturnById(doc.value.id)
-  if (detail) doc.value = detail
+  if (detail) applyDoc(detail)
   ElMessage.success('过账成功')
 }
 
@@ -221,7 +293,7 @@ async function voidDoc() {
   await ElMessageBox.confirm('确认作废？','提示',{type:'warning'})
   await voidReturn(doc.value.id)
   const detail = await getReturnById(doc.value.id)
-  if (detail) doc.value = detail
+  if (detail) applyDoc(detail)
   ElMessage.success('已作废')
 }
 
@@ -229,21 +301,35 @@ async function loadDetail(id: string) {
   if (id && id !== 'new') {
     const detail = await getReturnById(id)
     if (detail) {
-      doc.value = detail
+      applyDoc(detail)
       return
     }
   }
 
   doc.value = {
     id: '', code: '',
-    employeeId: '', storeId: '',
+    salespersonId: '', storeId: '',
     date: dayjs().format('YYYY-MM-DD'), remark: '',
     status: 'draft', lines: [],
     returnType: 'vehicle_return',
     fromWarehouseId: vehicleWarehouses.value[0]?.id || '',
     createdAt: new Date().toISOString()
   }
+  if (doc.value.returnType === 'warehouse_return' && !doc.value.toWarehouseId) {
+    doc.value.toWarehouseId = targetWarehouses.value[0]?.id || ''
+  }
+  syncSalespersonFromWarehouse()
+  syncStoreFromSalesperson()
 }
+
+watch(() => doc.value.fromWarehouseId, () => {
+  syncSalespersonFromWarehouse()
+  syncStoreFromSalesperson()
+})
+
+watch(() => doc.value.salespersonId, () => {
+  syncStoreFromSalesperson()
+})
 
 watch(() => route.params.id, (id) => {
   if (typeof id === 'string') {
@@ -252,12 +338,16 @@ watch(() => route.params.id, (id) => {
 })
 
 onMounted(async () => {
-  ;[employees.value, stores.value, products.value, warehouses.value] = await Promise.all([getEmployees(), getStores(), getProducts(), getWarehouses()])
+  ;[salespersonAccounts.value, stores.value, products.value, warehouses.value] = await Promise.all([getSalespersonAccounts(), getStores(), getProducts(), getWarehouses()])
   if (!doc.value.fromWarehouseId) doc.value.fromWarehouseId = vehicleWarehouses.value[0]?.id || ''
   if (doc.value.returnType === 'warehouse_return' && !doc.value.toWarehouseId) doc.value.toWarehouseId = targetWarehouses.value[0]?.id || ''
+  syncSalespersonFromWarehouse()
+  syncStoreFromSalesperson()
   await loadDetail(route.params.id as string)
   if (!doc.value.fromWarehouseId) doc.value.fromWarehouseId = vehicleWarehouses.value[0]?.id || ''
   if (doc.value.returnType === 'warehouse_return' && !doc.value.toWarehouseId) doc.value.toWarehouseId = targetWarehouses.value[0]?.id || ''
+  syncSalespersonFromWarehouse()
+  syncStoreFromSalesperson()
   window.addEventListener('resize', onResize)
 })
 onBeforeUnmount(() => window.removeEventListener('resize', onResize))
@@ -274,6 +364,8 @@ onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 .section-row { margin:12px 0; display:flex; justify-content:space-between; align-items:center; }
 .total-row { text-align:right; padding:12px 0; font-weight:600; font-size:15px; display:flex; justify-content:flex-end; gap:16px; flex-wrap:wrap; }
 .total-row .commission { color:#fca5a5; }
+.pack-hint { margin-top: 4px; font-size: 12px; color:#94a3b8; }
+.summary-col { display:flex; flex-direction:column; justify-content:flex-end; }
 
 .mobile-lines { display:flex; flex-direction:column; gap:10px; }
 .mobile-line {
@@ -285,6 +377,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 .line-row { margin-top: 8px; }
 .line-row:first-child { margin-top: 0; }
 .line-row.cols { display:flex; gap:10px; }
+.line-row.cols-3 .col { min-width: 0; }
 .line-row .col { flex: 1; }
 .line-row .label { font-size:12px; color:#94a3b8; margin-bottom:4px; }
 .line-row .value { font-weight:600; }

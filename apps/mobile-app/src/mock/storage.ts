@@ -1,7 +1,7 @@
 // Mock数据存储 - 与admin-web完全一致，共享localStorage
 
 import type {
-  Supplier, Product, Employee, Store,
+  Supplier, Product, Store,
   Warehouse, StockItem, LedgerEntry,
   InboundDoc, TransferDoc, SaleDoc, Account
 } from '@/types'
@@ -9,7 +9,6 @@ import type {
 const KEYS = {
   supplier: 'wh_supplier',
   product: 'wh_product',
-  employee: 'wh_employee',
   store: 'wh_store',
   warehouse: 'wh_warehouse',
   stock: 'wh_stock',
@@ -48,12 +47,6 @@ export const productDb = {
   save: (data: Product[]) => save(KEYS.product, data),
 }
 
-// --- Employee ---
-export const employeeDb = {
-  list: () => load<Employee>(KEYS.employee),
-  save: (data: Employee[]) => save(KEYS.employee, data),
-}
-
 // --- Store ---
 export const storeDb = {
   list: () => load<Store>(KEYS.store),
@@ -68,17 +61,36 @@ export const warehouseDb = {
     const list = load<Warehouse>(KEYS.warehouse)
     if (!list.find(w => w.type === 'main')) {
       list.unshift({ id: 'main', name: '主仓库', type: 'main' })
-      save(KEYS.warehouse, list)
     }
+    if (!list.find(w => w.type === 'return')) {
+      list.push({ id: 'return', name: '退货仓库', type: 'return' })
+    }
+    save(KEYS.warehouse, list)
     return load<Warehouse>(KEYS.warehouse)
   },
   syncVehicles: () => {
-    const employees = load<Employee>(KEYS.employee)
-    const warehouses = load<Warehouse>(KEYS.warehouse)
+    const accounts = load<Account>(KEYS.account).filter(account => account.role === 'salesperson')
+    const warehouses = warehouseDb.ensureMain()
     let changed = false
-    for (const emp of employees) {
-      if (!warehouses.find(w => w.employeeId === emp.id)) {
-        warehouses.push({ id: 'veh_' + emp.id, name: emp.name + '(车库)', type: 'vehicle', employeeId: emp.id })
+    for (const account of accounts) {
+      const salespersonId = account.salespersonId || account.id
+      if (!salespersonId) continue
+      const warehouseId = `veh_${salespersonId}`
+      const nextWarehouse: Warehouse = {
+        id: warehouseId,
+        name: `${account.displayName}(车库)`,
+        type: 'vehicle',
+        salespersonId,
+      }
+      const index = warehouses.findIndex(w => w.id === warehouseId || w.salespersonId === salespersonId)
+      if (index >= 0) {
+        const current = warehouses[index]
+        if (current.id !== nextWarehouse.id || current.name !== nextWarehouse.name || current.type !== nextWarehouse.type || current.salespersonId !== nextWarehouse.salespersonId) {
+          warehouses[index] = { ...current, ...nextWarehouse }
+          changed = true
+        }
+      } else {
+        warehouses.push(nextWarehouse)
         changed = true
       }
     }

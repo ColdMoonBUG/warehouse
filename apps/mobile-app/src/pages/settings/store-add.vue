@@ -21,8 +21,8 @@
       </view>
       <view class="form-item">
         <text class="label">业务员</text>
-        <picker mode="selector" :range="employees" range-key="name" @change="onEmployeeChange">
-          <view class="picker"><text>{{ selectedEmployee?.name || '请选择业务员' }}</text></view>
+        <picker mode="selector" :range="salespersons" range-key="displayName" @change="onSalespersonChange">
+          <view class="picker"><text>{{ selectedSalesperson?.displayName || '请选择业务员' }}</text></view>
         </picker>
       </view>
       <button class="btn" @tap="submit">保存</button>
@@ -34,21 +34,21 @@
 import { ref, computed, onMounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
-import { saveStore, getStoresAll, getEmployees } from '@/api'
-import type { Store, Employee } from '@/types'
+import { saveStore, getStoresAll, getSalespersonAccounts, getSessionSalespersonId, isSameSalespersonId } from '@/api'
+import type { Store, Salesperson } from '@/types'
 import { getPageQueryParam } from '@/utils'
 
 const userStore = useUserStore()
-const form = ref({ id: '', name: '', address: '', lat: '', lng: '', defaultEmployeeId: '', status: 'active' as Store['status'] })
-const employees = ref<Employee[]>([])
-const selectedEmployee = ref<Employee | null>(null)
+const form = ref({ id: '', name: '', address: '', lat: '', lng: '', salespersonId: '', status: 'active' as Store['status'] })
+const salespersons = ref<Salesperson[]>([])
+const selectedSalesperson = ref<Salesperson | null>(null)
 const queryId = ref('')
 const isEdit = computed(() => !!form.value.id || !!queryId.value)
 
-function onEmployeeChange(e: any) {
+function onSalespersonChange(e: any) {
   const idx = Number(e.detail.value)
-  selectedEmployee.value = employees.value[idx] || null
-  form.value.defaultEmployeeId = selectedEmployee.value?.id || ''
+  selectedSalesperson.value = salespersons.value[idx] || null
+  form.value.salespersonId = selectedSalesperson.value?.salespersonId || selectedSalesperson.value?.id || ''
 }
 
 function goPickLocation() {
@@ -83,11 +83,11 @@ async function loadEdit(id: string) {
     address: store.address || '',
     lat: store.lat != null ? String(store.lat) : '',
     lng: store.lng != null ? String(store.lng) : '',
-    defaultEmployeeId: store.defaultEmployeeId || '',
+    salespersonId: store.salespersonId || '',
     status: store.status || 'active',
   }
-  if (form.value.defaultEmployeeId) {
-    selectedEmployee.value = employees.value.find(e => e.id === form.value.defaultEmployeeId) || null
+  if (form.value.salespersonId) {
+    selectedSalesperson.value = salespersons.value.find(item => isSameSalespersonId(item.salespersonId || item.id, form.value.salespersonId)) || null
   }
 }
 
@@ -105,7 +105,7 @@ async function submit() {
     lat: form.value.lat ? Number(form.value.lat) : undefined,
     lng: form.value.lng ? Number(form.value.lng) : undefined,
     status: form.value.status,
-    defaultEmployeeId: form.value.defaultEmployeeId || undefined,
+    salespersonId: form.value.salespersonId || undefined,
   })
   uni.showToast({ title: '保存成功', icon: 'success' })
   setTimeout(() => {
@@ -128,12 +128,13 @@ onMounted(async () => {
     uni.reLaunch({ url: '/pages/settings/index' })
     return
   }
-  employees.value = await getEmployees()
+  salespersons.value = await getSalespersonAccounts(true)
   if (queryId.value) {
     await loadEdit(queryId.value)
-  } else if (userStore.currentUser?.employeeId) {
-    selectedEmployee.value = employees.value.find(e => e.id === userStore.currentUser?.employeeId) || null
-    form.value.defaultEmployeeId = selectedEmployee.value?.id || ''
+  } else {
+    const currentSalespersonId = getSessionSalespersonId(userStore.currentUser)
+    selectedSalesperson.value = salespersons.value.find(item => isSameSalespersonId(item.salespersonId || item.id, currentSalespersonId)) || null
+    form.value.salespersonId = selectedSalesperson.value?.salespersonId || selectedSalesperson.value?.id || ''
   }
 })
 </script>
