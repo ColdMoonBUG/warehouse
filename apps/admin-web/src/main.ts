@@ -7,13 +7,16 @@ import 'element-plus/dist/index.css'
 import './style.css'
 import router from './router'
 
+const DEFAULT_AMAP_KEY = 'f4b4dc7f2c6ab34d28831cf946effcc8'
+const DEFAULT_AMAP_SECURITY = '0adf33f1a11156ea53556fda70b65432'
+
 const loadAMap = (() => {
   let pending: Promise<void> | null = null
   return () => {
     if ((window as any).AMap) return Promise.resolve()
     if (pending) return pending
-    const key = import.meta.env.VITE_AMAP_KEY
-    const security = import.meta.env.VITE_AMAP_SECURITY
+    const key = import.meta.env.VITE_AMAP_KEY || DEFAULT_AMAP_KEY
+    const security = import.meta.env.VITE_AMAP_SECURITY || DEFAULT_AMAP_SECURITY
     if (!key) return Promise.reject(new Error('VITE_AMAP_KEY is missing'))
     if (security) (window as any)._AMapSecurityConfig = { securityJsCode: security }
     const url = `https://webapi.amap.com/maps?v=2.0&key=${key}&plugin=AMap.PlaceSearch,AMap.Geocoder,AMap.AutoComplete`

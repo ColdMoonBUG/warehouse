@@ -3,10 +3,12 @@
 // 是否使用Mock数据
 export const USE_MOCK = false
 
-// 后端API地址 - H5 走代理，App 真机/打包走局域网地址
+const PUBLIC_BASE_URL = 'http://home.lyhc.top:8888'
+
+// 后端API地址 - H5 走代理，App 真机/打包走公网 DDNS 地址
 let baseUrl = ''
 // #ifndef H5
-baseUrl = 'http://192.168.31.85:8888'
+baseUrl = PUBLIC_BASE_URL
 // #endif
 export const BASE_URL = baseUrl
 

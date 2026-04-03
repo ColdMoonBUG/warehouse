@@ -5,10 +5,11 @@ export default defineConfig({
   plugins: [uni()],
   server: {
     port: 8081,
+    strictPort: true,
     host: '0.0.0.0',
     proxy: {
       '/api': {
-        target: 'http://192.168.31.85:8888',
+        target: 'http://127.0.0.1:8888',
         changeOrigin: true,
       },
     },
