@@ -18,10 +18,13 @@
 
       <view class="section">
         <text class="label">选择超市</text>
-        <view v-if="showStoreFallbackHint" class="hint">当前账户未绑定超市，已显示全部启用超市</view>
-        <picker mode="selector" :range="storeOptions" range-key="name" @change="onStoreChange">
-          <view class="picker"><text>{{ selectedStore?.name || '请选择超市' }}</text></view>
-        </picker>
+        <view class="store-trigger" @tap="openStoreSelector">
+          <view class="store-trigger-main">
+            <text class="store-trigger-text" :class="{ placeholder: !selectedStore }">{{ selectedStore?.name || '请选择超市' }}</text>
+            <text v-if="selectedStore && isOwnedStoreItem(selectedStore)" class="store-tag">我的店</text>
+          </view>
+          <text class="store-trigger-arrow">›</text>
+        </view>
       </view>
 
       <view class="section">
@@ -85,6 +88,32 @@
       </view>
 
       <button class="btn-submit" @tap="submit" :disabled="!canSubmit">生成退货单</button>
+
+      <view v-if="storeSelectorVisible" class="store-popup">
+        <view class="store-popup-mask" @tap="closeStoreSelector" />
+        <view class="store-popup-panel">
+          <view class="store-popup-header">
+            <text class="store-popup-title">选择超市</text>
+            <text class="store-popup-close" @tap="closeStoreSelector">×</text>
+          </view>
+          <scroll-view scroll-y class="store-popup-list">
+            <view
+              v-for="store in storeOptions"
+              :key="store.id"
+              class="store-option"
+              :class="{ active: selectedStore?.id === store.id }"
+              @tap="selectStore(store)"
+            >
+              <view class="store-option-main">
+                <text class="store-option-name" :class="{ owned: isOwnedStoreItem(store) }">{{ store.name }}</text>
+                <text v-if="isOwnedStoreItem(store)" class="store-tag">我的店</text>
+              </view>
+              <text v-if="store.address" class="store-option-address">{{ store.address }}</text>
+            </view>
+            <view v-if="storeOptions.length === 0" class="empty">暂无可选超市</view>
+          </scroll-view>
+        </view>
+      </view>
     </view>
   </view>
 </template>
@@ -93,7 +122,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useUserStore } from '@/store/user'
 import { useReferenceStore } from '@/store/reference'
-import { getStock, saveReturn, postReturn, getVisibleStoresForSalesperson, hasAssignedStoresForSalesperson, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId } from '@/api'
+import { getStock, saveReturn, postReturn, isOwnedStore, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId } from '@/api'
 import type { Store, Product, Warehouse, ReturnDoc, ReturnLine, StockItem } from '@/types'
 import { genId, formatProductQuickPickLabel, formatProductPackageSummary, calcQty, deriveBagQty, normalizeCount, normalizeBoxPackQty, formatStockPreview, getProductStockQty, toStockQtyMap } from '@/utils'
 
@@ -110,6 +139,7 @@ const allStores = ref<Store[]>([])
 const products = ref<Product[]>([])
 const warehouses = ref<Warehouse[]>([])
 const selectedStore = ref<Store | null>(null)
+const storeSelectorVisible = ref(false)
 const qtyMap = ref<Record<string, QtyInput>>({})
 const returnType = ref<'vehicle_return'|'warehouse_return'>('vehicle_return')
 const fromWarehouse = ref<Warehouse | null>(null)
@@ -144,16 +174,9 @@ const vehicleWarehouses = computed(() => {
   if (!sessionSalespersonId.value) return list
   return list.filter(w => isSameSalespersonId(w.salespersonId, sessionSalespersonId.value))
 })
-const returnWarehouses = computed(() => warehouses.value.filter(w => w.type === 'return'))
 const mainWarehouse = computed(() => warehouses.value.find(w => w.type === 'main') || null)
 const effectiveSalespersonId = computed(() => {
   return getWarehouseSalespersonId(fromWarehouse.value) || sessionSalespersonId.value
-})
-
-const showStoreFallbackHint = computed(() => {
-  if (userStore.isAdmin) return false
-  const salespersonId = effectiveSalespersonId.value
-  return stores.value.length > 0 && !hasAssignedStoresForSalesperson(allStores.value, salespersonId)
 })
 
 const filteredProducts = computed(() => {
@@ -279,7 +302,23 @@ function onQuickPickChange(e: any) {
   toggleSelect(product)
 }
 
-function onStoreChange(e: any) { selectedStore.value = stores.value[Number(e.detail.value)] || null }
+function openStoreSelector() {
+  storeSelectorVisible.value = true
+}
+
+function closeStoreSelector() {
+  storeSelectorVisible.value = false
+}
+
+function selectStore(store: Store) {
+  selectedStore.value = store
+  closeStoreSelector()
+}
+
+function isOwnedStoreItem(store?: Store | null) {
+  return isOwnedStore(store, currentSalespersonId())
+}
+
 function onFromWarehouseChange(e: any) {
   fromWarehouse.value = vehicleWarehouses.value[Number(e.detail.value)] || null
   syncStoresBySalesperson()
@@ -292,13 +331,10 @@ function onToWarehouseChange(e: any) {
 }
 
 function syncStoresBySalesperson() {
-  const visibleStores = userStore.isAdmin
-    ? allStores.value
-    : getVisibleStoresForSalesperson(allStores.value, currentSalespersonId())
-  stores.value = visibleStores
+  stores.value = [...allStores.value]
   if (!selectedStore.value) return
-  if (visibleStores.some(store => store.id === selectedStore.value?.id)) return
-  selectedStore.value = visibleStores[0] || null
+  if (stores.value.some(store => store.id === selectedStore.value?.id)) return
+  selectedStore.value = stores.value[0] || null
 }
 
 async function loadData() {
@@ -432,6 +468,11 @@ onMounted(() => {
 .section { background: #fff; padding: 24rpx; border-radius: 16rpx; margin-bottom: 20rpx; }
 .label { display:block; font-size: 28rpx; color:#666; margin-bottom:16rpx; }
 .picker { padding: 20rpx; border: 2rpx solid #eee; border-radius: 12rpx; font-size: 30rpx; }
+.store-trigger { display:flex; align-items:center; justify-content:space-between; gap:16rpx; padding:20rpx; border:2rpx solid #eee; border-radius:12rpx; font-size:30rpx; }
+.store-trigger-main { display:flex; align-items:center; gap:12rpx; min-width:0; flex:1; }
+.store-trigger-text { color:#333; flex:1; }
+.store-trigger-text.placeholder { color:#999; }
+.store-trigger-arrow { color:#999; font-size:32rpx; }
 .scan-row { display:flex; gap:12rpx; margin-bottom:12rpx; }
 .scan-row input { flex:1; border:2rpx solid #eee; border-radius:12rpx; padding:12rpx 16rpx; font-size:28rpx; }
 .quick-picker { margin-bottom: 12rpx; }
@@ -456,6 +497,21 @@ onMounted(() => {
 .qty-input { width:100%; min-height:80rpx; box-sizing:border-box; border:2rpx solid #dbe3ee; border-radius:12rpx; padding:0 20rpx; font-size:28rpx; background:#fff; }
 .qty-total { display:block; margin-top:12rpx; font-size:24rpx; color:#475569; }
 .summary { display:flex; justify-content:space-between; padding: 10rpx; color:#333; }
+.store-tag { display:inline-flex; align-items:center; justify-content:center; min-width:88rpx; height:40rpx; padding:0 14rpx; border-radius:999rpx; background:#fff1f0; color:#ff4d4f; font-size:22rpx; }
+.store-popup { position:fixed; inset:0; z-index:100; }
+.store-popup-mask { position:absolute; inset:0; background:rgba(0, 0, 0, 0.35); }
+.store-popup-panel { position:absolute; left:0; right:0; bottom:0; max-height:70vh; background:#fff; border-radius:32rpx 32rpx 0 0; padding:32rpx 30rpx calc(32rpx + env(safe-area-inset-bottom)); }
+.store-popup-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:20rpx; }
+.store-popup-title { font-size:34rpx; font-weight:600; color:#333; }
+.store-popup-close { font-size:44rpx; color:#999; line-height:1; }
+.store-popup-list { max-height:54vh; }
+.store-option { padding:22rpx 0; border-bottom:2rpx solid #f0f0f0; }
+.store-option:last-child { border-bottom:none; }
+.store-option.active .store-option-name { font-weight:600; }
+.store-option-main { display:flex; align-items:center; gap:12rpx; }
+.store-option-name { flex:1; font-size:30rpx; color:#333; }
+.store-option-name.owned { color:#ff4d4f; }
+.store-option-address { display:block; margin-top:8rpx; font-size:22rpx; color:#94a3b8; }
 .btn-submit { width:100%; height:88rpx; background:#1890ff; color:#fff; font-size:32rpx; border-radius:44rpx; border:none; }
 .btn-submit::after { border:none; }
 .empty { text-align:center; padding: 20rpx 0; color:#999; }

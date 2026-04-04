@@ -201,3 +201,30 @@ export interface Session {
   salespersonId?: string
   expiresAt: string
 }
+
+export interface TodayCommissionItem {
+  id: string
+  bizType: 'sale' | 'return' | 'void_sale' | 'void_return' | string
+  docType?: 'sale' | 'return' | string
+  docId: string
+  docCode?: string
+  docDate?: string | number
+  docStatus?: string
+  storeId?: string
+  storeName?: string
+  qty: number
+  amount: number
+  commissionAmount: number
+  createdAt: string | number
+}
+
+export interface TodayCommissionSummary {
+  date: string
+  salespersonId: string
+  salespersonName: string
+  saleAmount: number
+  returnAmount: number
+  totalAmount: number
+  ledgerCount: number
+  ledgers: TodayCommissionItem[]
+}

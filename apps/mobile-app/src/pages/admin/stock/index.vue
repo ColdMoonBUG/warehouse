@@ -9,7 +9,7 @@
       <view class="section">
         <text class="label">选择仓库</text>
         <picker mode="selector" :range="warehouses" range-key="name" @change="onWarehouseChange">
-          <view class="picker"><text>{{ selectedWarehouse?.name || '全部仓库' }}</text></view>
+          <view class="picker"><text>{{ selectedWarehouse?.name || '请选择仓库' }}</text></view>
         </picker>
       </view>
 
@@ -29,33 +29,50 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
-import { getStock, getWarehouses, getProducts } from '@/api'
+import { getSessionSalespersonId, getStock, getWarehouses, getProducts, isSameSalespersonId } from '@/api'
 import type { StockItem, Warehouse, Product } from '@/types'
 import { formatStockPreview, getProductStockQty, toStockQtyMap } from '@/utils'
 
 const userStore = useUserStore()
+const sessionSalespersonId = computed(() => getSessionSalespersonId(userStore.currentUser))
 const list = ref<StockItem[]>([])
 const warehouses = ref<Warehouse[]>([])
 const products = ref<Product[]>([])
 const selectedWarehouse = ref<Warehouse | null>(null)
 const mainStockMap = ref<Record<string, number>>({})
 
-function guard() {
-  if (!userStore.isAdmin) {
-    uni.showToast({ title: '无权限', icon: 'none' })
-    uni.navigateBack()
-    return false
+function getVisibleWarehouses(allWarehouses: Warehouse[]) {
+  if (userStore.isAdmin) return allWarehouses
+  return allWarehouses.filter(warehouse => {
+    if (warehouse.type === 'main') return true
+    if (warehouse.type !== 'vehicle') return false
+    return isSameSalespersonId(warehouse.salespersonId, sessionSalespersonId.value)
+  })
+}
+
+function ensureDefaultWarehouse() {
+  if (selectedWarehouse.value && warehouses.value.some(item => item.id === selectedWarehouse.value?.id)) {
+    return
   }
-  return true
+  if (!warehouses.value.length) {
+    selectedWarehouse.value = null
+    return
+  }
+  if (!userStore.isAdmin) {
+    const ownVehicle = warehouses.value.find(item => item.type === 'vehicle')
+    selectedWarehouse.value = ownVehicle || warehouses.value.find(item => item.type === 'main') || warehouses.value[0]
+    return
+  }
+  selectedWarehouse.value = warehouses.value[0]
 }
 
 function onWarehouseChange(e: any) {
   const idx = Number(e.detail.value)
   selectedWarehouse.value = warehouses.value[idx] || null
-  load()
+  void load()
 }
 
 function productName(id: string) {
@@ -72,7 +89,7 @@ function compareStockText(productId: string, warehouseId: string) {
   const mainWarehouse = warehouses.value.find(w => w.type === 'main')
   if (!mainWarehouse || mainWarehouse.id === warehouseId) return ''
   return formatStockPreview([
-    { label: '当前仓', qty: getProductStockQty(toStockQtyMap(list.value), productId) },
+    { label: selected.type === 'vehicle' ? '车库' : '当前仓', qty: getProductStockQty(toStockQtyMap(list.value), productId) },
     { label: '主仓', qty: getProductStockQty(mainStockMap.value, productId) },
   ])
 }
@@ -82,8 +99,13 @@ function goBack() {
 }
 
 async function load() {
-  if (!guard()) return
+  ensureDefaultWarehouse()
   const wid = selectedWarehouse.value?.id
+  if (!wid) {
+    list.value = []
+    mainStockMap.value = {}
+    return
+  }
   const stockList = await getStock(wid)
   list.value = stockList
   const mainWarehouse = warehouses.value.find(w => w.type === 'main')
@@ -96,10 +118,14 @@ async function load() {
 
 onShow(async () => {
   userStore.init()
-  if (!guard()) return
+  if (!userStore.isLoggedIn) {
+    uni.reLaunch({ url: '/pages/login/index' })
+    return
+  }
   const [whs, pros] = await Promise.all([getWarehouses(), getProducts()])
-  warehouses.value = whs
+  warehouses.value = getVisibleWarehouses(whs)
   products.value = pros
+  ensureDefaultWarehouse()
   await load()
 })
 </script>

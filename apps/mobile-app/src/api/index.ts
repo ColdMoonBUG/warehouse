@@ -1,4 +1,4 @@
-import type { Account, Session, Store, SaleDoc, Salesperson, Product, ReturnDoc, Warehouse, Supplier, StockItem, InboundDoc, InboundLine, TransferDoc, TransferLine, OutboundDoc, OutboundLine } from '@/types'
+import type { Account, Session, Store, SaleDoc, Salesperson, Product, ReturnDoc, Warehouse, Supplier, StockItem, InboundDoc, InboundLine, TransferDoc, TransferLine, OutboundDoc, OutboundLine, TodayCommissionSummary } from '@/types'
 import { SESSION_KEY, SESSION_DAYS, BASE_URL, USE_MOCK } from '@/utils/config'
 import { simpleHash } from '@/utils'
 import { accountDb, storeDb, saleDb, warehouseDb, productDb, supplierDb, genId, now } from '@/mock/storage'
@@ -163,6 +163,11 @@ export function getSessionSalespersonId(session?: Session | null): string {
 
 function isStoreAssignedToSalesperson(store: Store, salespersonId?: string): boolean {
   return !!salespersonId && isSameSalespersonId(getStoreSalespersonId(store), salespersonId)
+}
+
+export function isOwnedStore(store?: Store | null, salespersonId?: string): boolean {
+  if (!store) return false
+  return isStoreAssignedToSalesperson(store, salespersonId)
 }
 
 export function hasAssignedStoresForSalesperson(stores: Store[], salespersonId?: string): boolean {
@@ -611,6 +616,24 @@ export async function deleteProduct(id: string) {
 export async function getStock(warehouseId?: string): Promise<StockItem[]> {
   const params = warehouseId ? { warehouseId } : undefined
   return getRequest<StockItem[]>('/api/stock/list', params)
+}
+
+export async function getTodayCommissionSummary(): Promise<TodayCommissionSummary> {
+  if (USE_MOCK) {
+    const session = getSession()
+    const salespersonId = getSessionSalespersonId(session)
+    return {
+      date: new Date().toISOString().slice(0, 10),
+      salespersonId,
+      salespersonName: session?.displayName || '',
+      saleAmount: 0,
+      returnAmount: 0,
+      totalAmount: 0,
+      ledgerCount: 0,
+      ledgers: [],
+    }
+  }
+  return request<TodayCommissionSummary>('/api/finance/commission/today', 'GET')
 }
 
 export async function getInbounds(): Promise<InboundDoc[]> {

@@ -6,9 +6,15 @@ import com.yeqifu.warehouse.common.Result;
 import com.yeqifu.warehouse.entity.Account;
 import com.yeqifu.warehouse.entity.CommissionLedger;
 import com.yeqifu.warehouse.entity.CommissionSettlement;
+import com.yeqifu.warehouse.entity.ReturnDoc;
+import com.yeqifu.warehouse.entity.SaleDoc;
+import com.yeqifu.warehouse.entity.Store;
 import com.yeqifu.warehouse.mapper.AccountMapper;
 import com.yeqifu.warehouse.mapper.CommissionLedgerMapper;
 import com.yeqifu.warehouse.mapper.CommissionSettlementMapper;
+import com.yeqifu.warehouse.mapper.ReturnDocMapper;
+import com.yeqifu.warehouse.mapper.SaleDocMapper;
+import com.yeqifu.warehouse.mapper.StoreMapper;
 import lombok.Data;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,17 +22,23 @@ import org.springframework.web.bind.annotation.*;
 
 import javax.servlet.http.HttpSession;
 import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/finance/commission")
 @CrossOrigin
 public class FinanceController {
+
+    private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
 
     @Autowired
     private AccountMapper accountMapper;
@@ -36,6 +48,15 @@ public class FinanceController {
 
     @Autowired
     private CommissionSettlementMapper commissionSettlementMapper;
+
+    @Autowired
+    private SaleDocMapper saleDocMapper;
+
+    @Autowired
+    private ReturnDocMapper returnDocMapper;
+
+    @Autowired
+    private StoreMapper storeMapper;
 
     @GetMapping("/summary")
     public Result<List<CommissionSummaryVO>> summary(HttpSession session) {
@@ -63,6 +84,38 @@ public class FinanceController {
             }
             result.add(item);
         }
+        return Result.ok(result);
+    }
+
+    @GetMapping("/today")
+    public Result<CommissionTodayVO> today(HttpSession session) {
+        Account salesperson = getCurrentAccount(session);
+        Result<CommissionTodayVO> auth = rejectIfNotSalesperson(session, salesperson);
+        if (auth != null) {
+            return auth;
+        }
+
+        List<CommissionLedger> ledgers = listTodayLedgers(salesperson.getId());
+        BigDecimal saleAmount = BigDecimal.ZERO;
+        BigDecimal returnAmount = BigDecimal.ZERO;
+        for (CommissionLedger ledger : ledgers) {
+            BigDecimal amount = defaultAmount(ledger.getCommissionAmount());
+            if (isSaleCommissionBizType(ledger.getBizType())) {
+                saleAmount = saleAmount.add(amount);
+            } else {
+                returnAmount = returnAmount.add(amount);
+            }
+        }
+
+        CommissionTodayVO result = new CommissionTodayVO();
+        result.setDate(LocalDate.now(BUSINESS_ZONE).toString());
+        result.setSalespersonId(salesperson.getId());
+        result.setSalespersonName(salesperson.getDisplayName());
+        result.setSaleAmount(saleAmount);
+        result.setReturnAmount(returnAmount);
+        result.setTotalAmount(saleAmount.add(returnAmount));
+        result.setLedgerCount(ledgers.size());
+        result.setLedgers(buildCommissionLedgerItems(ledgers));
         return Result.ok(result);
     }
 
@@ -161,9 +214,9 @@ public class FinanceController {
         BigDecimal returnAmount = BigDecimal.ZERO;
         for (CommissionLedger ledger : ledgers) {
             BigDecimal amount = defaultAmount(ledger.getCommissionAmount());
-            if ("sale".equals(ledger.getBizType()) || "void_sale".equals(ledger.getBizType())) {
+            if (isSaleCommissionBizType(ledger.getBizType())) {
                 saleAmount = saleAmount.add(amount);
-            } else if ("return".equals(ledger.getBizType()) || "void_return".equals(ledger.getBizType())) {
+            } else {
                 returnAmount = returnAmount.add(amount);
             }
         }
@@ -218,6 +271,121 @@ public class FinanceController {
         );
     }
 
+    private List<CommissionLedger> listTodayLedgers(String salespersonId) {
+        LocalDate today = LocalDate.now(BUSINESS_ZONE);
+        Date startAt = Date.from(today.atStartOfDay(BUSINESS_ZONE).toInstant());
+        Date endAt = Date.from(today.plusDays(1).atStartOfDay(BUSINESS_ZONE).toInstant());
+        return commissionLedgerMapper.selectList(
+            new LambdaQueryWrapper<CommissionLedger>()
+                .eq(CommissionLedger::getSalespersonId, salespersonId)
+                .ge(CommissionLedger::getCreatedAt, startAt)
+                .lt(CommissionLedger::getCreatedAt, endAt)
+                .orderByDesc(CommissionLedger::getCreatedAt)
+        );
+    }
+
+    private List<CommissionLedgerItemVO> buildCommissionLedgerItems(List<CommissionLedger> ledgers) {
+        if (ledgers.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        Set<String> saleDocIds = new LinkedHashSet<>();
+        Set<String> returnDocIds = new LinkedHashSet<>();
+        Set<String> storeIds = new LinkedHashSet<>();
+        for (CommissionLedger ledger : ledgers) {
+            if (ledger.getDocId() != null && !ledger.getDocId().isEmpty()) {
+                if (isSaleCommissionBizType(ledger.getBizType())) {
+                    saleDocIds.add(ledger.getDocId());
+                } else {
+                    returnDocIds.add(ledger.getDocId());
+                }
+            }
+            if (ledger.getStoreId() != null && !ledger.getStoreId().isEmpty()) {
+                storeIds.add(ledger.getStoreId());
+            }
+        }
+
+        Map<String, SaleDoc> saleDocMap = saleDocIds.isEmpty()
+            ? new LinkedHashMap<>()
+            : saleDocMapper.selectBatchIds(saleDocIds).stream()
+                .collect(Collectors.toMap(SaleDoc::getId, item -> item, (left, right) -> left, LinkedHashMap::new));
+        Map<String, ReturnDoc> returnDocMap = returnDocIds.isEmpty()
+            ? new LinkedHashMap<>()
+            : returnDocMapper.selectBatchIds(returnDocIds).stream()
+                .collect(Collectors.toMap(ReturnDoc::getId, item -> item, (left, right) -> left, LinkedHashMap::new));
+
+        for (SaleDoc doc : saleDocMap.values()) {
+            if (doc.getStoreId() != null && !doc.getStoreId().isEmpty()) {
+                storeIds.add(doc.getStoreId());
+            }
+        }
+        for (ReturnDoc doc : returnDocMap.values()) {
+            if (doc.getStoreId() != null && !doc.getStoreId().isEmpty()) {
+                storeIds.add(doc.getStoreId());
+            }
+        }
+
+        Map<String, Store> storeMap = storeIds.isEmpty()
+            ? new LinkedHashMap<>()
+            : storeMapper.selectBatchIds(storeIds).stream()
+                .collect(Collectors.toMap(Store::getId, item -> item, (left, right) -> left, LinkedHashMap::new));
+
+        List<CommissionLedgerItemVO> items = new ArrayList<>();
+        for (CommissionLedger ledger : ledgers) {
+            CommissionLedgerItemVO item = new CommissionLedgerItemVO();
+            item.setId(ledger.getId());
+            item.setBizType(ledger.getBizType());
+            item.setDocId(ledger.getDocId());
+            item.setSalespersonId(ledger.getSalespersonId());
+            item.setStoreId(ledger.getStoreId());
+            item.setProductId(ledger.getProductId());
+            item.setQty(ledger.getQty());
+            item.setPrice(defaultAmount(ledger.getPrice()));
+            item.setAmount(defaultAmount(ledger.getAmount()));
+            item.setCommissionRate(defaultAmount(ledger.getCommissionRate()));
+            item.setCommissionAmount(defaultAmount(ledger.getCommissionAmount()));
+            item.setSettlementId(ledger.getSettlementId());
+            item.setSettledAt(ledger.getSettledAt());
+            item.setCreatedAt(ledger.getCreatedAt());
+
+            String resolvedStoreId = ledger.getStoreId();
+            if (isSaleCommissionBizType(ledger.getBizType())) {
+                item.setDocType("sale");
+                SaleDoc doc = saleDocMap.get(ledger.getDocId());
+                if (doc != null) {
+                    item.setDocCode(doc.getCode());
+                    item.setDocDate(doc.getDocDate());
+                    item.setDocStatus(doc.getStatus());
+                    if ((resolvedStoreId == null || resolvedStoreId.isEmpty()) && doc.getStoreId() != null && !doc.getStoreId().isEmpty()) {
+                        resolvedStoreId = doc.getStoreId();
+                    }
+                }
+            } else {
+                item.setDocType("return");
+                ReturnDoc doc = returnDocMap.get(ledger.getDocId());
+                if (doc != null) {
+                    item.setDocCode(doc.getCode());
+                    item.setDocDate(doc.getDocDate());
+                    item.setDocStatus(doc.getStatus());
+                    if ((resolvedStoreId == null || resolvedStoreId.isEmpty()) && doc.getStoreId() != null && !doc.getStoreId().isEmpty()) {
+                        resolvedStoreId = doc.getStoreId();
+                    }
+                }
+            }
+
+            item.setStoreId(resolvedStoreId);
+            if (resolvedStoreId != null && !resolvedStoreId.isEmpty()) {
+                Store store = storeMap.get(resolvedStoreId);
+                if (store != null) {
+                    item.setStoreName(store.getName());
+                    item.setStoreAddress(store.getAddress());
+                }
+            }
+            items.add(item);
+        }
+        return items;
+    }
+
     private CommissionSummaryVO buildSummary(Account salesperson, List<CommissionLedger> unsettledLedgers) {
         CommissionSummaryVO vo = new CommissionSummaryVO();
         vo.setSalespersonId(salesperson.getId());
@@ -226,9 +394,9 @@ public class FinanceController {
         BigDecimal returnAmount = BigDecimal.ZERO;
         for (CommissionLedger ledger : unsettledLedgers) {
             BigDecimal amount = defaultAmount(ledger.getCommissionAmount());
-            if ("sale".equals(ledger.getBizType()) || "void_sale".equals(ledger.getBizType())) {
+            if (isSaleCommissionBizType(ledger.getBizType())) {
                 saleAmount = saleAmount.add(amount);
-            } else if ("return".equals(ledger.getBizType()) || "void_return".equals(ledger.getBizType())) {
+            } else {
                 returnAmount = returnAmount.add(amount);
             }
         }
@@ -239,8 +407,20 @@ public class FinanceController {
         return vo;
     }
 
+    private boolean isSaleCommissionBizType(String bizType) {
+        return "sale".equals(bizType) || "void_sale".equals(bizType);
+    }
+
     private BigDecimal defaultAmount(BigDecimal value) {
         return value == null ? BigDecimal.ZERO : value;
+    }
+
+    private Account getCurrentAccount(HttpSession session) {
+        Object accountId = session.getAttribute("warehouseAccountId");
+        if (!(accountId instanceof String)) {
+            return null;
+        }
+        return accountMapper.selectById((String) accountId);
     }
 
     private <T> Result<T> rejectIfNotAdmin(HttpSession session) {
@@ -254,6 +434,19 @@ public class FinanceController {
         return Result.error("仅管理员可操作");
     }
 
+    private <T> Result<T> rejectIfNotSalesperson(HttpSession session, Account account) {
+        if (session.getAttribute("warehouseAccountId") == null) {
+            return Result.error("未登录");
+        }
+        if (account == null || !"active".equals(account.getStatus())) {
+            return Result.error("账户不存在或已停用");
+        }
+        if (!"salesperson".equals(account.getRole())) {
+            return Result.error("仅业务员可查看");
+        }
+        return null;
+    }
+
     @Data
     public static class CommissionSummaryVO {
         private String salespersonId;
@@ -265,6 +458,42 @@ public class FinanceController {
         private String lastSettlementId;
         private Date lastSettlementAt;
         private BigDecimal lastSettlementAmount;
+    }
+
+    @Data
+    public static class CommissionTodayVO {
+        private String date;
+        private String salespersonId;
+        private String salespersonName;
+        private BigDecimal saleAmount;
+        private BigDecimal returnAmount;
+        private BigDecimal totalAmount;
+        private Integer ledgerCount;
+        private List<CommissionLedgerItemVO> ledgers;
+    }
+
+    @Data
+    public static class CommissionLedgerItemVO {
+        private String id;
+        private String bizType;
+        private String docType;
+        private String docId;
+        private String docCode;
+        private Date docDate;
+        private String docStatus;
+        private String salespersonId;
+        private String storeId;
+        private String storeName;
+        private String storeAddress;
+        private String productId;
+        private Integer qty;
+        private BigDecimal price;
+        private BigDecimal amount;
+        private BigDecimal commissionRate;
+        private BigDecimal commissionAmount;
+        private String settlementId;
+        private Date settledAt;
+        private Date createdAt;
     }
 
     @Data

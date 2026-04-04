@@ -92,6 +92,13 @@
       }
     },
     {
+      "path": "pages/settings/stock",
+      "style": {
+        "navigationBarTitleText": "库存查询",
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/settings/store-list",
       "style": {
         "navigationBarTitleText": "超市管理",

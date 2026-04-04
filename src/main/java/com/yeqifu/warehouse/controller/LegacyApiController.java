@@ -4,6 +4,8 @@ import com.yeqifu.warehouse.common.Result;
 import com.yeqifu.warehouse.entity.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
+
+import javax.servlet.http.HttpSession;
 import java.util.List;
 
 /**
@@ -87,7 +89,7 @@ public class LegacyApiController {
 
     // warehouse & stock
     @GetMapping("/warehouse/list")
-    public Result<List<Warehouse>> warehouseList() { return warehouseController.list(); }
+    public Result<List<Warehouse>> warehouseList(HttpSession session) { return warehouseController.list(session); }
 
     @PostMapping("/warehouse/save")
     public Result<Void> warehouseSave(@RequestBody Warehouse warehouse) { return warehouseController.save(warehouse); }
@@ -96,8 +98,8 @@ public class LegacyApiController {
     public Result<Void> warehouseDelete(@PathVariable String id) { return warehouseController.delete(id); }
 
     @GetMapping("/stock/list")
-    public Result<List<Stock>> stockList(@RequestParam(required = false) String warehouseId) {
-        return stockController.list(warehouseId);
+    public Result<List<Stock>> stockList(@RequestParam(required = false) String warehouseId, HttpSession session) {
+        return stockController.list(warehouseId, session);
     }
 
     // inbound

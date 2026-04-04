@@ -58,6 +58,8 @@ export function getPageQueryParam(name: string): string {
   return ''
 }
 
+export const COMMISSION_RATE = 0.06
+
 // 获取商品快捷选择显示文本
 export function formatProductQuickPickLabel(product: { name?: string; barcode?: string }, extraText = ''): string {
   const name = product.name || '未命名商品'

@@ -49,10 +49,17 @@
       <view class="popup-mask" @tap="selectedStore = null" />
       <view class="popup-content">
         <view class="popup-header">
-          <text class="store-name">{{ selectedStore.name }}</text>
+          <view class="popup-title-wrap">
+            <text class="store-name" :class="{ owned: isOwnedStoreItem(selectedStore) }">{{ selectedStore.name }}</text>
+            <text v-if="isOwnedStoreItem(selectedStore)" class="owner-tag">我的店</text>
+          </view>
           <view class="close-btn" @tap="selectedStore = null">×</view>
         </view>
         <view class="popup-body">
+          <view class="info-row" v-if="selectedStore.salespersonName">
+            <text class="label">归属业务员</text>
+            <text class="value" :class="{ owned: isOwnedStoreItem(selectedStore) }">{{ selectedStore.salespersonName }}</text>
+          </view>
           <view class="info-row">
             <text class="label">地址</text>
             <text class="value">{{ selectedStore.address || '-' }}</text>
@@ -76,7 +83,7 @@
 import { computed, ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
-import { getStores, getStoreSaleQty, getSalespersonAccounts, getVisibleStoresForSession, hasAssignedStoresForSalesperson, isSameSalespersonId, getSessionSalespersonId } from '@/api'
+import { getStores, getStoreSaleQty, getSalespersonAccounts, isOwnedStore, isSameSalespersonId, getSessionSalespersonId } from '@/api'
 import { AMAP_KEY } from '@/utils/config'
 import { requestCurrentLocation, openLocationSettings } from '@/utils/location'
 import type { Store, Salesperson } from '@/types'
@@ -156,13 +163,7 @@ async function locateCurrentPosition(showToastOnFail = false) {
 
 function updateMarkers(storeList: Store[], saleQty: Record<string, number>) {
   const maxQty = Math.max(...Object.values(saleQty), 1)
-  const currentSalespersonId = getSessionSalespersonId(userStore.currentUser)
-  const visibleStores = getVisibleStoresForSession(storeList, userStore.isAdmin, currentSalespersonId)
-  if (!userStore.isAdmin && storeList.length > 0 && !hasAssignedStoresForSalesperson(storeList, currentSalespersonId)) {
-    uni.showToast({ title: '当前账户未绑定超市，已显示全部启用超市', icon: 'none' })
-  }
-
-  stores.value = visibleStores
+  stores.value = storeList
     .filter(s => s.lat && s.lng)
     .map(s => {
       const qty = saleQty[s.id] || 0
@@ -194,6 +195,10 @@ function updateMarkers(storeList: Store[], saleQty: Record<string, number>) {
       display: 'BYCLICK',
     },
   }))
+}
+
+function isOwnedStoreItem(store?: Store | null) {
+  return isOwnedStore(store, getSessionSalespersonId(userStore.currentUser))
 }
 
 async function loadBusinessData() {
@@ -366,9 +371,34 @@ onShow(() => {
     align-items: center;
     margin-bottom: 30rpx;
 
+    .popup-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 12rpx;
+      min-width: 0;
+      flex: 1;
+    }
+
     .store-name {
       font-size: 36rpx;
       font-weight: 600;
+    }
+
+    .store-name.owned {
+      color: #ff4d4f;
+    }
+
+    .owner-tag {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 88rpx;
+      height: 40rpx;
+      padding: 0 14rpx;
+      border-radius: 999rpx;
+      background: #fff1f0;
+      color: #ff4d4f;
+      font-size: 22rpx;
     }
 
     .close-btn {
@@ -393,6 +423,10 @@ onShow(() => {
         flex: 1;
         font-size: 28rpx;
         color: #333;
+
+        &.owned {
+          color: #ff4d4f;
+        }
 
         .qty {
           font-size: 36rpx;

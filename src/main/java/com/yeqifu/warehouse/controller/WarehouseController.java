@@ -7,6 +7,8 @@ import com.yeqifu.warehouse.mapper.WarehouseMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
+import javax.servlet.http.HttpSession;
+import java.util.ArrayList;
 import java.util.List;
 
 @RestController
@@ -18,9 +20,28 @@ public class WarehouseController {
     private WarehouseMapper warehouseMapper;
 
     @GetMapping("/list")
-    public Result<List<Warehouse>> list() {
+    public Result<List<Warehouse>> list(HttpSession session) {
         List<Warehouse> list = warehouseMapper.selectList(new LambdaQueryWrapper<>());
-        return Result.ok(list);
+        Object role = session.getAttribute("warehouseAccountRole");
+        Object accountId = session.getAttribute("warehouseAccountId");
+        if (!"salesperson".equals(role) || !(accountId instanceof String)) {
+            return Result.ok(list);
+        }
+        String salespersonId = (String) accountId;
+        List<Warehouse> filtered = new ArrayList<>();
+        for (Warehouse warehouse : list) {
+            if (warehouse == null) {
+                continue;
+            }
+            if ("main".equals(warehouse.getType()) || "return".equals(warehouse.getType())) {
+                filtered.add(warehouse);
+                continue;
+            }
+            if ("vehicle".equals(warehouse.getType()) && salespersonId.equals(warehouse.getSalespersonId())) {
+                filtered.add(warehouse);
+            }
+        }
+        return Result.ok(filtered);
     }
 
     @PostMapping("/save")
