@@ -59,9 +59,33 @@ export function getPageQueryParam(name: string): string {
 }
 
 // 获取商品快捷选择显示文本
-export function formatProductQuickPickLabel(product: { name?: string; barcode?: string }): string {
+export function formatProductQuickPickLabel(product: { name?: string; barcode?: string }, extraText = ''): string {
   const name = product.name || '未命名商品'
-  return product.barcode ? `${name}（${product.barcode}）` : name
+  const label = product.barcode ? `${name}（${product.barcode}）` : name
+  return extraText ? `${label} · ${extraText}` : label
+}
+
+// 将库存列表转换为商品库存映射
+export function toStockQtyMap(stockList: Array<{ productId: string; qty?: number }>): Record<string, number> {
+  return stockList.reduce<Record<string, number>>((acc, item) => {
+    if (!item.productId) return acc
+    acc[item.productId] = normalizeCount(item.qty)
+    return acc
+  }, {})
+}
+
+// 读取商品库存
+export function getProductStockQty(stockMap: Record<string, number>, productId?: string): number {
+  if (!productId) return 0
+  return normalizeCount(stockMap[productId])
+}
+
+// 格式化库存摘要
+export function formatStockPreview(parts: Array<{ label: string; qty?: number; hidden?: boolean }>): string {
+  return parts
+    .filter(part => part && !part.hidden)
+    .map(part => `${part.label}${normalizeCount(part.qty)}袋`)
+    .join('｜')
 }
 
 // 规范化每箱袋数

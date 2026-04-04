@@ -6,6 +6,10 @@
       <view style="width: 60rpx" />
     </view>
     <view class="content">
+      <view v-if="pageLoading" class="section state-card">
+        <text class="field-tip state-text">{{ salespersons.length || products.length || warehouses.length ? '基础资料已显示，正在后台刷新...' : '正在加载基础资料...' }}</text>
+      </view>
+
       <view class="section">
         <text class="label">业务员</text>
         <picker mode="selector" :range="salespersons" range-key="displayName" @change="onSalespersonChange">
@@ -17,6 +21,7 @@
         <picker mode="selector" :range="warehouses" range-key="name" @change="onWarehouseChange">
           <view class="picker"><text>{{ warehouseName || '请选择仓库' }}</text></view>
         </picker>
+        <text v-if="form.warehouseId || targetVehicleWarehouse" class="field-tip stock-hint">{{ stockHint }}</text>
       </view>
       <view class="section">
         <text class="label">日期</text>
@@ -55,6 +60,7 @@
             </view>
           </view>
           <text v-if="lineSummary(l)" class="field-tip">{{ lineSummary(l) }}</text>
+          <text v-if="lineStockPreview(l.productId)" class="field-tip stock-preview">{{ lineStockPreview(l.productId) }}</text>
         </view>
         <button class="btn-add-line" @tap="addLine">+ 添加一行</button>
       </view>
@@ -71,23 +77,37 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
-import { useUserStore } from '@/store/user'
-import { getOutboundDetail, saveOutbound, postOutbound, voidOutbound, getProducts, getWarehouses, getSalespersonAccounts, getProductDetail, isSameSalespersonId } from '@/api'
-import type { OutboundDoc, OutboundLine, Product, Warehouse, Salesperson } from '@/types'
-import { formatDate, getPageQueryParam, calcQty, deriveBagQty, normalizeBoxPackQty, normalizeCount, formatProductPackageSummary } from '@/utils'
+import { useReferenceStore } from '@/store/reference'
+import { getOutboundDetail, saveOutbound, postOutbound, voidOutbound, getStock, getProductDetail, isSameSalespersonId } from '@/api'
+import type { OutboundDoc, OutboundLine, Product, Warehouse, Salesperson, StockItem } from '@/types'
+import { formatDate, getPageQueryParam, calcQty, deriveBagQty, normalizeBoxPackQty, normalizeCount, formatProductPackageSummary, formatStockPreview, getProductStockQty, toStockQtyMap } from '@/utils'
 
 type FormLine = OutboundLine & { bagQty?: number }
 
 const userStore = useUserStore()
+const referenceStore = useReferenceStore()
 const salespersons = ref<Salesperson[]>([])
 const warehouses = ref<Warehouse[]>([])
 const products = ref<Product[]>([])
 const lines = ref<FormLine[]>([])
 const form = ref<Partial<OutboundDoc>>({ date: formatDate(new Date(), 'YYYY-MM-DD'), status: 'draft' })
 const queryId = ref('')
+const sourceStockMap = ref<Record<string, number>>({})
+const targetStockMap = ref<Record<string, number>>({})
+const stockLoading = ref(false)
+const pageLoading = ref(false)
 
 const salespersonName = computed(() => salespersons.value.find(item => isSameSalespersonId(item.salespersonId || item.id, form.value.salespersonId))?.displayName || '')
 const warehouseName = computed(() => warehouses.value.find(w => w.id === form.value.warehouseId)?.name || '')
+const targetVehicleWarehouse = computed(() => {
+  const salespersonId = form.value.salespersonId
+  if (!salespersonId) return null
+  return warehouses.value.find(w => w.type === 'vehicle' && isSameSalespersonId(w.salespersonId, salespersonId)) || null
+})
+const stockHint = computed(() => {
+  if (stockLoading.value) return '库存加载中'
+  return targetVehicleWarehouse.value ? '已显示出库仓和车库库存' : '已显示出库仓库存'
+})
 
 function productById(id: string) {
   return products.value.find(p => p.id === id)
@@ -138,6 +158,36 @@ function lineSummary(line: FormLine) {
   return formatProductPackageSummary(product, qty, boxQty)
 }
 
+function lineStockPreview(productId?: string) {
+  return formatStockPreview([
+    { label: '出库仓', qty: getProductStockQty(sourceStockMap.value, productId), hidden: !form.value.warehouseId },
+    { label: '车库', qty: getProductStockQty(targetStockMap.value, productId), hidden: !targetVehicleWarehouse.value },
+  ])
+}
+
+async function refreshStockPreview() {
+  if (!form.value.warehouseId && !targetVehicleWarehouse.value) {
+    sourceStockMap.value = {}
+    targetStockMap.value = {}
+    return
+  }
+  stockLoading.value = true
+  try {
+    const requests: Array<Promise<StockItem[]>> = []
+    if (form.value.warehouseId) requests.push(getStock(form.value.warehouseId))
+    if (targetVehicleWarehouse.value && targetVehicleWarehouse.value.id !== form.value.warehouseId) {
+      requests.push(getStock(targetVehicleWarehouse.value.id))
+    }
+    const [sourceStock = [], targetStock = []] = await Promise.all(requests)
+    sourceStockMap.value = toStockQtyMap(sourceStock)
+    targetStockMap.value = targetVehicleWarehouse.value?.id === form.value.warehouseId
+      ? { ...sourceStockMap.value }
+      : toStockQtyMap(targetStock)
+  } finally {
+    stockLoading.value = false
+  }
+}
+
 async function ensureSalespersonLoaded(id?: string) {
   if (!id || salespersons.value.some(item => isSameSalespersonId(item.salespersonId || item.id, id))) return
   const list = await getSalespersonAccounts(true)
@@ -182,11 +232,13 @@ function onSalespersonChange(e: any) {
   const idx = Number(e.detail.value)
   const salesperson = salespersons.value[idx]
   form.value.salespersonId = salesperson?.salespersonId || salesperson?.id || ''
+  refreshStockPreview()
 }
 
 function onWarehouseChange(e: any) {
   const idx = Number(e.detail.value)
   form.value.warehouseId = warehouses.value[idx]?.id
+  refreshStockPreview()
 }
 
 function onProductChange(e: any, i: number) {
@@ -246,12 +298,37 @@ onLoad((query) => {
 
 onMounted(async () => {
   if (!guard()) return
-  const [salespersonList, whs, pros] = await Promise.all([getSalespersonAccounts(true), getWarehouses(), getProducts()])
-  salespersons.value = salespersonList
-  warehouses.value = whs
-  products.value = pros
+
+  referenceStore.hydrate()
+  salespersons.value = [...referenceStore.allSalespersons]
+  warehouses.value = [...referenceStore.warehouses]
+  products.value = [...referenceStore.products]
+
+  pageLoading.value = true
+  try {
+    await Promise.all([
+      referenceStore.preloadCore(),
+      referenceStore.preloadAllAccounts(),
+    ])
+    salespersons.value = [...referenceStore.allSalespersons]
+    warehouses.value = [...referenceStore.warehouses]
+    products.value = [...referenceStore.products]
+  } catch (e: any) {
+    salespersons.value = [...referenceStore.allSalespersons]
+    warehouses.value = [...referenceStore.warehouses]
+    products.value = [...referenceStore.products]
+    if (salespersons.value.length || warehouses.value.length || products.value.length) {
+      uni.showToast({ title: '基础资料刷新失败，已显示缓存', icon: 'none' })
+    } else {
+      uni.showToast({ title: e.message || '基础资料加载失败', icon: 'none' })
+    }
+  } finally {
+    pageLoading.value = false
+  }
+
   if (queryId.value) await loadEdit(queryId.value)
   if (lines.value.length === 0) addLine()
+  await refreshStockPreview()
 })
 </script>
 
@@ -277,9 +354,12 @@ onMounted(async () => {
 .picker-box text { width:100%; color:#333; }
 .input-box { display:block; padding:0 20rpx; line-height:80rpx; margin-bottom:0; }
 .field-tip { display:block; margin-top:4rpx; font-size:22rpx; color:#64748b; }
+.state-card { text-align:center; }
 input { font-size:28rpx; margin-bottom: 10rpx; }
+.stock-hint,
+.stock-preview,
+.state-text { color:#1890ff; }
 .btn-delete { min-width:108rpx; height:60rpx; padding:0 20rpx; background:#fff1f0; color:#ff4d4f; border-radius:999rpx; font-size:24rpx; line-height:60rpx; border:none; }
-.btn-delete::after { border:none; }
 .btn-add-line { width:100%; height:80rpx; background:#eef6ff; color:#1890ff; border-radius:12rpx; font-size:28rpx; border:2rpx dashed #b5d4ff; }
 .btn-add-line::after { border:none; }
 .actions { display:flex; gap:12rpx; }

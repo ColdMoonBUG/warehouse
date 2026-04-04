@@ -14,7 +14,13 @@
 
     <!-- 搜索栏 -->
     <view class="search-bar">
-      <text class="search-text">门店地图</text>
+      <view class="search-main">
+        <text class="search-text">门店地图</text>
+        <button class="location-btn" size="mini" :loading="locationLoading" @tap="locateCurrentPosition(true)">
+          {{ locationActionText }}
+        </button>
+      </view>
+      <text class="location-text" :class="{ error: !!locationErrorMessage }">{{ locationMessage }}</text>
     </view>
 
     <!-- 图例 -->
@@ -67,11 +73,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
 import { getStores, getStoreSaleQty, getSalespersonAccounts, getVisibleStoresForSession, hasAssignedStoresForSalesperson, isSameSalespersonId, getSessionSalespersonId } from '@/api'
 import { AMAP_KEY } from '@/utils/config'
+import { requestCurrentLocation, openLocationSettings } from '@/utils/location'
 import type { Store, Salesperson } from '@/types'
 
 interface StoreWithSale extends Store {
@@ -80,14 +87,31 @@ interface StoreWithSale extends Store {
   salespersonName?: string
 }
 
+const DEFAULT_CENTER = { latitude: 32.9987, longitude: 112.5292 }
+
 const userStore = useUserStore()
 
-const mapCenter = ref({ latitude: 32.9987, longitude: 112.5292 })
+const mapCenter = ref({ ...DEFAULT_CENTER })
 const mapScale = ref(13)
 const markers = ref<any[]>([])
 const stores = ref<StoreWithSale[]>([])
 const salespersons = ref<Salesperson[]>([])
 const selectedStore = ref<StoreWithSale | null>(null)
+const locationLoading = ref(false)
+const locationReady = ref(false)
+const locationErrorMessage = ref('')
+
+const locationMessage = computed(() => {
+  if (locationLoading.value) return '正在获取当前位置…'
+  if (locationErrorMessage.value) return locationErrorMessage.value
+  if (locationReady.value) return '已定位到当前位置，可点击重试'
+  return '正在使用默认位置，可点击定位当前位置'
+})
+
+const locationActionText = computed(() => {
+  if (locationLoading.value) return '定位中'
+  return locationReady.value ? '重新定位' : '定位当前位置'
+})
 
 function gradeColor(qty: number, max: number): string {
   if (max === 0) return '#22c55e'
@@ -106,21 +130,32 @@ function createMarkerIcon(color: string): string {
   return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg)
 }
 
-async function loadData() {
-  const [storeList, saleQty, salespersonList, loc] = await Promise.all([
-    getStores(),
-    getStoreSaleQty(30),
-    getSalespersonAccounts(),
-    uni.getLocation({ type: 'gcj02' }).then(res => res).catch(() => null),
-  ])
-  if (loc && loc.latitude && loc.longitude) {
+async function locateCurrentPosition(showToastOnFail = false) {
+  if (locationLoading.value) return false
+  locationLoading.value = true
+  locationErrorMessage.value = ''
+  try {
+    const loc = await requestCurrentLocation()
     mapCenter.value = { latitude: loc.latitude, longitude: loc.longitude }
+    locationReady.value = true
+    return true
+  } catch (e: any) {
+    locationReady.value = false
+    locationErrorMessage.value = e?.message || '定位失败，当前先显示默认区域'
+    if (showToastOnFail) {
+      uni.showToast({ title: locationErrorMessage.value, icon: 'none' })
+      if (e?.reason === 'permission' || e?.reason === 'service') {
+        setTimeout(() => openLocationSettings(), 200)
+      }
+    }
+  } finally {
+    locationLoading.value = false
   }
+  return false
+}
 
-  salespersons.value = salespersonList
-
+function updateMarkers(storeList: Store[], saleQty: Record<string, number>) {
   const maxQty = Math.max(...Object.values(saleQty), 1)
-
   const currentSalespersonId = getSessionSalespersonId(userStore.currentUser)
   const visibleStores = getVisibleStoresForSession(storeList, userStore.isAdmin, currentSalespersonId)
   if (!userStore.isAdmin && storeList.length > 0 && !hasAssignedStoresForSalesperson(storeList, currentSalespersonId)) {
@@ -161,6 +196,16 @@ async function loadData() {
   }))
 }
 
+async function loadBusinessData() {
+  const [storeList, saleQty, salespersonList] = await Promise.all([
+    getStores(),
+    getStoreSaleQty(30),
+    getSalespersonAccounts(),
+  ])
+  salespersons.value = salespersonList
+  updateMarkers(storeList, saleQty)
+}
+
 function onMarkerTap(e: any) {
   const markerId = e.markerId
   if (markerId !== undefined && stores.value[markerId]) {
@@ -185,7 +230,9 @@ onShow(() => {
     uni.reLaunch({ url: '/pages/login/index' })
     return
   }
-  loadData()
+  selectedStore.value = null
+  loadBusinessData()
+  locateCurrentPosition(false)
 })
 </script>
 
@@ -210,10 +257,43 @@ onShow(() => {
   padding-top: calc(20rpx + var(--status-bar-height, 0));
   background: rgba(255, 255, 255, 0.9);
 
+  .search-main {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20rpx;
+  }
+
   .search-text {
     font-size: 32rpx;
     font-weight: 600;
     color: #333;
+  }
+
+  .location-btn {
+    margin: 0;
+    padding: 0 24rpx;
+    height: 60rpx;
+    line-height: 60rpx;
+    background: #1890ff;
+    color: #fff;
+    border-radius: 999rpx;
+    font-size: 24rpx;
+
+    &::after {
+      border: none;
+    }
+  }
+
+  .location-text {
+    display: block;
+    margin-top: 10rpx;
+    font-size: 22rpx;
+    color: #64748b;
+
+    &.error {
+      color: #ef4444;
+    }
   }
 }
 

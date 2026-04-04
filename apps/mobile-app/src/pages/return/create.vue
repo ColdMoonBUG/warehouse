@@ -5,6 +5,10 @@
     </view>
 
     <view class="content">
+      <view v-if="pageLoading" class="section state-card">
+        <text class="state-text">{{ stores.length || products.length || warehouses.length ? '基础资料已显示，正在后台刷新...' : '正在加载基础资料...' }}</text>
+      </view>
+
       <view class="section">
         <text class="label">退货类型</text>
         <picker mode="selector" :range="typeOptions" range-key="label" @change="onTypeChange">
@@ -43,6 +47,7 @@
           <view class="picker quick-picker" :class="{ disabled: !quickPickEnabled }"><text>{{ quickPickText }}</text></view>
         </picker>
         <view class="scan-hint" v-if="keyword">已按关键词筛选</view>
+        <view v-if="quickPickEnabled && fromWarehouse" class="stock-hint">{{ quickPickStockHint }}</view>
         <view v-if="!quickPickEnabled" class="empty">{{ keyword ? '当前筛选下暂无商品' : '暂无可选商品' }}</view>
       </view>
 
@@ -56,6 +61,7 @@
               <text class="price">¥{{ p.salePrice }}</text>
               <text class="barcode" v-if="p.barcode">条码: {{ p.barcode }}</text>
               <text class="package">{{ productPackageSummary(p) }}</text>
+              <text v-if="productStockPreview(p.id)" class="stock-preview">{{ productStockPreview(p.id) }}</text>
             </view>
             <button class="btn-remove" @tap="toggleSelect(p)">移除</button>
           </view>
@@ -86,9 +92,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useUserStore } from '@/store/user'
-import { getStores, getProducts, getWarehouses, saveReturn, postReturn, getVisibleStoresForSalesperson, hasAssignedStoresForSalesperson, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId } from '@/api'
-import type { Store, Product, Warehouse, ReturnDoc, ReturnLine } from '@/types'
-import { genId, formatProductQuickPickLabel, formatProductPackageSummary, calcQty, deriveBagQty, normalizeCount, normalizeBoxPackQty } from '@/utils'
+import { useReferenceStore } from '@/store/reference'
+import { getStock, saveReturn, postReturn, getVisibleStoresForSalesperson, hasAssignedStoresForSalesperson, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId } from '@/api'
+import type { Store, Product, Warehouse, ReturnDoc, ReturnLine, StockItem } from '@/types'
+import { genId, formatProductQuickPickLabel, formatProductPackageSummary, calcQty, deriveBagQty, normalizeCount, normalizeBoxPackQty, formatStockPreview, getProductStockQty, toStockQtyMap } from '@/utils'
 
 interface QtyInput {
   boxQty: number
@@ -97,6 +104,7 @@ interface QtyInput {
 }
 
 const userStore = useUserStore()
+const referenceStore = useReferenceStore()
 const stores = ref<Store[]>([])
 const allStores = ref<Store[]>([])
 const products = ref<Product[]>([])
@@ -107,6 +115,10 @@ const returnType = ref<'vehicle_return'|'warehouse_return'>('vehicle_return')
 const fromWarehouse = ref<Warehouse | null>(null)
 const toWarehouse = ref<Warehouse | null>(null)
 const keyword = ref('')
+const vehicleStockMap = ref<Record<string, number>>({})
+const mainStockMap = ref<Record<string, number>>({})
+const stockLoading = ref(false)
+const pageLoading = ref(false)
 
 function onTypeChange(e: any) {
   returnType.value = typeOptions[Number(e.detail.value)]?.value as any
@@ -115,6 +127,7 @@ function onTypeChange(e: any) {
   } else if (!toWarehouse.value) {
     toWarehouse.value = returnWarehouses.value[0] || null
   }
+  refreshStockPreview()
 }
 
 const typeOptions = [
@@ -132,6 +145,7 @@ const vehicleWarehouses = computed(() => {
   return list.filter(w => isSameSalespersonId(w.salespersonId, sessionSalespersonId.value))
 })
 const returnWarehouses = computed(() => warehouses.value.filter(w => w.type === 'return'))
+const mainWarehouse = computed(() => warehouses.value.find(w => w.type === 'main') || null)
 const effectiveSalespersonId = computed(() => {
   return getWarehouseSalespersonId(fromWarehouse.value) || sessionSalespersonId.value
 })
@@ -154,7 +168,7 @@ const filteredProducts = computed(() => {
 
 const quickPickOptions = computed(() => filteredProducts.value.map(product => ({
   id: product.id,
-  name: formatProductQuickPickLabel(product),
+  name: formatProductQuickPickLabel(product, productStockPreview(product.id)),
 })))
 
 const quickPickEnabled = computed(() => quickPickOptions.value.length > 0)
@@ -162,6 +176,10 @@ const quickPickIndex = computed(() => -1)
 const quickPickText = computed(() => {
   if (!quickPickEnabled.value) return keyword.value ? '当前筛选下无可选商品' : '暂无可选商品'
   return keyword.value ? '快捷选择筛选结果商品' : '快捷选择商品'
+})
+const quickPickStockHint = computed(() => {
+  if (stockLoading.value) return '库存加载中'
+  return mainWarehouse.value ? '列表已显示车库和总仓库存' : '列表已显示车库库存'
 })
 
 const selectedProducts = computed(() => products.value.filter(p => !!qtyMap.value[p.id]))
@@ -211,6 +229,36 @@ function productPackageSummary(product: Product) {
   return formatProductPackageSummary(product, current?.qty || 0, current?.boxQty || 0)
 }
 
+function productStockPreview(productId: string) {
+  return formatStockPreview([
+    { label: '车库', qty: getProductStockQty(vehicleStockMap.value, productId), hidden: !fromWarehouse.value },
+    { label: '总仓', qty: getProductStockQty(mainStockMap.value, productId), hidden: !mainWarehouse.value },
+  ])
+}
+
+async function refreshStockPreview() {
+  if (!fromWarehouse.value && !mainWarehouse.value) {
+    vehicleStockMap.value = {}
+    mainStockMap.value = {}
+    return
+  }
+  stockLoading.value = true
+  try {
+    const requests: Array<Promise<StockItem[]>> = []
+    if (fromWarehouse.value) requests.push(getStock(fromWarehouse.value.id))
+    if (mainWarehouse.value && mainWarehouse.value.id !== fromWarehouse.value?.id) {
+      requests.push(getStock(mainWarehouse.value.id))
+    }
+    const [vehicleStock = [], mainStock = []] = await Promise.all(requests)
+    vehicleStockMap.value = toStockQtyMap(vehicleStock)
+    mainStockMap.value = fromWarehouse.value?.id === mainWarehouse.value?.id
+      ? { ...vehicleStockMap.value }
+      : toStockQtyMap(mainStock)
+  } finally {
+    stockLoading.value = false
+  }
+}
+
 function isSelected(id: string) {
   return !!qtyMap.value[id]
 }
@@ -235,8 +283,13 @@ function onStoreChange(e: any) { selectedStore.value = stores.value[Number(e.det
 function onFromWarehouseChange(e: any) {
   fromWarehouse.value = vehicleWarehouses.value[Number(e.detail.value)] || null
   syncStoresBySalesperson()
+  refreshStockPreview()
 }
-function onToWarehouseChange(e: any) { toWarehouse.value = returnWarehouses.value[Number(e.detail.value)] || null }
+
+function onToWarehouseChange(e: any) {
+  toWarehouse.value = returnWarehouses.value[Number(e.detail.value)] || null
+  refreshStockPreview()
+}
 
 function syncStoresBySalesperson() {
   const visibleStores = userStore.isAdmin
@@ -249,12 +302,13 @@ function syncStoresBySalesperson() {
 }
 
 async function loadData() {
-  const [storeList, productList, whs] = await Promise.all([getStores(), getProducts(), getWarehouses()])
-  const salespersonId = getSessionSalespersonId(userStore.currentUser)
-  allStores.value = storeList
-  products.value = productList
-  warehouses.value = whs
+  referenceStore.hydrate()
+  stores.value = [...referenceStore.stores]
+  allStores.value = [...referenceStore.stores]
+  products.value = [...referenceStore.products]
+  warehouses.value = [...referenceStore.warehouses]
 
+  const salespersonId = getSessionSalespersonId(userStore.currentUser)
   if (!fromWarehouse.value) {
     if (salespersonId) {
       fromWarehouse.value = vehicleWarehouses.value.find(w => isSameSalespersonId(w.salespersonId, salespersonId)) || null
@@ -263,12 +317,51 @@ async function loadData() {
       fromWarehouse.value = vehicleWarehouses.value[0] || null
     }
   }
-
   syncStoresBySalesperson()
-
   if (!toWarehouse.value) {
     toWarehouse.value = returnWarehouses.value[0] || null
   }
+
+  pageLoading.value = true
+  try {
+    await referenceStore.preloadCore()
+    stores.value = [...referenceStore.stores]
+    allStores.value = [...referenceStore.stores]
+    products.value = [...referenceStore.products]
+    warehouses.value = [...referenceStore.warehouses]
+
+    if (!fromWarehouse.value) {
+      if (salespersonId) {
+        fromWarehouse.value = vehicleWarehouses.value.find(w => isSameSalespersonId(w.salespersonId, salespersonId)) || null
+      }
+      if (!fromWarehouse.value) {
+        fromWarehouse.value = vehicleWarehouses.value[0] || null
+      }
+    }
+
+    syncStoresBySalesperson()
+    if (!toWarehouse.value) {
+      toWarehouse.value = returnWarehouses.value[0] || null
+    }
+  } catch (e: any) {
+    stores.value = [...referenceStore.stores]
+    allStores.value = [...referenceStore.stores]
+    products.value = [...referenceStore.products]
+    warehouses.value = [...referenceStore.warehouses]
+    syncStoresBySalesperson()
+    if (!toWarehouse.value) {
+      toWarehouse.value = returnWarehouses.value[0] || null
+    }
+    if (stores.value.length || products.value.length || warehouses.value.length) {
+      uni.showToast({ title: '基础资料刷新失败，已显示缓存', icon: 'none' })
+    } else {
+      uni.showToast({ title: e.message || '基础资料加载失败', icon: 'none' })
+    }
+  } finally {
+    pageLoading.value = false
+  }
+
+  await refreshStockPreview()
 }
 
 async function submit() {
@@ -344,7 +437,9 @@ onMounted(() => {
 .quick-picker { margin-bottom: 12rpx; }
 .quick-picker.disabled { color:#c0c4cc; background:#f5f7fa; }
 .scan-hint { color:#94a3b8; font-size:22rpx; }
-.hint { color:#f59e0b; font-size:22rpx; margin-bottom:12rpx; }
+.stock-hint { color:#64748b; font-size:22rpx; margin-bottom:12rpx; }
+.state-card { text-align:center; }
+.state-text { font-size:26rpx; color:#64748b; }
 .product-item { padding: 18rpx 0; border-bottom: 2rpx solid #f0f0f0; }
 .product-item:last-child { border-bottom:none; }
 .item-head { display:flex; justify-content:space-between; align-items:flex-start; gap:16rpx; }
@@ -353,7 +448,7 @@ onMounted(() => {
 .price { font-size: 24rpx; color:#999; }
 .barcode { font-size: 22rpx; color:#94a3b8; }
 .package { font-size: 22rpx; color:#64748b; margin-top:4rpx; }
-.btn-remove { min-width:108rpx; height:56rpx; padding:0 20rpx; background:#fff1f0; color:#ff4d4f; border-radius:999rpx; font-size:24rpx; line-height:56rpx; border:none; }
+.stock-preview { font-size: 22rpx; color:#1890ff; margin-top:4rpx; }
 .btn-remove::after { border:none; }
 .qty-grid { display:flex; gap:16rpx; margin-top:16rpx; }
 .qty-field { flex:1; }

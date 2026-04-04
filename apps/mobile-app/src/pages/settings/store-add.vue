@@ -5,27 +5,31 @@
     </view>
 
     <view class="content">
-      <view class="form-item">
-        <text class="label">名称</text>
-        <input v-model="form.name" placeholder="请输入超市名称" />
-      </view>
-      <view class="form-item">
-        <text class="label">地址</text>
-        <input v-model="form.address" placeholder="请选择位置" />
-      </view>
-      <view class="form-item">
-        <text class="label">位置</text>
-        <view class="picker" @tap="goPickLocation">
-          <text>{{ form.lat && form.lng ? '已选择位置' : '地图选点' }}</text>
+      <view v-if="loading && !salespersons.length" class="panel-state">正在加载业务员...</view>
+      <view v-else>
+        <view class="form-item">
+          <text class="label">名称</text>
+          <input v-model="form.name" placeholder="请输入超市名称" />
         </view>
+        <view class="form-item">
+          <text class="label">地址</text>
+          <input v-model="form.address" placeholder="请选择位置" />
+        </view>
+        <view class="form-item">
+          <text class="label">位置</text>
+          <view class="picker" @tap="goPickLocation">
+            <text>{{ form.lat && form.lng ? '已选择位置' : '地图选点' }}</text>
+          </view>
+        </view>
+        <view class="form-item">
+          <text class="label">业务员</text>
+          <picker mode="selector" :range="salespersons" range-key="displayName" @change="onSalespersonChange">
+            <view class="picker"><text>{{ selectedSalesperson?.displayName || '请选择业务员' }}</text></view>
+          </picker>
+          <text v-if="loading && salespersons.length" class="hint">业务员已显示，正在后台刷新...</text>
+        </view>
+        <button class="btn" @tap="submit">保存</button>
       </view>
-      <view class="form-item">
-        <text class="label">业务员</text>
-        <picker mode="selector" :range="salespersons" range-key="displayName" @change="onSalespersonChange">
-          <view class="picker"><text>{{ selectedSalesperson?.displayName || '请选择业务员' }}</text></view>
-        </picker>
-      </view>
-      <button class="btn" @tap="submit">保存</button>
     </view>
   </view>
 </template>
@@ -34,16 +38,23 @@
 import { ref, computed, onMounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
-import { saveStore, getStoresAll, getSalespersonAccounts, getSessionSalespersonId, isSameSalespersonId } from '@/api'
+import { saveStore, getStoresAll, getSessionSalespersonId, isSameSalespersonId } from '@/api'
+import { useReferenceStore } from '@/store/reference'
 import type { Store, Salesperson } from '@/types'
 import { getPageQueryParam } from '@/utils'
 
 const userStore = useUserStore()
+const referenceStore = useReferenceStore()
 const form = ref({ id: '', name: '', address: '', lat: '', lng: '', salespersonId: '', status: 'active' as Store['status'] })
 const salespersons = ref<Salesperson[]>([])
 const selectedSalesperson = ref<Salesperson | null>(null)
 const queryId = ref('')
+const loading = ref(false)
 const isEdit = computed(() => !!form.value.id || !!queryId.value)
+
+function syncSalespersons() {
+  salespersons.value = [...referenceStore.allSalespersons]
+}
 
 function onSalespersonChange(e: any) {
   const idx = Number(e.detail.value)
@@ -128,7 +139,24 @@ onMounted(async () => {
     uni.reLaunch({ url: '/pages/settings/index' })
     return
   }
-  salespersons.value = await getSalespersonAccounts(true)
+
+  referenceStore.hydrate()
+  syncSalespersons()
+  loading.value = true
+  try {
+    await referenceStore.preloadAllAccounts(true)
+    syncSalespersons()
+  } catch (e: any) {
+    syncSalespersons()
+    if (salespersons.value.length > 0) {
+      uni.showToast({ title: '业务员刷新失败，已显示缓存', icon: 'none' })
+    } else {
+      uni.showToast({ title: e.message || '业务员加载失败', icon: 'none' })
+    }
+  } finally {
+    loading.value = false
+  }
+
   if (queryId.value) {
     await loadEdit(queryId.value)
   } else {
@@ -161,6 +189,15 @@ onMounted(async () => {
   padding: 30rpx;
 }
 
+.panel-state {
+  background: #fff;
+  border-radius: 16rpx;
+  padding: 48rpx 20rpx;
+  text-align: center;
+  font-size: 28rpx;
+  color: #64748b;
+}
+
 .form-item {
   background: #fff;
   border-radius: 16rpx;
@@ -184,6 +221,13 @@ onMounted(async () => {
     border-radius: 12rpx;
     font-size: 30rpx;
   }
+}
+
+.hint {
+  display: block;
+  margin-top: 10rpx;
+  font-size: 22rpx;
+  color: #64748b;
 }
 
 .btn {

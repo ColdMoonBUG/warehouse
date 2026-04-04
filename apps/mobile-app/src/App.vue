@@ -7,12 +7,18 @@
 <script setup>
 import { onLaunch } from '@dcloudio/uni-app'
 import { getSession } from '@/api'
+import { useReferenceStore } from '@/store/reference'
+
+const referenceStore = useReferenceStore()
 
 onLaunch(() => {
+  referenceStore.hydrate()
   const session = getSession()
   if (!session) {
     uni.reLaunch({ url: '/pages/login/index' })
+    return
   }
+  referenceStore.warmForSession(session.role === 'admin')
 })
 </script>
 

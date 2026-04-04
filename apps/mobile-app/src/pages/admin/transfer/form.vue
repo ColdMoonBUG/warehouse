@@ -6,11 +6,16 @@
       <view style="width: 60rpx" />
     </view>
     <view class="content">
+      <view v-if="pageLoading" class="section state-card">
+        <text class="field-tip state-text">{{ products.length || warehouses.length ? '基础资料已显示，正在后台刷新...' : '正在加载基础资料...' }}</text>
+      </view>
+
       <view class="section">
         <text class="label">源仓库</text>
         <picker mode="selector" :range="warehouses" range-key="name" @change="onFromChange">
           <view class="picker"><text>{{ fromWarehouseName || '请选择源仓库' }}</text></view>
         </picker>
+        <text v-if="form.fromWarehouseId || form.toWarehouseId" class="field-tip stock-hint">{{ stockHint }}</text>
       </view>
       <view class="section">
         <text class="label">目标仓库</text>
@@ -51,6 +56,7 @@
             </view>
           </view>
           <text v-if="lineSummary(l)" class="field-tip">{{ lineSummary(l) }}</text>
+          <text v-if="lineStockPreview(l.productId)" class="field-tip stock-preview">{{ lineStockPreview(l.productId) }}</text>
         </view>
         <button class="btn-add-line" @tap="addLine">+ 添加一行</button>
       </view>
@@ -67,22 +73,32 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
-import { useUserStore } from '@/store/user'
-import { getTransferDetail, saveTransfer, postTransfer, voidTransfer, getProducts, getWarehouses, getProductDetail } from '@/api'
-import type { TransferDoc, TransferLine, Product, Warehouse } from '@/types'
-import { formatDate, getPageQueryParam, calcQty, deriveBagQty, normalizeBoxPackQty, normalizeCount, formatProductPackageSummary } from '@/utils'
+import { useReferenceStore } from '@/store/reference'
+import { getTransferDetail, saveTransfer, postTransfer, voidTransfer, getStock, getProductDetail } from '@/api'
+import type { TransferDoc, TransferLine, Product, Warehouse, StockItem } from '@/types'
+import { formatDate, getPageQueryParam, calcQty, deriveBagQty, normalizeBoxPackQty, normalizeCount, formatProductPackageSummary, formatStockPreview, getProductStockQty, toStockQtyMap } from '@/utils'
 
 type FormLine = TransferLine & { bagQty?: number }
 
 const userStore = useUserStore()
+const referenceStore = useReferenceStore()
 const warehouses = ref<Warehouse[]>([])
 const products = ref<Product[]>([])
 const lines = ref<FormLine[]>([])
 const form = ref<Partial<TransferDoc>>({ date: formatDate(new Date(), 'YYYY-MM-DD'), status: 'draft' })
 const queryId = ref('')
+const fromStockMap = ref<Record<string, number>>({})
+const toStockMap = ref<Record<string, number>>({})
+const stockLoading = ref(false)
+const pageLoading = ref(false)
 
 const fromWarehouseName = computed(() => warehouses.value.find(w => w.id === form.value.fromWarehouseId)?.name || '')
 const toWarehouseName = computed(() => warehouses.value.find(w => w.id === form.value.toWarehouseId)?.name || '')
+const stockHint = computed(() => {
+  if (stockLoading.value) return '库存加载中'
+  if (form.value.fromWarehouseId && form.value.toWarehouseId) return '已显示源仓和目标仓库存'
+  return form.value.fromWarehouseId ? '已显示源仓库存' : '已显示目标仓库存'
+})
 
 function productById(id: string) {
   return products.value.find(p => p.id === id)
@@ -131,6 +147,36 @@ function lineSummary(line: FormLine) {
   return formatProductPackageSummary(product, qty, boxQty)
 }
 
+function lineStockPreview(productId?: string) {
+  return formatStockPreview([
+    { label: '源仓', qty: getProductStockQty(fromStockMap.value, productId), hidden: !form.value.fromWarehouseId },
+    { label: '目标仓', qty: getProductStockQty(toStockMap.value, productId), hidden: !form.value.toWarehouseId },
+  ])
+}
+
+async function refreshStockPreview() {
+  if (!form.value.fromWarehouseId && !form.value.toWarehouseId) {
+    fromStockMap.value = {}
+    toStockMap.value = {}
+    return
+  }
+  stockLoading.value = true
+  try {
+    const requests: Array<Promise<StockItem[]>> = []
+    if (form.value.fromWarehouseId) requests.push(getStock(form.value.fromWarehouseId))
+    if (form.value.toWarehouseId && form.value.toWarehouseId !== form.value.fromWarehouseId) {
+      requests.push(getStock(form.value.toWarehouseId))
+    }
+    const [fromStock = [], toStock = []] = await Promise.all(requests)
+    fromStockMap.value = toStockQtyMap(fromStock)
+    toStockMap.value = form.value.fromWarehouseId === form.value.toWarehouseId
+      ? { ...fromStockMap.value }
+      : toStockQtyMap(toStock)
+  } finally {
+    stockLoading.value = false
+  }
+}
+
 async function ensureProductsLoaded(ids: string[]) {
   const missingIds = [...new Set(ids)].filter(id => id && !products.value.some(p => p.id === id))
   if (!missingIds.length) return
@@ -164,11 +210,13 @@ function removeLine(i: number) {
 function onFromChange(e: any) {
   const idx = Number(e.detail.value)
   form.value.fromWarehouseId = warehouses.value[idx]?.id
+  refreshStockPreview()
 }
 
 function onToChange(e: any) {
   const idx = Number(e.detail.value)
   form.value.toWarehouseId = warehouses.value[idx]?.id
+  refreshStockPreview()
 }
 
 function onProductChange(e: any, i: number) {
@@ -228,11 +276,31 @@ onLoad((query) => {
 
 onMounted(async () => {
   if (!guard()) return
-  const [whs, pros] = await Promise.all([getWarehouses(), getProducts()])
-  warehouses.value = whs
-  products.value = pros
+
+  referenceStore.hydrate()
+  warehouses.value = [...referenceStore.warehouses]
+  products.value = [...referenceStore.products]
+
+  pageLoading.value = true
+  try {
+    await referenceStore.preloadCore()
+    warehouses.value = [...referenceStore.warehouses]
+    products.value = [...referenceStore.products]
+  } catch (e: any) {
+    warehouses.value = [...referenceStore.warehouses]
+    products.value = [...referenceStore.products]
+    if (warehouses.value.length || products.value.length) {
+      uni.showToast({ title: '基础资料刷新失败，已显示缓存', icon: 'none' })
+    } else {
+      uni.showToast({ title: e.message || '基础资料加载失败', icon: 'none' })
+    }
+  } finally {
+    pageLoading.value = false
+  }
+
   if (queryId.value) await loadEdit(queryId.value)
   if (lines.value.length === 0) addLine()
+  await refreshStockPreview()
 })
 </script>
 
@@ -257,9 +325,12 @@ onMounted(async () => {
 .picker-box text { width:100%; color:#333; }
 .input-box { display:block; padding:0 20rpx; line-height:80rpx; margin-bottom:0; }
 .field-tip { display:block; margin-top:4rpx; font-size:22rpx; color:#64748b; }
+.state-card { text-align:center; }
 input { font-size:28rpx; margin-bottom: 10rpx; }
+.stock-hint,
+.stock-preview,
+.state-text { color:#1890ff; }
 .btn-delete { min-width:108rpx; height:60rpx; padding:0 20rpx; background:#fff1f0; color:#ff4d4f; border-radius:999rpx; font-size:24rpx; line-height:60rpx; border:none; }
-.btn-delete::after { border:none; }
 .btn-add-line { width:100%; height:80rpx; background:#eef6ff; color:#1890ff; border-radius:12rpx; font-size:28rpx; border:2rpx dashed #b5d4ff; }
 .btn-add-line::after { border:none; }
 .actions { display:flex; gap:12rpx; }

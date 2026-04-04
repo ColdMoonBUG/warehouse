@@ -5,6 +5,10 @@
     </view>
 
     <view class="content">
+      <view v-if="pageLoading" class="section state-card">
+        <text class="state-text">{{ stores.length || products.length || warehouses.length ? '基础资料已显示，正在后台刷新...' : '正在加载基础资料...' }}</text>
+      </view>
+
       <view class="section">
         <text class="label">选择超市</text>
         <view v-if="showStoreFallbackHint" class="hint">当前账户未绑定超市，已显示全部启用超市</view>
@@ -47,6 +51,7 @@
           </view>
         </picker>
         <view class="scan-hint" v-if="keyword">已按关键词筛选</view>
+        <view v-if="quickPickEnabled && selectedWarehouse" class="stock-hint">{{ quickPickStockHint }}</view>
         <view v-if="!quickPickEnabled" class="empty">
           {{ keyword ? '当前筛选下暂无商品' : '暂无可选商品' }}
         </view>
@@ -62,6 +67,7 @@
               <text class="price">¥{{ p.salePrice }}</text>
               <text class="barcode" v-if="p.barcode">条码: {{ p.barcode }}</text>
               <text class="package">{{ productPackageSummary(p) }}</text>
+              <text v-if="productStockPreview(p.id)" class="stock-preview">{{ productStockPreview(p.id) }}</text>
             </view>
             <button class="btn-remove" @tap="toggleSelect(p)">移除</button>
           </view>
@@ -94,9 +100,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useUserStore } from '@/store/user'
-import { getStores, getProducts, getStock, getWarehouses, saveSale, postSale, getVisibleStoresForSalesperson, hasAssignedStoresForSalesperson, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId } from '@/api'
-import type { Store, Product, SaleDoc, SaleLine, Warehouse } from '@/types'
-import { genId, formatProductQuickPickLabel, formatProductPackageSummary, calcQty, deriveBagQty, normalizeCount, normalizeBoxPackQty } from '@/utils'
+import { useReferenceStore } from '@/store/reference'
+import { getStock, saveSale, postSale, getVisibleStoresForSalesperson, hasAssignedStoresForSalesperson, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId } from '@/api'
+import type { Store, Product, SaleDoc, SaleLine, Warehouse, StockItem } from '@/types'
+import { genId, formatProductQuickPickLabel, formatProductPackageSummary, calcQty, deriveBagQty, normalizeCount, normalizeBoxPackQty, formatStockPreview, getProductStockQty, toStockQtyMap } from '@/utils'
 
 interface QtyInput {
   boxQty: number
@@ -105,6 +112,7 @@ interface QtyInput {
 }
 
 const userStore = useUserStore()
+const referenceStore = useReferenceStore()
 
 const stores = ref<Store[]>([])
 const allStores = ref<Store[]>([])
@@ -114,6 +122,10 @@ const selectedStore = ref<Store | null>(null)
 const selectedWarehouse = ref<Warehouse | null>(null)
 const qtyMap = ref<Record<string, QtyInput>>({})
 const keyword = ref('')
+const vehicleStockMap = ref<Record<string, number>>({})
+const mainStockMap = ref<Record<string, number>>({})
+const stockLoading = ref(false)
+const pageLoading = ref(false)
 
 const storeOptions = computed(() => stores.value)
 const sessionSalespersonId = computed(() => getSessionSalespersonId(userStore.currentUser))
@@ -131,6 +143,7 @@ const showStoreFallbackHint = computed(() => {
   const salespersonId = effectiveSalespersonId.value
   return stores.value.length > 0 && !hasAssignedStoresForSalesperson(allStores.value, salespersonId)
 })
+const mainWarehouse = computed(() => warehouses.value.find(w => w.type === 'main') || null)
 
 const filteredProducts = computed(() => {
   const key = keyword.value.trim().toLowerCase()
@@ -144,7 +157,7 @@ const filteredProducts = computed(() => {
 
 const quickPickOptions = computed(() => filteredProducts.value.map(product => ({
   id: product.id,
-  name: formatProductQuickPickLabel(product),
+  name: formatProductQuickPickLabel(product, productStockPreview(product.id)),
 })))
 
 const quickPickEnabled = computed(() => quickPickOptions.value.length > 0)
@@ -152,6 +165,10 @@ const quickPickIndex = computed(() => -1)
 const quickPickText = computed(() => {
   if (!quickPickEnabled.value) return keyword.value ? '当前筛选下无可选商品' : '暂无可选商品'
   return keyword.value ? '快捷选择筛选结果商品' : '快捷选择商品'
+})
+const quickPickStockHint = computed(() => {
+  if (stockLoading.value) return '库存加载中'
+  return mainWarehouse.value ? '列表已显示车库和总仓库存' : '列表已显示车库库存'
 })
 
 const selectedProducts = computed(() => products.value.filter(p => !!qtyMap.value[p.id]))
@@ -220,6 +237,36 @@ function productPackageSummary(product: Product) {
   return formatProductPackageSummary(product, current?.qty || 0, current?.boxQty || 0)
 }
 
+function productStockPreview(productId: string) {
+  return formatStockPreview([
+    { label: '车库', qty: getProductStockQty(vehicleStockMap.value, productId), hidden: !selectedWarehouse.value },
+    { label: '总仓', qty: getProductStockQty(mainStockMap.value, productId), hidden: !mainWarehouse.value },
+  ])
+}
+
+async function refreshStockPreview() {
+  if (!selectedWarehouse.value && !mainWarehouse.value) {
+    vehicleStockMap.value = {}
+    mainStockMap.value = {}
+    return
+  }
+  stockLoading.value = true
+  try {
+    const requests: Array<Promise<StockItem[]>> = []
+    if (selectedWarehouse.value) requests.push(getStock(selectedWarehouse.value.id))
+    if (mainWarehouse.value && mainWarehouse.value.id !== selectedWarehouse.value?.id) {
+      requests.push(getStock(mainWarehouse.value.id))
+    }
+    const [vehicleStock = [], mainStock = []] = await Promise.all(requests)
+    vehicleStockMap.value = toStockQtyMap(vehicleStock)
+    mainStockMap.value = selectedWarehouse.value?.id === mainWarehouse.value?.id
+      ? { ...vehicleStockMap.value }
+      : toStockQtyMap(mainStock)
+  } finally {
+    stockLoading.value = false
+  }
+}
+
 function isSelected(id: string) {
   return !!qtyMap.value[id]
 }
@@ -248,6 +295,7 @@ function onStoreChange(e: any) {
 function onWarehouseChange(e: any) {
   selectedWarehouse.value = vehicleWarehouses.value[Number(e.detail.value)] || null
   syncStoresBySalesperson()
+  refreshStockPreview()
 }
 
 function syncStoresBySalesperson() {
@@ -261,17 +309,13 @@ function syncStoresBySalesperson() {
 }
 
 async function loadData() {
-  const [storeList, productList, whs] = await Promise.all([
-    getStores(),
-    getProducts(),
-    getWarehouses(),
-  ])
+  referenceStore.hydrate()
+  stores.value = [...referenceStore.stores]
+  allStores.value = [...referenceStore.stores]
+  products.value = [...referenceStore.products]
+  warehouses.value = [...referenceStore.warehouses]
 
   const salespersonId = getSessionSalespersonId(userStore.currentUser)
-  allStores.value = storeList
-  products.value = productList
-  warehouses.value = whs
-
   if (!selectedWarehouse.value) {
     if (salespersonId) {
       selectedWarehouse.value = vehicleWarehouses.value.find(w => isSameSalespersonId(w.salespersonId, salespersonId)) || null
@@ -280,8 +324,42 @@ async function loadData() {
       selectedWarehouse.value = vehicleWarehouses.value[0] || null
     }
   }
-
   syncStoresBySalesperson()
+
+  pageLoading.value = true
+  try {
+    await referenceStore.preloadCore()
+    stores.value = [...referenceStore.stores]
+    allStores.value = [...referenceStore.stores]
+    products.value = [...referenceStore.products]
+    warehouses.value = [...referenceStore.warehouses]
+
+    if (!selectedWarehouse.value) {
+      if (salespersonId) {
+        selectedWarehouse.value = vehicleWarehouses.value.find(w => isSameSalespersonId(w.salespersonId, salespersonId)) || null
+      }
+      if (!selectedWarehouse.value) {
+        selectedWarehouse.value = vehicleWarehouses.value[0] || null
+      }
+    }
+
+    syncStoresBySalesperson()
+  } catch (e: any) {
+    stores.value = [...referenceStore.stores]
+    allStores.value = [...referenceStore.stores]
+    products.value = [...referenceStore.products]
+    warehouses.value = [...referenceStore.warehouses]
+    syncStoresBySalesperson()
+    if (stores.value.length || products.value.length || warehouses.value.length) {
+      uni.showToast({ title: '基础资料刷新失败，已显示缓存', icon: 'none' })
+    } else {
+      uni.showToast({ title: e.message || '基础资料加载失败', icon: 'none' })
+    }
+  } finally {
+    pageLoading.value = false
+  }
+
+  await refreshStockPreview()
 }
 
 async function validateStockBeforeSubmit(lines: SaleLine[]) {
@@ -426,7 +504,17 @@ onMounted(() => {
     background: #f5f7fa;
   }
   .scan-hint { color: #94a3b8; font-size: 22rpx; }
+  .stock-hint { color: #64748b; font-size: 22rpx; margin-bottom: 12rpx; }
   .hint { color: #f59e0b; font-size: 22rpx; margin-bottom: 12rpx; }
+}
+
+.state-card {
+  text-align: center;
+}
+
+.state-text {
+  font-size: 26rpx;
+  color: #64748b;
 }
 
 .product-item {
@@ -468,6 +556,12 @@ onMounted(() => {
   .package {
     font-size: 22rpx;
     color: #64748b;
+    margin-top: 4rpx;
+  }
+
+  .stock-preview {
+    font-size: 22rpx;
+    color: #1890ff;
     margin-top: 4rpx;
   }
 }

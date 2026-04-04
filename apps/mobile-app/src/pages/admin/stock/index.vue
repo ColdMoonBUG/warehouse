@@ -22,6 +22,7 @@
         <view class="row">
           <text class="warehouse">仓库: {{ warehouseName(item.warehouseId) }}</text>
         </view>
+        <view v-if="compareStockText(item.productId, item.warehouseId)" class="compare">{{ compareStockText(item.productId, item.warehouseId) }}</view>
       </view>
     </view>
   </view>
@@ -33,12 +34,14 @@ import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
 import { getStock, getWarehouses, getProducts } from '@/api'
 import type { StockItem, Warehouse, Product } from '@/types'
+import { formatStockPreview, getProductStockQty, toStockQtyMap } from '@/utils'
 
 const userStore = useUserStore()
 const list = ref<StockItem[]>([])
 const warehouses = ref<Warehouse[]>([])
 const products = ref<Product[]>([])
 const selectedWarehouse = ref<Warehouse | null>(null)
+const mainStockMap = ref<Record<string, number>>({})
 
 function guard() {
   if (!userStore.isAdmin) {
@@ -63,6 +66,17 @@ function warehouseName(id: string) {
   return warehouses.value.find(w => w.id === id)?.name || id
 }
 
+function compareStockText(productId: string, warehouseId: string) {
+  const selected = selectedWarehouse.value
+  if (!selected) return ''
+  const mainWarehouse = warehouses.value.find(w => w.type === 'main')
+  if (!mainWarehouse || mainWarehouse.id === warehouseId) return ''
+  return formatStockPreview([
+    { label: '当前仓', qty: getProductStockQty(toStockQtyMap(list.value), productId) },
+    { label: '主仓', qty: getProductStockQty(mainStockMap.value, productId) },
+  ])
+}
+
 function goBack() {
   uni.navigateBack()
 }
@@ -70,7 +84,14 @@ function goBack() {
 async function load() {
   if (!guard()) return
   const wid = selectedWarehouse.value?.id
-  list.value = await getStock(wid)
+  const stockList = await getStock(wid)
+  list.value = stockList
+  const mainWarehouse = warehouses.value.find(w => w.type === 'main')
+  if (mainWarehouse && mainWarehouse.id !== wid) {
+    mainStockMap.value = toStockQtyMap(await getStock(mainWarehouse.id))
+    return
+  }
+  mainStockMap.value = toStockQtyMap(stockList)
 }
 
 onShow(async () => {
@@ -96,5 +117,6 @@ onShow(async () => {
 .row { display:flex; justify-content:space-between; margin-bottom:6rpx; }
 .name { font-size:30rpx; color:#333; }
 .qty, .warehouse { font-size:24rpx; color:#666; }
+.compare { font-size:22rpx; color:#1890ff; }
 .empty { text-align:center; color:#999; padding:40rpx 0; }
 </style>

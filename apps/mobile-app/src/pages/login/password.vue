@@ -43,9 +43,11 @@ import { ref } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
 import { loginByPassword } from '@/api'
+import { useReferenceStore } from '@/store/reference'
 import { applyRoleTabBar, switchToRoleHome } from '@/utils/tabbar'
 
 const userStore = useUserStore()
+const referenceStore = useReferenceStore()
 
 const username = ref('')
 const displayName = ref('')
@@ -85,6 +87,12 @@ async function handleLogin() {
   try {
     const session = await loginByPassword(username.value, password.value)
     userStore.setSession(session)
+    referenceStore.hydrate()
+    void referenceStore.preloadCore(true).catch(() => {})
+    if (session.role === 'admin') {
+      void referenceStore.preloadAllAccounts(true).catch(() => {})
+      void referenceStore.preloadSuppliers(true).catch(() => {})
+    }
     uni.showToast({ title: '登录成功', icon: 'success' })
     applyRoleTabBar()
     setTimeout(() => {

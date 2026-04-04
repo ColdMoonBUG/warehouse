@@ -47,9 +47,11 @@ import { ref, onMounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
 import { loginByGesture } from '@/api'
+import { useReferenceStore } from '@/store/reference'
 import { applyRoleTabBar, switchToRoleHome } from '@/utils/tabbar'
 
 const userStore = useUserStore()
+const referenceStore = useReferenceStore()
 
 const username = ref('')
 const displayName = ref('')
@@ -181,6 +183,12 @@ async function onTouchEnd() {
   try {
     const session = await loginByGesture(username.value, gesture)
     userStore.setSession(session)
+    referenceStore.hydrate()
+    void referenceStore.preloadCore(true).catch(() => {})
+    if (session.role === 'admin') {
+      void referenceStore.preloadAllAccounts(true).catch(() => {})
+      void referenceStore.preloadSuppliers(true).catch(() => {})
+    }
     uni.showToast({ title: '解锁成功', icon: 'success' })
     applyRoleTabBar()
     setTimeout(() => {

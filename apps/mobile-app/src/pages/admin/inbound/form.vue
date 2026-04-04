@@ -6,6 +6,10 @@
       <view style="width: 60rpx" />
     </view>
     <view class="content">
+      <view v-if="pageLoading" class="section state-card">
+        <text class="field-tip state-text">{{ suppliers.length || products.length || warehouses.length ? '基础资料已显示，正在后台刷新...' : '正在加载基础资料...' }}</text>
+      </view>
+
       <view class="section">
         <text class="label">供应商</text>
         <picker mode="selector" :range="suppliers" range-key="name" @change="onSupplierChange">
@@ -23,6 +27,7 @@
 
       <view class="section">
         <text class="label">商品明细</text>
+        <text v-if="mainWarehouse" class="field-tip stock-hint">{{ stockHint }}</text>
         <view class="line-card" v-for="(l, i) in lines" :key="i">
           <view class="line-head">
             <text class="line-title">明细 {{ i + 1 }}</text>
@@ -49,6 +54,7 @@
             </view>
           </view>
           <text v-if="lineSummary(l)" class="field-tip">{{ lineSummary(l) }}</text>
+          <text v-if="lineStockPreview(l.productId)" class="field-tip stock-preview">{{ lineStockPreview(l.productId) }}</text>
         </view>
         <button class="btn-add-line" @tap="addLine">+ 添加一行</button>
       </view>
@@ -65,21 +71,31 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
-import { useUserStore } from '@/store/user'
-import { getInboundDetail, saveInbound, postInbound, voidInbound, getSuppliers, getProducts, getSupplierDetail, getProductDetail } from '@/api'
-import type { InboundDoc, InboundLine, Supplier, Product } from '@/types'
-import { formatDate, getPageQueryParam, calcQty, deriveBagQty, normalizeBoxPackQty, normalizeCount, formatProductPackageSummary } from '@/utils'
+import { useReferenceStore } from '@/store/reference'
+import { getInboundDetail, saveInbound, postInbound, voidInbound, getStock, getSupplierDetail, getProductDetail } from '@/api'
+import type { InboundDoc, InboundLine, Supplier, Product, Warehouse, StockItem } from '@/types'
+import { formatDate, getPageQueryParam, calcQty, deriveBagQty, normalizeBoxPackQty, normalizeCount, formatProductPackageSummary, formatStockPreview, getProductStockQty, toStockQtyMap } from '@/utils'
 
 type FormLine = InboundLine & { bagQty?: number }
 
 const userStore = useUserStore()
+const referenceStore = useReferenceStore()
 const suppliers = ref<Supplier[]>([])
 const products = ref<Product[]>([])
 const lines = ref<FormLine[]>([])
 const form = ref<Partial<InboundDoc>>({ date: formatDate(new Date(), 'YYYY-MM-DD'), status: 'draft' })
 const queryId = ref('')
+const warehouses = ref<Warehouse[]>([])
+const mainStockMap = ref<Record<string, number>>({})
+const stockLoading = ref(false)
+const pageLoading = ref(false)
 
 const supplierName = computed(() => suppliers.value.find(s => s.id === form.value.supplierId)?.name || '')
+const mainWarehouse = computed(() => warehouses.value.find(w => w.type === 'main') || null)
+const stockHint = computed(() => {
+  if (stockLoading.value) return '库存加载中'
+  return mainWarehouse.value ? '将入主仓库存' : ''
+})
 
 function productById(id: string) {
   return products.value.find(p => p.id === id)
@@ -132,6 +148,26 @@ function lineSummary(line: FormLine) {
   const bagQty = normalizeCount(line.bagQty)
   const qty = calcQty(boxQty, bagQty, product.boxQty)
   return formatProductPackageSummary(product, qty, boxQty)
+}
+
+function lineStockPreview(productId?: string) {
+  return formatStockPreview([
+    { label: '主仓现有', qty: getProductStockQty(mainStockMap.value, productId), hidden: !mainWarehouse.value },
+  ])
+}
+
+async function refreshStockPreview() {
+  if (!mainWarehouse.value) {
+    mainStockMap.value = {}
+    return
+  }
+  stockLoading.value = true
+  try {
+    const stockList = await getStock(mainWarehouse.value.id)
+    mainStockMap.value = toStockQtyMap(stockList)
+  } finally {
+    stockLoading.value = false
+  }
 }
 
 async function ensureSupplierLoaded(id?: string) {
@@ -235,11 +271,37 @@ onLoad((query) => {
 
 onMounted(async () => {
   if (!guard()) return
-  const [sup, pros] = await Promise.all([getSuppliers(), getProducts()])
-  suppliers.value = sup
-  products.value = pros
+
+  referenceStore.hydrate()
+  suppliers.value = [...referenceStore.suppliers]
+  products.value = [...referenceStore.products]
+  warehouses.value = [...referenceStore.warehouses]
+
+  pageLoading.value = true
+  try {
+    await Promise.all([
+      referenceStore.preloadCore(),
+      referenceStore.preloadSuppliers(),
+    ])
+    suppliers.value = [...referenceStore.suppliers]
+    products.value = [...referenceStore.products]
+    warehouses.value = [...referenceStore.warehouses]
+  } catch (e: any) {
+    suppliers.value = [...referenceStore.suppliers]
+    products.value = [...referenceStore.products]
+    warehouses.value = [...referenceStore.warehouses]
+    if (suppliers.value.length || products.value.length || warehouses.value.length) {
+      uni.showToast({ title: '基础资料刷新失败，已显示缓存', icon: 'none' })
+    } else {
+      uni.showToast({ title: e.message || '基础资料加载失败', icon: 'none' })
+    }
+  } finally {
+    pageLoading.value = false
+  }
+
   if (queryId.value) await loadEdit(queryId.value)
   if (lines.value.length === 0) addLine()
+  await refreshStockPreview()
 })
 </script>
 
@@ -265,9 +327,12 @@ onMounted(async () => {
 .picker-box text { width:100%; color:#333; }
 .input-box { display:block; padding:0 20rpx; line-height:80rpx; margin-bottom:0; }
 .field-tip { display:block; margin-top:4rpx; font-size:22rpx; color:#64748b; }
+.state-card { text-align:center; }
 input { font-size:28rpx; margin-bottom: 10rpx; }
+.stock-hint,
+.stock-preview,
+.state-text { color:#1890ff; }
 .btn-delete { min-width:108rpx; height:60rpx; padding:0 20rpx; background:#fff1f0; color:#ff4d4f; border-radius:999rpx; font-size:24rpx; line-height:60rpx; border:none; }
-.btn-delete::after { border:none; }
 .btn-add-line { width:100%; height:80rpx; background:#eef6ff; color:#1890ff; border-radius:12rpx; font-size:28rpx; border:2rpx dashed #b5d4ff; }
 .btn-add-line::after { border:none; }
 .actions { display:flex; gap:12rpx; }

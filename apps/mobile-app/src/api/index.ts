@@ -24,6 +24,66 @@ interface ApiResult<T> {
   count?: number
 }
 
+type ReferenceCacheKey =
+  | 'accounts_active'
+  | 'accounts_all'
+  | 'stores_active'
+  | 'stores_all'
+  | 'products'
+  | 'warehouses'
+  | 'suppliers'
+
+interface ReferenceCacheEntry<T> {
+  value?: T
+  loadedAt: number
+  promise?: Promise<T>
+}
+
+const REFERENCE_CACHE_TTL = 5 * 60 * 1000
+const referenceCache = new Map<ReferenceCacheKey, ReferenceCacheEntry<unknown>>()
+
+function getReferenceCacheEntry<T>(key: ReferenceCacheKey): ReferenceCacheEntry<T> {
+  const current = referenceCache.get(key)
+  if (current) return current as ReferenceCacheEntry<T>
+  const entry: ReferenceCacheEntry<T> = { loadedAt: 0 }
+  referenceCache.set(key, entry as ReferenceCacheEntry<unknown>)
+  return entry
+}
+
+function getFreshReferenceCacheValue<T>(key: ReferenceCacheKey): T | undefined {
+  const entry = referenceCache.get(key) as ReferenceCacheEntry<T> | undefined
+  if (!entry || entry.value === undefined) return undefined
+  if (Date.now() - entry.loadedAt > REFERENCE_CACHE_TTL) return undefined
+  return entry.value
+}
+
+function loadReferenceCache<T>(key: ReferenceCacheKey, loader: () => Promise<T>): Promise<T> {
+  const entry = getReferenceCacheEntry<T>(key)
+  const cached = getFreshReferenceCacheValue<T>(key)
+  if (cached !== undefined) return Promise.resolve(cached)
+  if (entry.promise) return entry.promise
+  entry.promise = loader()
+    .then((value) => {
+      entry.value = value
+      entry.loadedAt = Date.now()
+      return value
+    })
+    .finally(() => {
+      entry.promise = undefined
+    })
+  return entry.promise
+}
+
+function invalidateReferenceCache(...keys: ReferenceCacheKey[]) {
+  keys.forEach((key) => {
+    referenceCache.delete(key)
+  })
+}
+
+function invalidateAccountReferenceCache() {
+  invalidateReferenceCache('accounts_active', 'accounts_all')
+}
+
 export interface UploadResult {
   path: string
 }
@@ -309,17 +369,21 @@ export function saveSession(account: Account): Session {
 
 export function logout() {
   uni.removeStorageSync(SESSION_KEY)
+  clearReferenceDataCache()
 }
 
 export async function getAccounts(includeInactive = false): Promise<Account[]> {
-  if (USE_MOCK) {
-    const list = includeInactive ? accountDb.list() : accountDb.list().filter(a => a.status === 'active')
-    return normalizeMobileAccounts(list)
-  }
-  const accounts = await getRequest<Account[]>('/api/account/list', {
-    includeInactive: includeInactive ? 'true' : undefined,
+  const cacheKey: ReferenceCacheKey = includeInactive ? 'accounts_all' : 'accounts_active'
+  return loadReferenceCache(cacheKey, async () => {
+    if (USE_MOCK) {
+      const list = includeInactive ? accountDb.list() : accountDb.list().filter(a => a.status === 'active')
+      return normalizeMobileAccounts(list)
+    }
+    const accounts = await getRequest<Account[]>('/api/account/list', {
+      includeInactive: includeInactive ? 'true' : undefined,
+    })
+    return normalizeMobileAccounts(accounts)
   })
-  return normalizeMobileAccounts(accounts)
 }
 
 export async function getSalespersonAccounts(includeInactive = false): Promise<Salesperson[]> {
@@ -372,12 +436,14 @@ export async function setGesture(accountId: string, gesture: string): Promise<vo
     if (!acc) throw new Error('账户不存在')
     acc.gestureHash = normalizedHash
     accountDb.save(accounts)
+    invalidateAccountReferenceCache()
     return
   }
   await request<void>('/api/account/setGesture', 'POST', {
     id: accountId,
     gestureHash: normalizedHash,
   })
+  invalidateAccountReferenceCache()
 }
 
 export async function setPassword(accountId: string, passwordHash: string): Promise<void> {
@@ -387,12 +453,14 @@ export async function setPassword(accountId: string, passwordHash: string): Prom
     if (!acc) throw new Error('账户不存在')
     acc.passwordHash = passwordHash
     accountDb.save(accounts)
+    invalidateAccountReferenceCache()
     return
   }
   await request<void>('/api/account/setPassword', 'POST', {
     id: accountId,
     passwordHash,
   })
+  invalidateAccountReferenceCache()
 }
 
 export async function toggleAccount(id: string): Promise<void> {
@@ -402,23 +470,29 @@ export async function toggleAccount(id: string): Promise<void> {
     if (!acc) throw new Error('账户不存在')
     acc.status = acc.status === 'active' ? 'inactive' : 'active'
     accountDb.save(accounts)
+    invalidateAccountReferenceCache()
     return
   }
   await request<void>(`/api/account/toggle/${id}`, 'POST')
+  invalidateAccountReferenceCache()
 }
 
 export async function getStores(): Promise<Store[]> {
-  if (USE_MOCK) {
-    return storeDb.list().filter(s => s.status === 'active').map(normalizeStore)
-  }
-  return (await request<Store[]>('/api/store/list', 'GET')).map(normalizeStore)
+  return loadReferenceCache('stores_active', async () => {
+    if (USE_MOCK) {
+      return storeDb.list().filter(s => s.status === 'active').map(normalizeStore)
+    }
+    return (await request<Store[]>('/api/store/list', 'GET')).map(normalizeStore)
+  })
 }
 
 export async function getStoresAll(): Promise<Store[]> {
-  if (USE_MOCK) {
-    return storeDb.list().map(normalizeStore)
-  }
-  return (await request<Store[]>('/api/store/listAll', 'GET')).map(normalizeStore)
+  return loadReferenceCache('stores_all', async () => {
+    if (USE_MOCK) {
+      return storeDb.list().map(normalizeStore)
+    }
+    return (await request<Store[]>('/api/store/listAll', 'GET')).map(normalizeStore)
+  })
 }
 
 export async function toggleStore(id: string): Promise<void> {
@@ -428,9 +502,11 @@ export async function toggleStore(id: string): Promise<void> {
     if (!store) throw new Error('超市不存在')
     store.status = store.status === 'active' ? 'inactive' : 'active'
     storeDb.save(list)
+    invalidateReferenceCache('stores_active', 'stores_all')
     return
   }
   await request<void>(`/api/store/toggle/${id}`, 'POST')
+  invalidateReferenceCache('stores_active', 'stores_all')
 }
 
 export async function saveStore(data: Partial<Store> & { name: string; code?: string }): Promise<void> {
@@ -444,38 +520,48 @@ export async function saveStore(data: Partial<Store> & { name: string; code?: st
       list.push({ ...data, code, id: genId(), status: 'active', createdAt: now() } as Store)
     }
     storeDb.save(list)
+    invalidateReferenceCache('stores_active', 'stores_all')
     return
   }
   await request<void>('/api/store/save', 'POST', data)
+  invalidateReferenceCache('stores_active', 'stores_all')
 }
 
 export async function getProducts(): Promise<Product[]> {
-  if (USE_MOCK) {
-    return productDb.list().filter(p => p.status === 'active')
-  }
-  return request<Product[]>('/api/product/list', 'GET')
+  return loadReferenceCache('products', async () => {
+    if (USE_MOCK) {
+      return productDb.list().filter(p => p.status === 'active')
+    }
+    return request<Product[]>('/api/product/list', 'GET')
+  })
 }
 
 export async function getWarehouses(): Promise<Warehouse[]> {
-  if (USE_MOCK) {
-    return warehouseDb.ensureMain().map(normalizeWarehouse)
-  }
-  return (await request<Warehouse[]>('/api/warehouse/list', 'GET')).map(normalizeWarehouse)
+  return loadReferenceCache('warehouses', async () => {
+    if (USE_MOCK) {
+      return warehouseDb.ensureMain().map(normalizeWarehouse)
+    }
+    return (await request<Warehouse[]>('/api/warehouse/list', 'GET')).map(normalizeWarehouse)
+  })
 }
 
 export async function saveWarehouse(data: Partial<Warehouse> & { name: string; type: string }) {
   await request<void>('/api/warehouse/save', 'POST', data)
+  invalidateReferenceCache('warehouses')
 }
 
 export async function deleteWarehouse(id: string) {
   await request<void>(`/api/warehouse/delete/${id}`, 'POST')
+  invalidateReferenceCache('warehouses')
 }
 
 export async function getSuppliers(): Promise<Supplier[]> {
-  if (USE_MOCK) {
-    return []
-  }
-  return request<Supplier[]>('/api/supplier/list', 'GET')
+  return loadReferenceCache('suppliers', async () => {
+    if (USE_MOCK) {
+      return []
+    }
+    return request<Supplier[]>('/api/supplier/list', 'GET')
+  })
 }
 
 export async function getSupplierDetail(id: string): Promise<Supplier | null> {
@@ -487,14 +573,17 @@ export async function getSupplierDetail(id: string): Promise<Supplier | null> {
 
 export async function saveSupplier(data: Partial<Supplier> & { name: string; code: string }) {
   await request<void>('/api/supplier/save', 'POST', data)
+  invalidateReferenceCache('suppliers')
 }
 
 export async function toggleSupplier(id: string) {
   await request<void>(`/api/supplier/toggle/${id}`, 'POST')
+  invalidateReferenceCache('suppliers')
 }
 
 export async function deleteSupplier(id: string) {
   await request<void>(`/api/supplier/delete/${id}`, 'POST')
+  invalidateReferenceCache('suppliers')
 }
 
 export async function getProductDetail(id: string): Promise<Product | null> {
@@ -506,14 +595,17 @@ export async function getProductDetail(id: string): Promise<Product | null> {
 
 export async function saveProduct(data: Partial<Product> & { name: string; code: string }) {
   await request<void>('/api/product/save', 'POST', data)
+  invalidateReferenceCache('products')
 }
 
 export async function toggleProduct(id: string) {
   await request<void>(`/api/product/toggle/${id}`, 'POST')
+  invalidateReferenceCache('products')
 }
 
 export async function deleteProduct(id: string) {
   await request<void>(`/api/product/delete/${id}`, 'POST')
+  invalidateReferenceCache('products')
 }
 
 export async function getStock(warehouseId?: string): Promise<StockItem[]> {
@@ -587,6 +679,29 @@ export async function postOutbound(id: string) {
 
 export async function voidOutbound(id: string) {
   await request<void>(`/api/outbound/void/${id}`, 'POST')
+}
+
+export async function preloadReferenceData() {
+  await Promise.allSettled([
+    getAccounts(),
+    getStores(),
+    getProducts(),
+    getWarehouses(),
+    getSuppliers(),
+  ])
+}
+
+export async function preloadPostLoginReferenceData() {
+  await Promise.allSettled([
+    getStores(),
+    getProducts(),
+    getWarehouses(),
+    getSuppliers(),
+  ])
+}
+
+export function clearReferenceDataCache() {
+  referenceCache.clear()
 }
 
 export async function uploadFile(filePath: string) {

@@ -17,6 +17,16 @@
     </view>
 
     <view class="panel">
+      <view class="location-card">
+        <view class="location-row">
+          <text class="location-title">当前位置</text>
+          <button class="location-btn" size="mini" :loading="locationLoading" @tap="retryLocate">
+            {{ locationActionText }}
+          </button>
+        </view>
+        <text class="location-text" :class="{ error: !!locationErrorMessage }">{{ locationMessage }}</text>
+      </view>
+
       <view class="search-row">
         <input v-model="keyword" placeholder="搜索店名/地址" @confirm="searchByKeyword" />
         <button class="btn" @tap="searchByKeyword">搜索</button>
@@ -80,8 +90,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { AMAP_KEY, AMAP_WEB_KEY } from '@/utils/config'
+import { requestCurrentLocation, openLocationSettings } from '@/utils/location'
 
 interface PoiItem {
   id?: string
@@ -100,10 +111,15 @@ interface SearchDiagnostics {
   infocode: string
 }
 
+const DEFAULT_CENTER = { latitude: 32.9987, longitude: 112.5292 }
+
 const keyword = ref('')
-const center = ref({ latitude: 32.9987, longitude: 112.5292 })
+const center = ref({ ...DEFAULT_CENTER })
 const scale = ref(16)
 const loading = ref(false)
+const locationLoading = ref(false)
+const locationReady = ref(false)
+const locationErrorMessage = ref('')
 const pois = ref<PoiItem[]>([])
 const selected = ref<PoiItem | null>(null)
 const markers = ref<any[]>([])
@@ -120,6 +136,18 @@ const diagnostics = ref<SearchDiagnostics>({
 })
 let lastCenterAt = 0
 let ignoreNextRegionChange = false
+
+const locationMessage = computed(() => {
+  if (locationLoading.value) return '正在获取当前位置…'
+  if (locationErrorMessage.value) return locationErrorMessage.value
+  if (locationReady.value) return '已定位到当前位置，可点击重试'
+  return '正在使用默认位置，可点击定位当前位置'
+})
+
+const locationActionText = computed(() => {
+  if (locationLoading.value) return '定位中'
+  return locationReady.value ? '重新定位' : '定位当前位置'
+})
 
 function currentCenterText() {
   return `${center.value.longitude.toFixed(6)}, ${center.value.latitude.toFixed(6)}`
@@ -216,6 +244,43 @@ async function fetchPois(mode: string, keywordText: string, url: string, emptyTe
   }
 }
 
+async function loadAround() {
+  const loc = `${center.value.longitude},${center.value.latitude}`
+  const url = `https://restapi.amap.com/v3/place/around?key=${AMAP_WEB_KEY}&location=${loc}&radius=1000&extensions=all`
+  await fetchPois('附近地点', '', url, '附近暂无可选地点', '地点加载失败，请稍后重试')
+}
+
+async function locateCurrentPosition(showToastOnFail = false) {
+  if (locationLoading.value) return false
+  locationLoading.value = true
+  locationErrorMessage.value = ''
+  try {
+    const loc = await requestCurrentLocation()
+    setCenter(loc.latitude, loc.longitude)
+    locationReady.value = true
+    return true
+  } catch (e: any) {
+    locationReady.value = false
+    locationErrorMessage.value = e?.message || '定位失败，当前先显示默认区域'
+    if (showToastOnFail) {
+      uni.showToast({ title: locationErrorMessage.value, icon: 'none' })
+      if (e?.reason === 'permission' || e?.reason === 'service') {
+        setTimeout(() => openLocationSettings(), 200)
+      }
+    }
+  } finally {
+    locationLoading.value = false
+  }
+  return false
+}
+
+async function retryLocate() {
+  const ok = await locateCurrentPosition(true)
+  if (ok) {
+    await loadAround()
+  }
+}
+
 function onRegionChange(e: any) {
   if (e.type === 'end' && e.detail?.centerLocation) {
     if (ignoreNextRegionChange) {
@@ -238,12 +303,6 @@ function onMapTap(e: any) {
     resetSelection()
     loadAround()
   }
-}
-
-async function loadAround() {
-  const loc = `${center.value.longitude},${center.value.latitude}`
-  const url = `https://restapi.amap.com/v3/place/around?key=${AMAP_WEB_KEY}&location=${loc}&radius=1000&extensions=all`
-  await fetchPois('附近地点', '', url, '附近暂无可选地点', '地点加载失败，请稍后重试')
 }
 
 async function searchByKeyword() {
@@ -286,14 +345,7 @@ onMounted(async () => {
     ...diagnostics.value,
     centerText: currentCenterText(),
   }
-  try {
-    const loc: any = await uni.getLocation({ type: 'gcj02' })
-    if (loc?.latitude && loc?.longitude) {
-      setCenter(loc.latitude, loc.longitude)
-    }
-  } catch {
-    uni.showToast({ title: '定位失败，已使用默认位置', icon: 'none' })
-  }
+  await locateCurrentPosition(false)
   await loadAround()
 })
 </script>
@@ -355,6 +407,52 @@ onMounted(async () => {
     color: #fff;
     border-radius: 34rpx;
     font-size: 26rpx;
+  }
+}
+
+.location-card {
+  margin-bottom: 16rpx;
+  padding: 16rpx 20rpx;
+  border-radius: 16rpx;
+  background: #f8fafc;
+}
+
+.location-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20rpx;
+}
+
+.location-title {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #334155;
+}
+
+.location-btn {
+  margin: 0;
+  padding: 0 24rpx;
+  height: 60rpx;
+  line-height: 60rpx;
+  background: #1890ff;
+  color: #fff;
+  border-radius: 999rpx;
+  font-size: 24rpx;
+
+  &::after {
+    border: none;
+  }
+}
+
+.location-text {
+  display: block;
+  margin-top: 10rpx;
+  font-size: 22rpx;
+  color: #64748b;
+
+  &.error {
+    color: #ef4444;
   }
 }
 

@@ -11,24 +11,33 @@
 
     <view class="account-list">
       <view class="section-title">选择账户登录</view>
-      <view
-        v-for="account in accounts"
-        :key="account.id"
-        class="account-card"
-        @tap="selectAccount(account)"
-      >
-        <view class="avatar" :class="account.role">
-          {{ account.displayName.charAt(0) }}
-        </view>
-        <view class="account-info">
-          <text class="name">{{ account.displayName }}</text>
-          <text class="role">{{ account.role === 'admin' ? '管理员' : '业务员' }}</text>
-        </view>
-        <view class="arrow">›</view>
+      <view v-if="loading && accounts.length === 0" class="loading">
+        <text>正在加载账户...</text>
       </view>
+      <view v-else>
+        <view
+          v-for="account in accounts"
+          :key="account.id"
+          class="account-card"
+          @tap="selectAccount(account)"
+        >
+          <view class="avatar" :class="account.role">
+            {{ account.displayName.charAt(0) }}
+          </view>
+          <view class="account-info">
+            <text class="name">{{ account.displayName }}</text>
+            <text class="role">{{ account.role === 'admin' ? '管理员' : '业务员' }}</text>
+          </view>
+          <view class="arrow">›</view>
+        </view>
 
-      <view v-if="accounts.length === 0" class="empty">
-        <text>暂无可用账户</text>
+        <view v-if="loading && accounts.length > 0" class="loading inline-loading">
+          <text>账户已显示，正在后台刷新...</text>
+        </view>
+
+        <view v-if="!loading && accounts.length === 0" class="empty">
+          <text>暂无可用账户</text>
+        </view>
       </view>
     </view>
 
@@ -42,16 +51,23 @@
 import { ref, onMounted } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
-import { getAccounts, getSession } from '@/api'
+import { getSession } from '@/api'
+import { useReferenceStore } from '@/store/reference'
 import { applyRoleTabBar, switchToRoleHome } from '@/utils/tabbar'
 import type { Account } from '@/types'
 
 const userStore = useUserStore()
+const referenceStore = useReferenceStore()
 const accounts = ref<Account[]>([])
 const debugMsg = ref('')
+const loading = ref(false)
+
+function syncAccounts() {
+  accounts.value = [...referenceStore.accounts]
+  debugMsg.value = accounts.value.length ? `获取到 ${accounts.value.length} 个账户` : ''
+}
 
 onMounted(async () => {
-  // 检查是否已登录
   const session = getSession()
   if (session) {
     userStore.setSession(session)
@@ -62,14 +78,22 @@ onMounted(async () => {
     return
   }
 
-  // 加载账户列表
+  referenceStore.hydrate()
+  syncAccounts()
+  loading.value = true
   try {
-    const result = await getAccounts()
-    debugMsg.value = `获取到 ${result.length} 个账户`
-    accounts.value = result
+    await userStore.loadAccounts()
+    syncAccounts()
   } catch (e: any) {
-    debugMsg.value = `错误: ${e.message}`
-    uni.showModal({ title: '加载失败', content: e.message, showCancel: false })
+    syncAccounts()
+    debugMsg.value = accounts.value.length ? '账户刷新失败，已显示缓存结果' : `错误: ${e.message}`
+    if (accounts.value.length > 0) {
+      uni.showToast({ title: '账户刷新失败，已显示缓存', icon: 'none' })
+    } else {
+      uni.showModal({ title: '加载失败', content: e.message, showCancel: false })
+    }
+  } finally {
+    loading.value = false
   }
 })
 
@@ -199,11 +223,18 @@ function selectAccount(account: Account) {
   }
 }
 
+.loading,
 .empty {
   text-align: center;
   padding: 60rpx;
   color: #999;
   font-size: 28rpx;
+}
+
+.inline-loading {
+  padding-top: 24rpx;
+  padding-bottom: 16rpx;
+  font-size: 24rpx;
 }
 
 .footer {
