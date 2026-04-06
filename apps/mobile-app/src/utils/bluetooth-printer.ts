@@ -122,7 +122,32 @@ const OFFICIAL_DENSITY_NORMAL = '1B401FFD0101101FFD01023C1FFD0103011FFD0104021FF
 const OFFICIAL_STATUS_QUERY = '1F0106'
 const OFFICIAL_DEVICE_INFO_ALL = '10040A'
 const OFFICIAL_WAKE_COMMAND = '1F010700'
-const OFFICIAL_NEWLINE_G = '0A'
+const OFFICIAL_NEWLINE_G = '0A0A0A'
+const M9_BITMAP_WIDTH = 1680
+const M9_FRAME_HEIGHT = 40
+const M9_FRAME_THROTTLE_MS = 60
+const M9_TEXT_FONT_SIZE = 64
+const M9_TEXT_LINE_HEIGHT = 88
+const M9_TEXT_PADDING_X = 88
+const M9_TEXT_PADDING_Y = 96
+const M9_TEXT_WRAP_UNITS = 44
+const M9_G_GROUP_NAMES = new Set([
+  'MHT-M8',
+  'M8',
+  'M9',
+  'M10',
+  'T11',
+  'T18',
+  'YI-M9',
+  'A-PD55',
+  'CE-O1518B',
+  'M11',
+  'A081',
+  'M12',
+  'T6',
+  'ELITE TME100 A4',
+  'ITP03',
+])
 const CLASSIC_COMPATIBILITY_CASES: BluetoothClassicCompatibilityCase[] = [
   {
     id: 'official-device-info-all',
@@ -1117,6 +1142,192 @@ function buildPrintChunks(text: string, strategy: BluetoothPrinterStrategy) {
   return chunks
 }
 
+function isM9GGroupDevice(device?: BluetoothPrinterDevice | null) {
+  const name = formatPrinterName(device?.name)
+  return M9_G_GROUP_NAMES.has(name)
+}
+
+function wrapM9Text(text: string) {
+  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  const lines: string[] = []
+
+  normalized.split('\n').forEach((rawLine) => {
+    const line = rawLine || ' '
+    let current = ''
+    let units = 0
+    for (const char of Array.from(line)) {
+      const nextUnits = /[\x00-\x7F]/.test(char) ? 1 : 2
+      if (current && units + nextUnits > M9_TEXT_WRAP_UNITS) {
+        lines.push(current)
+        current = ''
+        units = 0
+      }
+      current += char
+      units += nextUnits
+    }
+    lines.push(current || ' ')
+  })
+
+  return lines
+}
+
+async function renderM9ReceiptBitmap(text: string) {
+  const plusApi = ensureAndroidApp()
+  const Bitmap = plusApi.android.importClass('android.graphics.Bitmap')
+  const Color = plusApi.android.importClass('android.graphics.Color')
+  const Typeface = plusApi.android.importClass('android.graphics.Typeface')
+
+  const lines = wrapM9Text(text)
+  const height = Math.max(400, M9_TEXT_PADDING_Y * 2 + lines.length * M9_TEXT_LINE_HEIGHT)
+  const bitmap = Bitmap.createBitmap(M9_BITMAP_WIDTH, height, Bitmap.Config.ARGB_8888)
+  const canvas = plusApi.android.newObject('android.graphics.Canvas', bitmap)
+  const paint = plusApi.android.newObject('android.graphics.Paint')
+
+  plusApi.android.invoke(canvas, 'drawColor', Color.WHITE)
+  plusApi.android.invoke(paint, 'setAntiAlias', true)
+  plusApi.android.invoke(paint, 'setColor', Color.BLACK)
+  plusApi.android.invoke(paint, 'setTextSize', M9_TEXT_FONT_SIZE)
+  plusApi.android.invoke(paint, 'setTypeface', Typeface.MONOSPACE)
+
+  let y = M9_TEXT_PADDING_Y
+  for (const line of lines) {
+    plusApi.android.invoke(canvas, 'drawText', line, M9_TEXT_PADDING_X, y, paint)
+    y += M9_TEXT_LINE_HEIGHT
+  }
+
+  appendLog('info', `M9 文本转位图完成：${lines.length} 行，高度 ${height}`)
+  return bitmap
+}
+
+function bitmapToM9MonoBytes(bitmap: any) {
+  const plusApi = ensureAndroidApp()
+  const width = Number(plusApi.android.invoke(bitmap, 'getWidth') || 0)
+  const height = Number(plusApi.android.invoke(bitmap, 'getHeight') || 0)
+  const pixels = plusApi.android.newObject('int[]', width * height)
+  plusApi.android.invoke(bitmap, 'getPixels', pixels, 0, width, 0, 0, width, height)
+  const output = new Uint8Array(width * height)
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const color = Number(pixels[y * width + x])
+      const red = (color >> 16) & 0xff
+      const green = (color >> 8) & 0xff
+      const blue = color & 0xff
+      const gray = Math.round(red * 0.299 + green * 0.587 + blue * 0.114)
+      output[y * width + x] = gray <= 180 ? 0 : 255
+    }
+  }
+
+  return { bytes: output, width, height }
+}
+
+function packM9FrameRows(mono: Uint8Array, width: number, height: number) {
+  const bytesPerRow = Math.floor(width / 8)
+  const packed = new Uint8Array(bytesPerRow * height)
+  for (let y = 0; y < height; y += 1) {
+    for (let xByte = 0; xByte < bytesPerRow; xByte += 1) {
+      let byte = 0
+      for (let bit = 0; bit < 8; bit += 1) {
+        const x = xByte * 8 + bit
+        if (mono[y * width + x] === 0) {
+          byte |= 1 << (7 - bit)
+        }
+      }
+      packed[y * bytesPerRow + xByte] = byte
+    }
+  }
+  return packed
+}
+
+function buildM9FramePayload(frameData: Uint8Array, bytesPerRow: number, frameHeight: number) {
+  const len = frameData.length
+  const bytes = new Uint8Array(6 + len)
+  bytes[0] = 0x1f
+  bytes[1] = 0x01
+  bytes[2] = 0x05
+  bytes[3] = bytesPerRow & 0xff
+  bytes[4] = frameHeight & 0xff
+  bytes[5] = len & 0xff
+  bytes.set(frameData, 6)
+  return Array.from(bytes)
+}
+
+async function sendM9BitmapFrames(outputStream: any, bitmap: any) {
+  const { bytes: monoBytes, width, height } = bitmapToM9MonoBytes(bitmap)
+  const packed = packM9FrameRows(monoBytes, width, height)
+  const bytesPerRow = Math.floor(width / 8)
+  const frameBytesLength = bytesPerRow * M9_FRAME_HEIGHT
+  const frameCount = Math.ceil(height / M9_FRAME_HEIGHT)
+
+  appendLog('info', `M9 位图发送：宽 ${width}，高 ${height}，共 ${frameCount} 帧`)
+
+  for (let index = 0; index < frameCount; index += 1) {
+    const start = index * frameBytesLength
+    const end = Math.min(start + frameBytesLength, packed.length)
+    const frameData = packed.slice(start, end)
+    const remainingRows = height - index * M9_FRAME_HEIGHT
+    const frameHeight = Math.min(M9_FRAME_HEIGHT, remainingRows)
+    const payload = buildM9FramePayload(frameData, bytesPerRow, frameHeight)
+    await writeRawBytes(outputStream, payload, 0)
+    await sleep(M9_FRAME_THROTTLE_MS)
+  }
+}
+
+async function printTextAsM9Bitmap(text: string, device: BluetoothPrinterDevice, strategy: BluetoothPrinterStrategy) {
+  let socket: any = null
+  let outputStream: any = null
+  let inputStream: any = null
+  let bitmap: any = null
+
+  try {
+    appendLog('info', `开始 M9 私有位图打印：${device.name}`)
+    socket = await openPrinterSocket(device, strategy)
+    const plusApi = ensureAndroidApp()
+    outputStream = plusApi.android.invoke(socket, 'getOutputStream')
+    inputStream = plusApi.android.invoke(socket, 'getInputStream')
+    bitmap = await renderM9ReceiptBitmap(text)
+
+    await sendOfficialHandshakeStep({
+      inputStream,
+      label: 'M9 打印前查询 ALL',
+      outputStream,
+      payload: OFFICIAL_DEVICE_INFO_ALL,
+      strategy,
+      waitAfterMs: DEFAULT_CLASSIC_HANDSHAKE_GAP,
+      readTimeoutMs: 800,
+    })
+    await sendOfficialHandshakeStep({
+      inputStream,
+      label: 'M9 打印前浓度 NORMAL',
+      outputStream,
+      payload: OFFICIAL_DENSITY_NORMAL,
+      strategy,
+      waitAfterMs: DEFAULT_CLASSIC_HANDSHAKE_GAP,
+      readTimeoutMs: 700,
+    })
+
+    await sendM9BitmapFrames(outputStream, bitmap)
+    await sendClassicPayload(outputStream, OFFICIAL_NEWLINE_G, 'hex', strategy, DEFAULT_CLASSIC_HANDSHAKE_GAP)
+    await sendOfficialHandshakeStep({
+      inputStream,
+      label: 'M9 打印后状态查询',
+      outputStream,
+      payload: OFFICIAL_STATUS_QUERY,
+      strategy,
+      waitAfterMs: DEFAULT_CLASSIC_HANDSHAKE_GAP,
+      readTimeoutMs: 1800,
+    })
+
+    savePrinter(device)
+    appendLog('info', `M9 私有位图打印发送完成：${device.name}`)
+  } finally {
+    safeClose(inputStream)
+    safeClose(outputStream)
+    safeClose(socket)
+    safeClose(bitmap)
+  }
+}
+
 async function writeTextWithPacing(outputStream: any, text: string, strategy: BluetoothPrinterStrategy) {
   const plusApi = ensureAndroidApp()
   const chunks = buildPrintChunks(text, strategy)
@@ -1806,6 +2017,12 @@ export async function printText(text: string, device?: BluetoothPrinterDevice | 
   const target = normalizePrinter(device) || getSavedPrinter()
   if (!target) {
     throw new Error('请先在蓝牙打印页面选择打印机')
+  }
+
+  if (isM9GGroupDevice(target)) {
+    const strategy = getStrategyById(getSavedPrinterTransportStrategyId())
+    await printTextAsM9Bitmap(text, target, strategy)
+    return
   }
 
   const strategyOrder = buildStrategyOrder(getSavedPrinterTransportStrategyId())
