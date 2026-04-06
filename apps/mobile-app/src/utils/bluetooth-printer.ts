@@ -19,6 +19,53 @@ export interface BluetoothPrinterStrategyOption {
   description: string
 }
 
+export type BluetoothBleWriteMode = 'text' | 'hex'
+
+export interface BluetoothBleDevice {
+  deviceId: string
+  name: string
+  localName: string
+  RSSI: number
+  advertisServiceUUIDs: string[]
+}
+
+export interface BluetoothBleCharacteristicProperties {
+  read: boolean
+  write: boolean
+  writeNoResponse: boolean
+  notify: boolean
+  indicate: boolean
+}
+
+export interface BluetoothBleCharacteristic {
+  serviceId: string
+  uuid: string
+  properties: BluetoothBleCharacteristicProperties
+}
+
+export interface BluetoothBleService {
+  uuid: string
+  isPrimary: boolean
+  characteristics: BluetoothBleCharacteristic[]
+}
+
+export interface BluetoothBleProbeResult {
+  device: BluetoothBleDevice
+  services: BluetoothBleService[]
+}
+
+export interface BluetoothBleValueResult {
+  hex: string
+  text: string
+}
+
+export interface BluetoothBleCompatibilityCase {
+  id: string
+  label: string
+  writeMode: BluetoothBleWriteMode
+  payload: string
+}
+
 interface BluetoothPrinterStrategy extends BluetoothPrinterStrategyOption {
   encoding: 'GB18030' | 'GBK' | 'GB2312'
   lineEnding: '\r\n' | '\n'
@@ -29,11 +76,34 @@ interface BluetoothPrinterStrategy extends BluetoothPrinterStrategyOption {
   initCommands: number[][]
 }
 
+interface BleValueWaiter {
+  reject: (error: Error) => void
+  resolve: (value: BluetoothBleValueResult) => void
+  timer: ReturnType<typeof setTimeout>
+}
+
 const STORAGE_KEY = 'mobile_bluetooth_printer_v1'
 const STRATEGY_STORAGE_KEY = 'mobile_bluetooth_printer_strategy_v1'
 const LOG_STORAGE_KEY = 'mobile_bluetooth_printer_logs_v1'
-const LOG_LIMIT = 120
+const LOG_LIMIT = 400
 const SPP_UUID = '00001101-0000-1000-8000-00805F9B34FB'
+const DEFAULT_BLE_SCAN_MS = 4000
+const DEFAULT_BLE_MTU = 180
+const DEFAULT_BLE_VALUE_TIMEOUT = 3000
+const BLE_COMPATIBILITY_CASES: BluetoothBleCompatibilityCase[] = [
+  { id: 'esc-init', label: 'ESC 初始化', writeMode: 'hex', payload: '1B40' },
+  { id: 'esc-init-feed-lf', label: 'ESC 初始化+LF', writeMode: 'hex', payload: '1B400A0A' },
+  { id: 'esc-init-feed-crlf', label: 'ESC 初始化+CRLF', writeMode: 'hex', payload: '1B400D0A0D0A' },
+  { id: 'cut-command', label: '切纸指令', writeMode: 'hex', payload: '1D5600' },
+  { id: 'status-text', label: 'ASCII STATUS?', writeMode: 'text', payload: 'STATUS?' },
+  { id: 'test-text', label: 'ASCII TEST', writeMode: 'text', payload: 'TEST\n' },
+  { id: 'hex-test', label: 'TEST 十六进制', writeMode: 'hex', payload: '544553540A' },
+]
+
+const connectedBleDeviceIds = new Set<string>()
+const bleValueWaiters = new Map<string, BleValueWaiter>()
+const bleLastValues = new Map<string, BluetoothBleValueResult>()
+let bleListenersRegistered = false
 
 const PRINTER_STRATEGIES: BluetoothPrinterStrategy[] = [
   {
@@ -161,6 +231,42 @@ function writeLogs(logs: BluetoothPrinterRuntimeLog[]) {
   }
 }
 
+function stringifyLogLine(entry: BluetoothPrinterRuntimeLog) {
+  return `[${entry.createdAt}] [${entry.level.toUpperCase()}] ${entry.message}`
+}
+
+function writeConsoleLog(entry: BluetoothPrinterRuntimeLog) {
+  const line = `[BT-PRINTER] ${stringifyLogLine(entry)}`
+  if (entry.level === 'error') {
+    console.error(line)
+    return
+  }
+  if (entry.level === 'warn') {
+    console.warn(line)
+    return
+  }
+  console.log(line)
+}
+
+async function appendLogFile(entry: BluetoothPrinterRuntimeLog) {
+  const plusApi = getPlus()
+  if (!plusApi?.io) return
+
+  await new Promise<void>((resolve) => {
+    plusApi.io.requestFileSystem(plusApi.io.PRIVATE_DOC, (fs: any) => {
+      fs.root.getFile('bluetooth-printer.log', { create: true }, (fileEntry: any) => {
+        fileEntry.createWriter((writer: any) => {
+          const previousLength = Number(writer.length || 0)
+          writer.seek(previousLength)
+          writer.onwrite = () => resolve()
+          writer.onerror = () => resolve()
+          writer.write(`${stringifyLogLine(entry)}\n`)
+        }, () => resolve())
+      }, () => resolve())
+    }, () => resolve())
+  })
+}
+
 function appendLog(level: BluetoothPrinterRuntimeLog['level'], message: string) {
   const next: BluetoothPrinterRuntimeLog = {
     id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -169,10 +275,40 @@ function appendLog(level: BluetoothPrinterRuntimeLog['level'], message: string) 
     message,
   }
   writeLogs([next, ...readLogs()])
+  writeConsoleLog(next)
+  void appendLogFile(next)
 }
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function getErrorMessage(error: any, fallback = '未知错误') {
+  if (!error) return fallback
+  if (typeof error === 'string') return error
+  return error.errMsg || error.message || fallback
+}
+
+function normalizeBleError(error: any, fallback = 'BLE 操作失败') {
+  const message = getErrorMessage(error, fallback)
+  if (message.includes('10000') || /not\s+init/i.test(message)) return '蓝牙适配器未初始化'
+  if (message.includes('10001') || /not\s+available/i.test(message)) return '蓝牙不可用，请先打开手机蓝牙'
+  if (message.includes('10003') || /connection\s+fail/i.test(message)) return '连接 BLE 设备失败'
+  if (message.includes('10012')) return '连接超时，请让设备靠近手机后重试'
+  return message
+}
+
+function callUniApi<T>(executor: (handlers: { fail: (error: any) => void; success: (result: any) => void }) => void) {
+  return new Promise<T>((resolve, reject) => {
+    try {
+      executor({
+        success: (result: any) => resolve(result as T),
+        fail: (error: any) => reject(error),
+      })
+    } catch (error) {
+      reject(error)
+    }
+  })
 }
 
 function getUniBluetooth() {
@@ -187,7 +323,196 @@ function normalizeBleUuid(value?: string) {
   return String(value || '').trim().toLowerCase()
 }
 
+function normalizeBleDevice(device: any): BluetoothBleDevice | null {
+  const deviceId = String(device?.deviceId || '').trim()
+  if (!deviceId) return null
+  const localName = String(device?.localName || '').trim()
+  const name = String(device?.name || '').trim() || localName || deviceId
+  return {
+    deviceId,
+    name,
+    localName,
+    RSSI: Number(device?.RSSI || 0),
+    advertisServiceUUIDs: Array.isArray(device?.advertisServiceUUIDs)
+      ? device.advertisServiceUUIDs.map((item: any) => String(item)).filter(Boolean)
+      : [],
+  }
+}
+
+function normalizeBleCharacteristicProperties(properties: any): BluetoothBleCharacteristicProperties {
+  return {
+    read: !!properties?.read,
+    write: !!properties?.write,
+    writeNoResponse: !!properties?.writeNoResponse,
+    notify: !!properties?.notify,
+    indicate: !!properties?.indicate,
+  }
+}
+
+function getBleCharacteristicKey(deviceId: string, serviceId: string, characteristicId: string) {
+  return `${deviceId}::${serviceId}::${characteristicId}`
+}
+
+function toByteArray(value: any) {
+  if (!value) return [] as number[]
+  if (value instanceof ArrayBuffer) return Array.from(new Uint8Array(value))
+  if (ArrayBuffer.isView(value)) return Array.from(new Uint8Array(value.buffer, value.byteOffset, value.byteLength))
+  if (Array.isArray(value)) return value.map(item => Number(item) & 0xff)
+  try {
+    return Array.from(new Uint8Array(value))
+  } catch {
+    return []
+  }
+}
+
+function bytesToHex(bytes: number[]) {
+  return bytes.map(byte => byte.toString(16).padStart(2, '0').toUpperCase()).join(' ')
+}
+
+function bytesToText(bytes: number[]) {
+  if (bytes.length === 0) return ''
+  try {
+    if (typeof TextDecoder !== 'undefined') {
+      return new TextDecoder('utf-8').decode(new Uint8Array(bytes))
+    }
+  } catch {
+    // ignore and fall back
+  }
+  try {
+    return decodeURIComponent(bytes.map(byte => `%${byte.toString(16).padStart(2, '0')}`).join(''))
+  } catch {
+    return bytes
+      .map(byte => (byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : '.'))
+      .join('')
+  }
+}
+
+function normalizeBleValue(value: any): BluetoothBleValueResult {
+  const bytes = toByteArray(value)
+  return {
+    hex: bytesToHex(bytes),
+    text: bytesToText(bytes),
+  }
+}
+
+function textToArrayBuffer(text: string) {
+  try {
+    if (typeof TextEncoder !== 'undefined') {
+      return new TextEncoder().encode(text).buffer
+    }
+  } catch {
+    // ignore and fall back
+  }
+  const encoded = encodeURIComponent(text)
+  const bytes: number[] = []
+  for (let index = 0; index < encoded.length; index += 1) {
+    const char = encoded[index]
+    if (char === '%') {
+      bytes.push(parseInt(encoded.slice(index + 1, index + 3), 16))
+      index += 2
+      continue
+    }
+    bytes.push(char.charCodeAt(0))
+  }
+  return new Uint8Array(bytes).buffer
+}
+
+function hexToArrayBuffer(value: string) {
+  const normalized = value.replace(/0x/gi, '').replace(/[^0-9a-fA-F]/g, '')
+  if (!normalized) {
+    throw new Error('请输入十六进制探测包')
+  }
+  if (normalized.length % 2 !== 0) {
+    throw new Error('十六进制探测包长度必须为偶数')
+  }
+  const bytes = new Uint8Array(normalized.length / 2)
+  for (let index = 0; index < normalized.length; index += 2) {
+    bytes[index / 2] = parseInt(normalized.slice(index, index + 2), 16)
+  }
+  return bytes.buffer
+}
+
+function truncateText(value: string, limit = 48) {
+  return value.length > limit ? `${value.slice(0, limit)}…` : value
+}
+
+function summarizeBleValue(value: BluetoothBleValueResult) {
+  const parts = [] as string[]
+  if (value.hex) parts.push(`HEX ${truncateText(value.hex, 54)}`)
+  if (value.text) parts.push(`文本 ${truncateText(value.text.replace(/\s+/g, ' '), 28)}`)
+  return parts.join(' · ') || '空数据'
+}
+
+function shortUuid(uuid: string) {
+  return uuid.length > 18 ? `${uuid.slice(0, 8)}…${uuid.slice(-4)}` : uuid
+}
+
+function rejectBleWaitersByDevice(deviceId: string, reason: string) {
+  for (const [key, waiter] of bleValueWaiters.entries()) {
+    if (!key.startsWith(`${deviceId}::`)) continue
+    clearTimeout(waiter.timer)
+    bleValueWaiters.delete(key)
+    waiter.reject(new Error(reason))
+  }
+}
+
+function clearBleWaiter(key: string, error?: Error) {
+  const waiter = bleValueWaiters.get(key)
+  if (!waiter) return
+  clearTimeout(waiter.timer)
+  bleValueWaiters.delete(key)
+  if (error) waiter.reject(error)
+}
+
+function waitForBleValue(deviceId: string, serviceId: string, characteristicId: string, timeout = DEFAULT_BLE_VALUE_TIMEOUT) {
+  const key = getBleCharacteristicKey(deviceId, serviceId, characteristicId)
+  clearBleWaiter(key)
+  return new Promise<BluetoothBleValueResult>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      bleValueWaiters.delete(key)
+      reject(new Error('等待 BLE 特征值返回超时'))
+    }, timeout)
+    bleValueWaiters.set(key, { resolve, reject, timer })
+  })
+}
+
+function ensureBleListenersRegistered() {
+  if (bleListenersRegistered) return
+  bleListenersRegistered = true
+
+  uni.onBLEConnectionStateChange((result: any) => {
+    const deviceId = String(result?.deviceId || '').trim()
+    if (!deviceId) return
+    if (result?.connected) {
+      connectedBleDeviceIds.add(deviceId)
+      appendLog('info', `BLE连接状态：已连接 ${deviceId}`)
+      return
+    }
+    connectedBleDeviceIds.delete(deviceId)
+    rejectBleWaitersByDevice(deviceId, 'BLE 连接已断开')
+    appendLog('warn', `BLE连接状态：已断开 ${deviceId}`)
+  })
+
+  uni.onBLECharacteristicValueChange((result: any) => {
+    const deviceId = String(result?.deviceId || '').trim()
+    const serviceId = String(result?.serviceId || '').trim()
+    const characteristicId = String(result?.characteristicId || '').trim()
+    if (!deviceId || !serviceId || !characteristicId) return
+    const key = getBleCharacteristicKey(deviceId, serviceId, characteristicId)
+    const value = normalizeBleValue(result?.value)
+    bleLastValues.set(key, value)
+    appendLog('info', `BLE特征更新 ${shortUuid(serviceId)} / ${shortUuid(characteristicId)}：${summarizeBleValue(value)}`)
+    const waiter = bleValueWaiters.get(key)
+    if (!waiter) return
+    clearTimeout(waiter.timer)
+    bleValueWaiters.delete(key)
+    waiter.resolve(value)
+  })
+}
+
 async function openBleAdapter() {
+  await ensureBluetoothEnabled()
+  ensureBleListenersRegistered()
   const uniApi = getUniBluetooth()
   await new Promise<void>((resolve, reject) => {
     uniApi.openBluetoothAdapter({
@@ -196,7 +521,7 @@ async function openBleAdapter() {
         resolve()
       },
       fail: (error: any) => {
-        const message = error?.errMsg || 'BLE 适配器打开失败'
+        const message = normalizeBleError(error, 'BLE 适配器打开失败')
         if (/already/i.test(message)) {
           appendLog('info', 'BLE 适配器已打开')
           resolve()
@@ -209,15 +534,17 @@ async function openBleAdapter() {
   })
 }
 
-async function startBleDiscovery() {
+async function startBleDiscovery(scanMs = DEFAULT_BLE_SCAN_MS) {
+  await stopBleDiscovery()
   const uniApi = getUniBluetooth()
-  appendLog('info', '开始扫描附近 BLE 设备')
+  appendLog('info', `开始扫描附近 BLE 设备，持续 ${scanMs}ms`)
   await new Promise<void>((resolve, reject) => {
     uniApi.startBluetoothDevicesDiscovery({
       allowDuplicatesKey: false,
+      interval: 0,
       success: () => resolve(),
       fail: (error: any) => {
-        const message = error?.errMsg || 'BLE 扫描启动失败'
+        const message = normalizeBleError(error, 'BLE 扫描启动失败')
         if (/already/i.test(message)) {
           resolve()
           return
@@ -227,6 +554,7 @@ async function startBleDiscovery() {
       },
     })
   })
+  await sleep(scanMs)
 }
 
 async function stopBleDiscovery() {
@@ -244,18 +572,20 @@ async function getBleDiscoveredPrinters() {
   const result = await new Promise<any>((resolve, reject) => {
     uniApi.getBluetoothDevices({
       success: resolve,
-      fail: (error: any) => reject(new Error(error?.errMsg || '读取 BLE 设备失败')),
+      fail: (error: any) => reject(new Error(normalizeBleError(error, '读取 BLE 设备失败'))),
     })
   })
 
   const seen = new Set<string>()
   const devices = (result?.devices || []).map((item: any) => {
-    const deviceId = String(item?.deviceId || '')
+    const normalized = normalizeBleDevice(item)
+    if (!normalized) return null
     return {
-      name: formatPrinterName(item?.name || item?.localName || deviceId),
-      address: deviceId,
+      name: normalized.name,
+      address: normalized.deviceId,
     }
-  }).filter((item: BluetoothPrinterDevice) => {
+  }).filter((item: BluetoothPrinterDevice | null): item is BluetoothPrinterDevice => {
+    if (!item) return false
     const key = normalizeDeviceId(item.address)
     if (!key || seen.has(key)) return false
     seen.add(key)
@@ -272,19 +602,33 @@ async function createBleConnection(deviceId: string) {
   await new Promise<void>((resolve, reject) => {
     uniApi.createBLEConnection({
       deviceId,
-      timeout: 10000,
+      timeout: 12000,
       success: () => resolve(),
       fail: (error: any) => {
-        const message = error?.errMsg || 'BLE 连接失败'
-        if (/already/i.test(message)) {
+        const rawMessage = getErrorMessage(error, 'BLE 连接失败')
+        if (/already/i.test(rawMessage)) {
           resolve()
           return
         }
-        reject(new Error(message))
+        reject(new Error(normalizeBleError(error, 'BLE 连接失败')))
       },
     })
   })
+  connectedBleDeviceIds.add(deviceId)
   appendLog('info', `BLE 连接已建立：${deviceId}`)
+  try {
+    await new Promise<void>((resolve, reject) => {
+      uniApi.setBLEMTU({
+        deviceId,
+        mtu: DEFAULT_BLE_MTU,
+        success: () => resolve(),
+        fail: (error: any) => reject(new Error(normalizeBleError(error, '设置 BLE MTU 失败'))),
+      })
+    })
+    appendLog('info', `BLE MTU 已设置：${DEFAULT_BLE_MTU}`)
+  } catch (error: any) {
+    appendLog('warn', `BLE MTU 设置失败：${getErrorMessage(error)}`)
+  }
 }
 
 async function closeBleConnection(deviceId: string) {
@@ -296,6 +640,9 @@ async function closeBleConnection(deviceId: string) {
       fail: () => resolve(),
     })
   })
+  connectedBleDeviceIds.delete(deviceId)
+  rejectBleWaitersByDevice(deviceId, 'BLE 连接已手动断开')
+  appendLog('info', `已断开 BLE 设备：${deviceId}`)
 }
 
 async function getBleDeviceServices(deviceId: string) {
@@ -304,7 +651,7 @@ async function getBleDeviceServices(deviceId: string) {
     uniApi.getBLEDeviceServices({
       deviceId,
       success: resolve,
-      fail: (error: any) => reject(new Error(error?.errMsg || '读取 BLE 服务失败')),
+      fail: (error: any) => reject(new Error(normalizeBleError(error, '读取 BLE 服务失败'))),
     })
   })
   return Array.isArray(result?.services) ? result.services : []
@@ -317,7 +664,7 @@ async function getBleDeviceCharacteristics(deviceId: string, serviceId: string) 
       deviceId,
       serviceId,
       success: resolve,
-      fail: (error: any) => reject(new Error(error?.errMsg || '读取 BLE 特征失败')),
+      fail: (error: any) => reject(new Error(normalizeBleError(error, '读取 BLE 特征失败'))),
     })
   })
   return Array.isArray(result?.characteristics) ? result.characteristics : []
@@ -336,7 +683,34 @@ function describeBleProperties(properties: any) {
 function isBleWriteCandidate(characteristic: any) {
   const uuid = normalizeBleUuid(characteristic?.uuid || characteristic?.characteristicId)
   const properties = characteristic?.properties || {}
-  return !!(properties.write || properties.writeNoResponse) || uuid.startsWith('49535343-aca3'.toLowerCase())
+  return !!(properties.write || properties.writeNoResponse) || uuid.startsWith('49535343')
+}
+
+function isBleNotifyCandidate(characteristic: any) {
+  const properties = characteristic?.properties || {}
+  return !!(properties.notify || properties.indicate) || normalizeBleUuid(characteristic?.uuid || characteristic?.characteristicId).startsWith('49535343')
+}
+
+async function getBleDeviceSnapshot(deviceId: string) {
+  try {
+    const result = await callUniApi<{ devices?: any[] }>((handlers) => {
+      uni.getBluetoothDevices({
+        success: handlers.success,
+        fail: handlers.fail,
+      })
+    })
+    const device = (result?.devices || []).map(normalizeBleDevice).find(item => item?.deviceId === deviceId)
+    if (device) return device
+  } catch {
+    // ignore lookup failures
+  }
+  return {
+    deviceId,
+    name: deviceId,
+    localName: '',
+    RSSI: 0,
+    advertisServiceUUIDs: [],
+  } as BluetoothBleDevice
 }
 
 async function resolveBleDeviceId(target: BluetoothPrinterDevice) {
@@ -498,14 +872,55 @@ export function clearBluetoothPrinterLogs() {
   writeLogs([])
 }
 
+export function getBluetoothPrinterLogFilePath() {
+  return '_doc/bluetooth-printer.log'
+}
+
+export function getBleCompatibilityCases() {
+  return BLE_COMPATIBILITY_CASES.map(item => ({ ...item }))
+}
+
 export async function listNearbyBlePrinters() {
   await ensureBluetoothEnabled()
   await openBleAdapter()
-  await startBleDiscovery()
-  await sleep(1800)
+  await startBleDiscovery(1800)
   const devices = await getBleDiscoveredPrinters()
   await stopBleDiscovery()
   return devices.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'))
+}
+
+export async function listBlePrinterDiagnosticsDevices(scanMs = DEFAULT_BLE_SCAN_MS) {
+  await ensureBluetoothEnabled()
+  await openBleAdapter()
+  await startBleDiscovery(scanMs)
+  const result = await callUniApi<{ devices?: any[] }>((handlers) => {
+    uni.getBluetoothDevices({
+      success: handlers.success,
+      fail: handlers.fail,
+    })
+  })
+  await stopBleDiscovery()
+
+  const deduped = new Map<string, BluetoothBleDevice>()
+  for (const raw of result?.devices || []) {
+    const device = normalizeBleDevice(raw)
+    if (!device) continue
+    const existing = deduped.get(device.deviceId)
+    if (!existing || device.RSSI > existing.RSSI) {
+      deduped.set(device.deviceId, device)
+    }
+  }
+
+  const devices = Array.from(deduped.values()).sort((left, right) => {
+    const leftNamed = left.name !== left.deviceId
+    const rightNamed = right.name !== right.deviceId
+    if (leftNamed !== rightNamed) return leftNamed ? -1 : 1
+    if (left.RSSI !== right.RSSI) return right.RSSI - left.RSSI
+    return left.name.localeCompare(right.name, 'zh-Hans-CN')
+  })
+
+  appendLog('info', `BLE诊断扫描完成，共发现 ${devices.length} 台设备`)
+  return devices
 }
 
 export async function inspectBlePrinter(device?: BluetoothPrinterDevice | null) {
@@ -549,6 +964,181 @@ export async function inspectBlePrinter(device?: BluetoothPrinterDevice | null) 
   } finally {
     await closeBleConnection(deviceId)
   }
+}
+
+export async function probeBlePrinterDevice(deviceId: string) {
+  await openBleAdapter()
+  await createBleConnection(deviceId)
+  const device = await getBleDeviceSnapshot(deviceId)
+
+  try {
+    const servicesResult = await callUniApi<{ services?: any[] }>((handlers) => {
+      uni.getBLEDeviceServices({
+        deviceId,
+        success: handlers.success,
+        fail: handlers.fail,
+      })
+    })
+
+    const services: BluetoothBleService[] = []
+    for (const service of servicesResult?.services || []) {
+      const serviceId = String(service?.uuid || service?.serviceId || '')
+      if (!serviceId) continue
+      const characteristicsResult = await callUniApi<{ characteristics?: any[] }>((handlers) => {
+        uni.getBLEDeviceCharacteristics({
+          deviceId,
+          serviceId,
+          success: handlers.success,
+          fail: handlers.fail,
+        })
+      })
+      const characteristics = (characteristicsResult?.characteristics || []).map((characteristic: any) => ({
+        serviceId,
+        uuid: String(characteristic?.uuid || characteristic?.characteristicId || ''),
+        properties: normalizeBleCharacteristicProperties(characteristic?.properties),
+      })).filter(item => item.uuid)
+      services.push({
+        uuid: serviceId,
+        isPrimary: !!service?.isPrimary,
+        characteristics,
+      })
+      appendLog('info', `BLE服务 ${shortUuid(serviceId)} 含 ${characteristics.length} 个特征`)
+    }
+
+    appendLog('info', `BLE探测完成：${device.name}，共 ${services.length} 个服务`)
+    return { device, services } as BluetoothBleProbeResult
+  } catch (error: any) {
+    const message = normalizeBleError(error, '探测 BLE 服务失败')
+    appendLog('error', `BLE探测失败 ${device.name}：${message}`)
+    throw new Error(message)
+  }
+}
+
+export async function disconnectBlePrinterDevice(deviceId: string) {
+  await closeBleConnection(deviceId)
+}
+
+export async function setBlePrinterCharacteristicNotify(options: { characteristicId: string; deviceId: string; enabled: boolean; serviceId: string }) {
+  await openBleAdapter()
+  await createBleConnection(options.deviceId)
+  const actionText = options.enabled ? '启用' : '停用'
+  try {
+    await callUniApi<void>((handlers) => {
+      uni.notifyBLECharacteristicValueChange({
+        deviceId: options.deviceId,
+        serviceId: options.serviceId,
+        characteristicId: options.characteristicId,
+        state: options.enabled,
+        success: handlers.success,
+        fail: handlers.fail,
+      })
+    })
+    appendLog('info', `BLE通知${actionText}成功 ${shortUuid(options.serviceId)} / ${shortUuid(options.characteristicId)}`)
+  } catch (error: any) {
+    const message = normalizeBleError(error, `BLE通知${actionText}失败`)
+    appendLog('error', `BLE通知${actionText}失败 ${shortUuid(options.characteristicId)}：${message}`)
+    throw new Error(message)
+  }
+}
+
+export async function readBlePrinterCharacteristic(options: { characteristicId: string; deviceId: string; serviceId: string }) {
+  await openBleAdapter()
+  await createBleConnection(options.deviceId)
+  const key = getBleCharacteristicKey(options.deviceId, options.serviceId, options.characteristicId)
+  const waiter = waitForBleValue(options.deviceId, options.serviceId, options.characteristicId)
+  appendLog('info', `开始读取 BLE 特征 ${shortUuid(options.serviceId)} / ${shortUuid(options.characteristicId)}`)
+
+  try {
+    await callUniApi<void>((handlers) => {
+      uni.readBLECharacteristicValue({
+        deviceId: options.deviceId,
+        serviceId: options.serviceId,
+        characteristicId: options.characteristicId,
+        success: handlers.success,
+        fail: handlers.fail,
+      })
+    })
+  } catch (error: any) {
+    const message = normalizeBleError(error, '读取 BLE 特征失败')
+    clearBleWaiter(key, new Error(message))
+    appendLog('error', `BLE读取失败 ${shortUuid(options.characteristicId)}：${message}`)
+    throw new Error(message)
+  }
+
+  try {
+    const value = await waiter
+    appendLog('info', `BLE读取完成 ${shortUuid(options.characteristicId)}：${summarizeBleValue(value)}`)
+    return value
+  } catch (error: any) {
+    const lastValue = bleLastValues.get(key)
+    if (lastValue) {
+      appendLog('info', `BLE读取返回缓存值 ${shortUuid(options.characteristicId)}：${summarizeBleValue(lastValue)}`)
+      return lastValue
+    }
+    appendLog('warn', `BLE读取等待超时 ${shortUuid(options.characteristicId)}：${getErrorMessage(error, '未知错误')}`)
+    throw error instanceof Error ? error : new Error(getErrorMessage(error, '读取 BLE 特征失败'))
+  }
+}
+
+export async function writeBlePrinterCharacteristic(options: {
+  characteristicId: string
+  deviceId: string
+  payload: string
+  serviceId: string
+  writeMode: BluetoothBleWriteMode
+}) {
+  await openBleAdapter()
+  await createBleConnection(options.deviceId)
+  const value = options.writeMode === 'hex' ? hexToArrayBuffer(options.payload) : textToArrayBuffer(options.payload)
+  const preview = normalizeBleValue(value)
+  appendLog('info', `开始写入 BLE 特征 ${shortUuid(options.serviceId)} / ${shortUuid(options.characteristicId)}：${summarizeBleValue(preview)}`)
+
+  try {
+    await callUniApi<void>((handlers) => {
+      uni.writeBLECharacteristicValue({
+        deviceId: options.deviceId,
+        serviceId: options.serviceId,
+        characteristicId: options.characteristicId,
+        value: value as any,
+        success: handlers.success,
+        fail: handlers.fail,
+      })
+    })
+    appendLog('info', `BLE写入完成 ${shortUuid(options.characteristicId)}：${summarizeBleValue(preview)}`)
+    return preview
+  } catch (error: any) {
+    const message = normalizeBleError(error, '写入 BLE 特征失败')
+    appendLog('error', `BLE写入失败 ${shortUuid(options.characteristicId)}：${message}`)
+    throw new Error(message)
+  }
+}
+
+export async function runBlePrinterCompatibilitySuite(options: { characteristicId: string; deviceId: string; serviceId: string }) {
+  const results: Array<{ caseId: string; ok: boolean; message: string }> = []
+  appendLog('info', `开始 BLE 兼容测试，共 ${BLE_COMPATIBILITY_CASES.length} 组`)
+
+  for (const testCase of BLE_COMPATIBILITY_CASES) {
+    try {
+      appendLog('info', `兼容测试：${testCase.label}`)
+      const value = await writeBlePrinterCharacteristic({
+        deviceId: options.deviceId,
+        serviceId: options.serviceId,
+        characteristicId: options.characteristicId,
+        payload: testCase.payload,
+        writeMode: testCase.writeMode,
+      })
+      results.push({ caseId: testCase.id, ok: true, message: summarizeBleValue(value) })
+      await sleep(500)
+    } catch (error: any) {
+      const message = getErrorMessage(error, '写入失败')
+      appendLog('warn', `兼容测试失败：${testCase.label} - ${message}`)
+      results.push({ caseId: testCase.id, ok: false, message })
+      await sleep(300)
+    }
+  }
+
+  appendLog('info', 'BLE 兼容测试完成，请结合设备反应与日志判断有效负载')
+  return results
 }
 
 export function getPrinterTransportStrategies(): BluetoothPrinterStrategyOption[] {

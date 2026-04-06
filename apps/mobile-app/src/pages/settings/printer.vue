@@ -70,6 +70,80 @@
 
       <view class="card">
         <view class="card-head">
+          <text class="card-title">BLE 诊断</text>
+          <text class="card-action" @tap="scanBleDevices">扫描</text>
+        </view>
+        <view class="card-sub ble-sub">适用于 MT688 一类 BLE 打印机，可查看服务、特征并做探测读写。</view>
+        <view v-if="bleLoading" class="empty">正在扫描 BLE 设备...</view>
+        <view v-else-if="bleErrorText" class="empty error">{{ bleErrorText }}</view>
+        <view v-else-if="bleDevices.length === 0" class="empty">暂无 BLE 设备</view>
+        <view v-for="item in bleDevices" :key="item.deviceId" class="ble-device-item" @tap="selectBleDevice(item)">
+          <view class="device-main">
+            <text class="device-name">{{ item.name }}</text>
+            <text class="device-address">{{ item.deviceId }}</text>
+            <text class="device-meta">RSSI {{ item.RSSI }}<text v-if="item.localName"> · {{ item.localName }}</text></text>
+          </view>
+          <text v-if="selectedBleDeviceId === item.deviceId" class="device-tag">当前</text>
+        </view>
+        <view v-if="selectedBleDevice" class="ble-actions">
+          <button class="btn ghost" :disabled="probingBle" @tap="probeBle">{{ probingBle ? '探测中...' : '读取服务/特征' }}</button>
+          <button class="btn ghost" :disabled="disconnectingBle" @tap="disconnectBle">{{ disconnectingBle ? '断开中...' : '断开 BLE' }}</button>
+        </view>
+        <view v-if="selectedBleDevice" class="ble-selected">
+          <text class="ble-selected-title">当前 BLE 设备</text>
+          <text class="device-name">{{ selectedBleDevice.name }}</text>
+          <text class="device-address">{{ selectedBleDevice.deviceId }}</text>
+        </view>
+        <view v-if="bleProbeResult" class="ble-services">
+          <view class="service-item" v-for="service in bleProbeResult.services" :key="service.uuid">
+            <view class="service-head">
+              <text class="service-title">服务 {{ service.uuid }}</text>
+              <text class="service-tag" v-if="service.isPrimary">主服务</text>
+            </view>
+            <view v-if="service.characteristics.length === 0" class="empty">暂无特征</view>
+            <view v-for="characteristic in service.characteristics" :key="`${service.uuid}_${characteristic.uuid}`" class="characteristic-item">
+              <text class="characteristic-id">{{ characteristic.uuid }}</text>
+              <text class="characteristic-props">{{ formatCharacteristicProperties(characteristic.properties) }}</text>
+              <view class="characteristic-actions">
+                <button class="mini-btn" :disabled="bleActionBusy" @tap.stop="toggleNotify(characteristic)">{{ characteristic.properties.notify || characteristic.properties.indicate ? '通知' : '无通知' }}</button>
+                <button class="mini-btn" :disabled="bleActionBusy || !characteristic.properties.read" @tap.stop="readCharacteristic(characteristic)">读取</button>
+                <button class="mini-btn" :disabled="bleActionBusy || !(characteristic.properties.write || characteristic.properties.writeNoResponse)" @tap.stop="useCharacteristic(characteristic)">写入目标</button>
+              </view>
+            </view>
+          </view>
+        </view>
+        <view v-if="bleWriteTarget" class="ble-write-panel">
+          <text class="ble-selected-title">写入调试</text>
+          <text class="device-address">服务 {{ bleWriteTarget.serviceId }}</text>
+          <text class="device-address">特征 {{ bleWriteTarget.uuid }}</text>
+          <picker mode="selector" :range="bleWriteModeOptions" :value="bleWriteModeIndex" @change="onBleWriteModeChange">
+            <view class="picker">
+              <text>写入格式：{{ bleWriteMode === 'hex' ? 'HEX' : '文本' }}</text>
+            </view>
+          </picker>
+          <textarea v-model="bleWritePayload" class="ble-textarea" :placeholder="bleWriteMode === 'hex' ? '例如：1B40' : '输入测试文本或命令'" />
+          <view class="ble-actions">
+            <button class="btn primary" :disabled="bleActionBusy || !bleWritePayload.trim()" @tap="writeCharacteristic">发送探测包</button>
+            <button class="btn ghost" :disabled="bleActionBusy" @tap="runCompatibilitySuite">一键兼容测试</button>
+          </view>
+          <view class="ble-case-list">
+            <text class="ble-selected-title">兼容测试清单</text>
+            <text v-for="item in bleCompatibilityCases" :key="item.id" class="device-meta">{{ item.label }}：{{ item.writeMode === 'hex' ? item.payload : JSON.stringify(item.payload) }}</text>
+          </view>
+          <view class="ble-log-file">
+            <text class="ble-selected-title">日志文件</text>
+            <text class="device-meta">{{ logFilePath }}</text>
+          </view>
+          <view v-if="bleLastValue" class="ble-last-value">
+            <text class="ble-selected-title">最近返回</text>
+            <text class="device-meta">HEX {{ bleLastValue.hex || '-' }}</text>
+            <text class="device-meta">文本 {{ bleLastValue.text || '-' }}</text>
+          </view>
+        </view>
+      </view>
+
+      <view class="card">
+        <view class="card-head">
           <text class="card-title">运行日志</text>
           <text class="card-action" @tap="clearLogs">清空</text>
         </view>
@@ -92,27 +166,60 @@ import { onShow } from '@dcloudio/uni-app'
 import {
   clearBluetoothPrinterLogs,
   clearSavedPrinter,
+  disconnectBlePrinterDevice,
+  getBleCompatibilityCases,
+  getBluetoothPrinterLogFilePath,
   getBluetoothPrinterLogs,
   getPrinterTransportStrategies,
   getSavedPrinter,
   getSavedPrinterTransportStrategyId,
   inspectBlePrinter,
+  listBlePrinterDiagnosticsDevices,
   listPairedPrinters,
   openBluetoothSettings,
+  probeBlePrinterDevice,
   printTestPage,
+  readBlePrinterCharacteristic,
+  runBlePrinterCompatibilitySuite,
   savePrinter,
   savePrinterTransportStrategy,
+  setBlePrinterCharacteristicNotify,
+  writeBlePrinterCharacteristic,
 } from '@/utils/bluetooth-printer'
-import type { BluetoothPrinterDevice, BluetoothPrinterRuntimeLog, BluetoothPrinterStrategyOption } from '@/utils/bluetooth-printer'
+import type {
+  BluetoothBleCharacteristic,
+  BluetoothBleCompatibilityCase,
+  BluetoothBleDevice,
+  BluetoothBleProbeResult,
+  BluetoothBleValueResult,
+  BluetoothBleWriteMode,
+  BluetoothPrinterDevice,
+  BluetoothPrinterRuntimeLog,
+  BluetoothPrinterStrategyOption,
+} from '@/utils/bluetooth-printer'
 import { useUserStore } from '@/store/user'
 
 const userStore = useUserStore()
 const loading = ref(false)
 const testing = ref(false)
 const inspecting = ref(false)
+const probingBle = ref(false)
+const bleLoading = ref(false)
+const bleActionBusy = ref(false)
+const disconnectingBle = ref(false)
 const errorText = ref('')
+const bleErrorText = ref('')
 const devices = ref<BluetoothPrinterDevice[]>([])
+const bleDevices = ref<BluetoothBleDevice[]>([])
 const selectedPrinter = ref<BluetoothPrinterDevice | null>(getSavedPrinter())
+const selectedBleDeviceId = ref('')
+const bleProbeResult = ref<BluetoothBleProbeResult | null>(null)
+const bleWriteTarget = ref<BluetoothBleCharacteristic | null>(null)
+const bleWritePayload = ref('')
+const bleWriteMode = ref<BluetoothBleWriteMode>('text')
+const bleLastValue = ref<BluetoothBleValueResult | null>(null)
+const bleCompatibilityCases = ref<BluetoothBleCompatibilityCase[]>(getBleCompatibilityCases())
+const logFilePath = getBluetoothPrinterLogFilePath()
 const strategyOptions = ref<BluetoothPrinterStrategyOption[]>(getPrinterTransportStrategies())
 const selectedStrategyId = ref(getSavedPrinterTransportStrategyId())
 const logs = ref<BluetoothPrinterRuntimeLog[]>(getBluetoothPrinterLogs())
@@ -123,9 +230,29 @@ const strategyIndex = computed(() => {
 })
 
 const selectedStrategy = computed(() => strategyOptions.value[strategyIndex.value] || null)
+const selectedBleDevice = computed(() => bleDevices.value.find(item => item.deviceId === selectedBleDeviceId.value) || null)
+const bleWriteModeOptions = ['文本', 'HEX']
+const bleWriteModeIndex = computed(() => bleWriteMode.value === 'hex' ? 1 : 0)
 
 function refreshLogs() {
   logs.value = getBluetoothPrinterLogs()
+}
+
+function resetBleProbeState() {
+  bleProbeResult.value = null
+  bleWriteTarget.value = null
+  bleWritePayload.value = ''
+  bleLastValue.value = null
+}
+
+function formatCharacteristicProperties(properties: BluetoothBleCharacteristic['properties']) {
+  const labels: string[] = []
+  if (properties.read) labels.push('read')
+  if (properties.write) labels.push('write')
+  if (properties.writeNoResponse) labels.push('writeNoRsp')
+  if (properties.notify) labels.push('notify')
+  if (properties.indicate) labels.push('indicate')
+  return labels.join(' · ') || 'unknown'
 }
 
 async function loadDevices() {
@@ -143,11 +270,35 @@ async function loadDevices() {
   }
 }
 
+async function scanBleDevices() {
+  bleLoading.value = true
+  bleErrorText.value = ''
+  try {
+    bleDevices.value = await listBlePrinterDiagnosticsDevices()
+    if (selectedBleDeviceId.value && !bleDevices.value.some(item => item.deviceId === selectedBleDeviceId.value)) {
+      selectedBleDeviceId.value = ''
+      resetBleProbeState()
+    }
+  } catch (error: any) {
+    bleDevices.value = []
+    bleErrorText.value = error?.message || 'BLE 设备扫描失败'
+  } finally {
+    bleLoading.value = false
+    refreshLogs()
+  }
+}
+
 function selectPrinter(device: BluetoothPrinterDevice) {
   savePrinter(device)
   selectedPrinter.value = device
   refreshLogs()
   uni.showToast({ title: `已选择：${device.name}`, icon: 'none' })
+}
+
+function selectBleDevice(device: BluetoothBleDevice) {
+  selectedBleDeviceId.value = device.deviceId
+  resetBleProbeState()
+  uni.showToast({ title: `已选择 BLE：${device.name}`, icon: 'none' })
 }
 
 function clearPrinter() {
@@ -179,6 +330,16 @@ function onStrategyChange(e: any) {
 function clearLogs() {
   clearBluetoothPrinterLogs()
   refreshLogs()
+}
+
+function onBleWriteModeChange(e: any) {
+  bleWriteMode.value = Number(e.detail.value) === 1 ? 'hex' : 'text'
+}
+
+function useCharacteristic(characteristic: BluetoothBleCharacteristic) {
+  bleWriteTarget.value = characteristic
+  bleWritePayload.value = bleWriteMode.value === 'hex' ? '1B40' : 'STATUS?'
+  bleLastValue.value = null
 }
 
 function levelText(level: BluetoothPrinterRuntimeLog['level']) {
@@ -223,6 +384,137 @@ async function inspectBle() {
   }
 }
 
+async function probeBle() {
+  if (!selectedBleDeviceId.value) {
+    uni.showToast({ title: '请先选择 BLE 设备', icon: 'none' })
+    return
+  }
+  probingBle.value = true
+  bleActionBusy.value = true
+  try {
+    bleProbeResult.value = await probeBlePrinterDevice(selectedBleDeviceId.value)
+    const firstWritable = bleProbeResult.value.services
+      .flatMap(service => service.characteristics)
+      .find(item => item.properties.write || item.properties.writeNoResponse)
+    bleWriteTarget.value = firstWritable || null
+    if (firstWritable && !bleWritePayload.value.trim()) {
+      bleWritePayload.value = 'STATUS?'
+    }
+    refreshLogs()
+    uni.showToast({ title: 'BLE 探测完成', icon: 'success' })
+  } catch (error: any) {
+    refreshLogs()
+    uni.showToast({ title: error?.message || 'BLE 探测失败', icon: 'none' })
+  } finally {
+    probingBle.value = false
+    bleActionBusy.value = false
+  }
+}
+
+async function toggleNotify(characteristic: BluetoothBleCharacteristic) {
+  if (!selectedBleDeviceId.value) return
+  if (!(characteristic.properties.notify || characteristic.properties.indicate)) {
+    uni.showToast({ title: '该特征不支持通知', icon: 'none' })
+    return
+  }
+  bleActionBusy.value = true
+  try {
+    await setBlePrinterCharacteristicNotify({
+      deviceId: selectedBleDeviceId.value,
+      serviceId: characteristic.serviceId,
+      characteristicId: characteristic.uuid,
+      enabled: true,
+    })
+    refreshLogs()
+    uni.showToast({ title: '通知已启用', icon: 'success' })
+  } catch (error: any) {
+    refreshLogs()
+    uni.showToast({ title: error?.message || '通知启用失败', icon: 'none' })
+  } finally {
+    bleActionBusy.value = false
+  }
+}
+
+async function readCharacteristic(characteristic: BluetoothBleCharacteristic) {
+  if (!selectedBleDeviceId.value) return
+  bleActionBusy.value = true
+  try {
+    bleLastValue.value = await readBlePrinterCharacteristic({
+      deviceId: selectedBleDeviceId.value,
+      serviceId: characteristic.serviceId,
+      characteristicId: characteristic.uuid,
+    })
+    refreshLogs()
+    uni.showToast({ title: '读取完成', icon: 'success' })
+  } catch (error: any) {
+    refreshLogs()
+    uni.showToast({ title: error?.message || '读取失败', icon: 'none' })
+  } finally {
+    bleActionBusy.value = false
+  }
+}
+
+async function writeCharacteristic() {
+  if (!selectedBleDeviceId.value || !bleWriteTarget.value) {
+    uni.showToast({ title: '请先选择写入特征', icon: 'none' })
+    return
+  }
+  bleActionBusy.value = true
+  try {
+    bleLastValue.value = await writeBlePrinterCharacteristic({
+      deviceId: selectedBleDeviceId.value,
+      serviceId: bleWriteTarget.value.serviceId,
+      characteristicId: bleWriteTarget.value.uuid,
+      payload: bleWritePayload.value,
+      writeMode: bleWriteMode.value,
+    })
+    refreshLogs()
+    uni.showToast({ title: '探测包已发送', icon: 'success' })
+  } catch (error: any) {
+    refreshLogs()
+    uni.showToast({ title: error?.message || '写入失败', icon: 'none' })
+  } finally {
+    bleActionBusy.value = false
+  }
+}
+
+async function runCompatibilitySuite() {
+  if (!selectedBleDeviceId.value || !bleWriteTarget.value) {
+    uni.showToast({ title: '请先选择写入特征', icon: 'none' })
+    return
+  }
+  bleActionBusy.value = true
+  try {
+    await runBlePrinterCompatibilitySuite({
+      deviceId: selectedBleDeviceId.value,
+      serviceId: bleWriteTarget.value.serviceId,
+      characteristicId: bleWriteTarget.value.uuid,
+    })
+    refreshLogs()
+    uni.showToast({ title: '兼容测试已发送', icon: 'success' })
+  } catch (error: any) {
+    refreshLogs()
+    uni.showToast({ title: error?.message || '兼容测试失败', icon: 'none' })
+  } finally {
+    bleActionBusy.value = false
+  }
+}
+
+async function disconnectBle() {
+  if (!selectedBleDeviceId.value) return
+  disconnectingBle.value = true
+  try {
+    await disconnectBlePrinterDevice(selectedBleDeviceId.value)
+    refreshLogs()
+    uni.showToast({ title: 'BLE 已断开', icon: 'success' })
+  } catch (error: any) {
+    refreshLogs()
+    uni.showToast({ title: error?.message || 'BLE 断开失败', icon: 'none' })
+  } finally {
+    disconnectingBle.value = false
+  }
+}
+
 onShow(async () => {
   userStore.init()
   if (!userStore.isLoggedIn) {
@@ -233,6 +525,7 @@ onShow(async () => {
   selectedStrategyId.value = getSavedPrinterTransportStrategyId()
   refreshLogs()
   await loadDevices()
+  await scanBleDevices()
 })
 </script>
 
@@ -345,9 +638,79 @@ onShow(async () => {
   font-weight: 600;
 }
 
-.debug-actions {
+.ble-sub,
+.device-meta,
+.characteristic-props,
+.characteristic-id,
+.service-tag {
+  font-size: 22rpx;
+  color: #64748b;
+}
+
+.ble-device-item,
+.service-item,
+.characteristic-item,
+.ble-write-panel,
+.ble-selected,
+.ble-last-value {
+  border-top: 2rpx solid #f1f5f9;
+  padding-top: 18rpx;
+  margin-top: 18rpx;
+}
+
+.ble-actions,
+.characteristic-actions {
   display: flex;
-  gap: 16rpx;
+  gap: 12rpx;
+  margin-top: 16rpx;
+  flex-wrap: wrap;
+}
+
+.ble-selected-title,
+.service-title {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #1f2937;
+  display: block;
+  margin-bottom: 8rpx;
+}
+
+.service-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.characteristic-actions {
+  margin-top: 12rpx;
+}
+
+.mini-btn {
+  min-width: 120rpx;
+  height: 64rpx;
+  line-height: 64rpx;
+  padding: 0 20rpx;
+  border-radius: 32rpx;
+  border: none;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 24rpx;
+}
+
+.ble-case-list,
+.ble-log-file {
+  border-top: 2rpx solid #f1f5f9;
+  padding-top: 18rpx;
+  margin-top: 18rpx;
+}
+
+.btn {
+  flex: 1;
+  height: 84rpx;
+  border-radius: 42rpx;
+  border: none;
+  font-size: 28rpx;
 }
 
 .primary {
