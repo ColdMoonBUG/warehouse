@@ -1997,6 +1997,24 @@ async function openPrinterSocket(device: BluetoothPrinterDevice, strategy: Bluet
   const UUID = plusApi.android.importClass('java.util.UUID')
   const remoteDevice = plusApi.android.invoke(adapter, 'getRemoteDevice', device.address)
   const uuid = UUID.fromString(SPP_UUID)
+
+  if (isM9GGroupDevice(device)) {
+    let socket: any = null
+    try {
+      appendLog('info', `M9 按 Testbluetooth 基线路径连接：secure-spp-uuid`)
+      socket = plusApi.android.invoke(remoteDevice, 'createRfcommSocketToServiceRecord', uuid)
+      plusApi.android.invoke(socket, 'connect')
+      await sleep(strategy.connectDelay)
+      savePrinterTransportId('secure-spp-uuid')
+      appendLog('info', 'M9 基线连接成功：secure-spp-uuid')
+      return socket
+    } catch (error: any) {
+      appendLog('warn', `M9 基线连接失败：${error?.message || '未知错误'}`)
+      safeClose(socket)
+      await sleep(120)
+    }
+  }
+
   const factories = buildSocketFactories(plusApi, remoteDevice, uuid, getSavedPrinterTransportId())
 
   for (const factory of factories) {
@@ -2006,6 +2024,7 @@ async function openPrinterSocket(device: BluetoothPrinterDevice, strategy: Bluet
       socket = factory.create()
       plusApi.android.invoke(socket, 'connect')
       await sleep(strategy.connectDelay)
+      savePrinterTransportId(factory.label)
       appendLog('info', `连接成功：${factory.label}`)
       return socket
     } catch (error: any) {
