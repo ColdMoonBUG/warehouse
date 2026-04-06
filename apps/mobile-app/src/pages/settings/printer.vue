@@ -25,7 +25,7 @@
         <view class="card-head">
           <view>
             <text class="card-title">连接协议</text>
-            <text class="card-sub">M9 优先选 SPP，再试 RFCOMM Channel 3</text>
+            <text class="card-sub">M9 固定使用标准 SPP UUID 连接</text>
           </view>
         </view>
         <picker mode="selector" :range="transportOptions" range-key="label" :value="transportIndex" @change="onTransportChange">
@@ -83,6 +83,9 @@
           <button class="btn ghost" :disabled="connectingSweep" @tap="runConnectionSweep">
             {{ connectingSweep ? '连接爆破中...' : '爆破连接' }}
           </button>
+          <button class="btn ghost" :disabled="imageTesting" @tap="runImageSuite">
+            {{ imageTesting ? 'M9 图片测试中...' : '爆破 M9 图片' }}
+          </button>
           <button class="btn ghost" :disabled="classicTesting" @tap="runClassicSuite">
             {{ classicTesting ? '爆破中...' : '爆破 M9 协议' }}
           </button>
@@ -91,7 +94,7 @@
           </button>
         </view>
         <view class="handshake-tip">
-          <text class="device-meta">按官方顺序发送 10040A → 1F010700 → 浓度初始化 → 0A → 1F0106，并记录回包。</text>
+          <text class="device-meta">主打印路径已改为原生顺序：原生浓度包 → 1F0105 图片帧 → 0A0A0A → 1F0106。下方“官方 M9 握手”仅用于对比记录 10040A / 1F010700 回包。</text>
         </view>
         <view class="classic-case-list">
           <text class="ble-selected-title">M9 爆破清单</text>
@@ -213,6 +216,7 @@ import {
   getSavedPrinterTransportId,
   getSavedPrinterTransportStrategyId,
   inspectBlePrinter,
+  isM9PrinterDevice,
   listBlePrinterDiagnosticsDevices,
   listPairedPrinters,
   openBluetoothSettings,
@@ -221,6 +225,7 @@ import {
   readBlePrinterCharacteristic,
   runBlePrinterCompatibilitySuite,
   runClassicPrinterCompatibilitySuite,
+  runM9ImageBruteForceSuite,
   runOfficialM9Handshake,
   runPrinterConnectionSweep,
   runSingleClassicCompatibilityCase,
@@ -248,8 +253,9 @@ import { useUserStore } from '@/store/user'
 const userStore = useUserStore()
 const loading = ref(false)
 const testing = ref(false)
-const officialHandshaking = ref(false)
 const classicTesting = ref(false)
+const imageTesting = ref(false)
+const officialHandshaking = ref(false)
 const singleCaseTestingId = ref('')
 const connectingSweep = ref(false)
 const inspecting = ref(false)
@@ -289,6 +295,7 @@ const strategyIndex = computed(() => {
 
 const selectedTransport = computed(() => transportOptions.value[transportIndex.value] || null)
 const selectedStrategy = computed(() => strategyOptions.value[strategyIndex.value] || null)
+const isM9Selected = computed(() => isM9PrinterDevice(selectedPrinter.value))
 const selectedBleDevice = computed(() => bleDevices.value.find(item => item.deviceId === selectedBleDeviceId.value) || null)
 const bleWriteModeOptions = ['文本', 'HEX']
 const bleWriteModeIndex = computed(() => bleWriteMode.value === 'hex' ? 1 : 0)
@@ -431,6 +438,24 @@ async function printTest() {
     uni.showToast({ title: error?.message || '测试打印失败', icon: 'none' })
   } finally {
     testing.value = false
+  }
+}
+
+async function runImageSuite() {
+  if (!selectedPrinter.value) {
+    uni.showToast({ title: '请先选择打印机', icon: 'none' })
+    return
+  }
+  imageTesting.value = true
+  try {
+    await runM9ImageBruteForceSuite(selectedPrinter.value)
+    refreshLogs()
+    uni.showToast({ title: '图片暴力测试已发送', icon: 'success' })
+  } catch (error: any) {
+    refreshLogs()
+    uni.showToast({ title: error?.message || '图片暴力测试失败', icon: 'none' })
+  } finally {
+    imageTesting.value = false
   }
 }
 

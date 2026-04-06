@@ -120,6 +120,7 @@ const DEFAULT_CLASSIC_HANDSHAKE_GAP = 220
 const OFFICIAL_STATUS_ACK = '1F010506'
 const OFFICIAL_DENSITY_NORMAL = '1B401FFD0101101FFD01023C1FFD0103011FFD0104021FFD0105021FFD010600'
 const OFFICIAL_DENSITY_G_NORMAL = '11'
+const NATIVE_M9_DENSITY_NORMAL = '1FFD0101101FFD0102641FFD0103011FFD0104021FFD0105001FFD0108A0'
 const OFFICIAL_STATUS_QUERY = '1F0106'
 const OFFICIAL_DEVICE_INFO_ALL = '10040A'
 const OFFICIAL_WAKE_COMMAND = '1F010700'
@@ -129,7 +130,10 @@ const M9_FRAME_HEIGHT = 40
 const M9_WORD_FRAME_HEIGHT = 50
 const M9_FRAME_THROTTLE_MS = 60
 const M9_POST_PRINT_SETTLE_MS = 1200
-const M9_WORD_THRESHOLD = 160
+const M9_NATIVE_THRESHOLD = 128
+const M9_DITHER_WEIGHTS = [7 / 48, 5 / 48, 3 / 48, 5 / 48, 7 / 48, 5 / 48, 3 / 48, 1 / 48, 3 / 48, 5 / 48, 3 / 48, 1 / 48]
+const M9_DITHER_OFFSET_X = [1, 2, -2, -1, 0, 1, 2, -2, -1, 0, 1, 2]
+const M9_DITHER_OFFSET_Y = [0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2]
 const M9_TEXT_FONT_SIZE = 64
 const M9_TEXT_LINE_HEIGHT = 88
 const M9_TEXT_PADDING_X = 88
@@ -985,8 +989,11 @@ function bytesToJavaByteArray(bytes: number[]) {
 async function writeRawBytes(outputStream: any, bytes: number[], delay = 0) {
   const plusApi = ensureAndroidApp()
   if (bytes.length === 0) return
-  const byteArray = bytesToJavaByteArray(bytes)
-  plusApi.android.invoke(outputStream, 'write', byteArray, 0, bytes.length)
+  for (let offset = 0; offset < bytes.length; offset += 1024) {
+    const chunk = bytes.slice(offset, offset + 1024)
+    const byteArray = bytesToJavaByteArray(chunk)
+    plusApi.android.invoke(outputStream, 'write', byteArray, 0, chunk.length)
+  }
   plusApi.android.invoke(outputStream, 'flush')
   if (delay > 0) {
     await sleep(delay)
@@ -1151,6 +1158,10 @@ function isM9GGroupDevice(device?: BluetoothPrinterDevice | null) {
   return M9_G_GROUP_NAMES.has(name)
 }
 
+export function isM9PrinterDevice(device?: BluetoothPrinterDevice | null) {
+  return formatPrinterName(device?.name).includes('M9')
+}
+
 function wrapM9Text(text: string) {
   const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
   const lines: string[] = []
@@ -1217,8 +1228,30 @@ function bitmapToM9MonoBytes(bitmap: any) {
       const red = (color >> 16) & 0xff
       const green = (color >> 8) & 0xff
       const blue = color & 0xff
-      const gray = Math.round(red * 0.299 + green * 0.587 + blue * 0.114)
-      mono[y * width + x] = gray <= M9_WORD_THRESHOLD ? 0 : 255
+      mono[y * width + x] = Math.round(red * 0.299 + green * 0.587 + blue * 0.114)
+    }
+  }
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = y * width + x
+      const oldValue = mono[index]
+      const nextValue = oldValue <= M9_NATIVE_THRESHOLD ? 0 : 255
+      mono[index] = nextValue
+      const error = oldValue - nextValue
+      if (!error) {
+        continue
+      }
+      for (let offsetIndex = 0; offsetIndex < M9_DITHER_WEIGHTS.length; offsetIndex += 1) {
+        const nextX = x + M9_DITHER_OFFSET_X[offsetIndex]
+        const nextY = y + M9_DITHER_OFFSET_Y[offsetIndex]
+        if (nextX < 0 || nextX >= width || nextY < 0 || nextY >= height) {
+          continue
+        }
+        const targetIndex = nextY * width + nextX
+        const weighted = mono[targetIndex] + Math.trunc(M9_DITHER_WEIGHTS[offsetIndex] * error)
+        mono[targetIndex] = Math.max(0, Math.min(255, weighted))
+      }
     }
   }
 
@@ -1267,7 +1300,7 @@ async function sendM9BitmapFrames(outputStream: any, bitmap: any) {
   const frameCount = Math.ceil(height / M9_FRAME_HEIGHT)
 
   appendLog('info', `M9 位图发送：宽 ${width}，高 ${height}，共 ${frameCount} 帧，总长 ${packed.length} 字节`)
-  appendLog('warn', '当前仍未复现原厂 JBIG 压缩，先按未压缩 1F0105 帧发送')
+  appendLog('info', 'M9 发送路径已对齐原厂 J 分支：40 行分帧、1F0105 头、LE 长度、未压缩位图回退')
 
   for (let index = 0; index < frameCount; index += 1) {
     const start = index * frameBytesLength
@@ -1284,6 +1317,121 @@ async function sendM9BitmapFrames(outputStream: any, bitmap: any) {
   }
 }
 
+async function renderM9ProbeBitmap() {
+  const plusApi = ensureAndroidApp()
+  const Bitmap = plusApi.android.importClass('android.graphics.Bitmap')
+  const Color = plusApi.android.importClass('android.graphics.Color')
+  const Typeface = plusApi.android.importClass('android.graphics.Typeface')
+  const height = 960
+  const bitmap = Bitmap.createBitmap(M9_BITMAP_WIDTH, height, Bitmap.Config.ARGB_8888)
+  const canvas = plusApi.android.newObject('android.graphics.Canvas', bitmap)
+  const paint = plusApi.android.newObject('android.graphics.Paint')
+
+  plusApi.android.invoke(canvas, 'drawColor', Color.WHITE)
+  plusApi.android.invoke(paint, 'setAntiAlias', true)
+  plusApi.android.invoke(paint, 'setColor', Color.BLACK)
+  plusApi.android.invoke(paint, 'setTypeface', Typeface.MONOSPACE)
+
+  plusApi.android.invoke(paint, 'setTextSize', 120)
+  plusApi.android.invoke(canvas, 'drawText', 'M9 IMAGE TEST', 120, 180, paint)
+  plusApi.android.invoke(paint, 'setTextSize', 72)
+  plusApi.android.invoke(canvas, 'drawText', 'SPP RFCOMM', 120, 300, paint)
+  plusApi.android.invoke(canvas, 'drawText', 'DIRECT BITMAP', 120, 390, paint)
+  plusApi.android.invoke(canvas, 'drawRect', 120, 470, 1560, 560, paint)
+  plusApi.android.invoke(canvas, 'drawRect', 120, 640, 760, 860, paint)
+  plusApi.android.invoke(canvas, 'drawText', formatDate(new Date(), 'YYYY-MM-DD HH:mm:ss'), 840, 780, paint)
+
+  appendLog('info', `M9 探针图生成完成：宽 ${M9_BITMAP_WIDTH}，高 ${height}`)
+  return bitmap
+}
+
+export async function runM9ImageBruteForceSuite(device?: BluetoothPrinterDevice | null) {
+  const target = normalizePrinter(device) || getSavedPrinter()
+  if (!target) {
+    throw new Error('请先在蓝牙打印页面选择打印机')
+  }
+  if (!formatPrinterName(target.name).includes('M9')) {
+    throw new Error('当前仅对 M9 做图片暴力测试')
+  }
+
+  const strategy = getStrategyById(getSavedPrinterTransportStrategyId())
+  const variants = [
+    { id: 'image-only', label: '图片直发', queryAll: false, density: '', tail: false },
+    { id: 'native-density-image-tail', label: '原生浓度 + 图片 + 收尾', queryAll: false, density: NATIVE_M9_DENSITY_NORMAL, tail: true },
+    { id: 'density-11-image', label: '11 + 图片', queryAll: false, density: OFFICIAL_DENSITY_G_NORMAL, tail: false },
+    { id: 'all-density-11-image', label: '10040A + 11 + 图片', queryAll: true, density: OFFICIAL_DENSITY_G_NORMAL, tail: false },
+    { id: 'density-11-image-tail', label: '11 + 图片 + 收尾', queryAll: false, density: OFFICIAL_DENSITY_G_NORMAL, tail: true },
+    { id: 'all-density-11-image-tail', label: '10040A + 11 + 图片 + 收尾', queryAll: true, density: OFFICIAL_DENSITY_G_NORMAL, tail: true },
+    { id: 'long-density-image-tail', label: '长浓度 + 图片 + 收尾', queryAll: false, density: OFFICIAL_DENSITY_NORMAL, tail: true },
+  ]
+
+  let bitmap: any = null
+  try {
+    bitmap = await renderM9ProbeBitmap()
+    appendLog('info', `开始 M9 图片暴力测试：${target.name}，共 ${variants.length} 组`)
+
+    for (const variant of variants) {
+      let socket: any = null
+      let outputStream: any = null
+      let inputStream: any = null
+      try {
+        appendLog('info', `M9 图片暴力测试：${variant.label}`)
+        socket = await openPrinterSocket(target, strategy)
+        const plusApi = ensureAndroidApp()
+        outputStream = plusApi.android.invoke(socket, 'getOutputStream')
+        inputStream = plusApi.android.invoke(socket, 'getInputStream')
+
+        if (variant.queryAll) {
+          await sendOfficialHandshakeStep({
+            inputStream,
+            label: '图片前查询 ALL',
+            outputStream,
+            payload: OFFICIAL_DEVICE_INFO_ALL,
+            strategy,
+            waitAfterMs: DEFAULT_CLASSIC_HANDSHAKE_GAP,
+            readTimeoutMs: 1000,
+          })
+        }
+        if (variant.density) {
+          appendLog('info', `图片前浓度发送：${variant.density}`)
+          await sendClassicPayload(outputStream, variant.density, 'hex', strategy, DEFAULT_CLASSIC_HANDSHAKE_GAP)
+        }
+
+        await sendM9BitmapFrames(outputStream, bitmap)
+
+        if (variant.tail) {
+          await sendClassicPayload(outputStream, OFFICIAL_NEWLINE_G, 'hex', strategy, DEFAULT_CLASSIC_HANDSHAKE_GAP)
+          await sleep(M9_POST_PRINT_SETTLE_MS)
+          await sendOfficialHandshakeStep({
+            inputStream,
+            label: `图片后状态查询 ${variant.label}`,
+            outputStream,
+            payload: OFFICIAL_STATUS_QUERY,
+            strategy,
+            waitAfterMs: DEFAULT_CLASSIC_HANDSHAKE_GAP,
+            readTimeoutMs: 2400,
+          })
+        } else if (inputStream) {
+          await logClassicReply(inputStream, `图片回包 ${variant.label}`, 1200)
+        }
+
+        appendLog('info', `M9 图片暴力测试完成：${variant.label}`)
+      } catch (error: any) {
+        appendLog('warn', `M9 图片暴力测试失败 ${variant.label}：${error?.message || '未知错误'}`)
+      } finally {
+        safeClose(inputStream)
+        safeClose(outputStream)
+        safeClose(socket)
+      }
+    }
+
+    savePrinter(target)
+    appendLog('info', `M9 图片暴力测试结束：${target.name}`)
+  } finally {
+    safeClose(bitmap)
+  }
+}
+
 async function printTextAsM9Bitmap(text: string, device: BluetoothPrinterDevice, strategy: BluetoothPrinterStrategy) {
   let socket: any = null
   let outputStream: any = null
@@ -1292,24 +1440,15 @@ async function printTextAsM9Bitmap(text: string, device: BluetoothPrinterDevice,
 
   try {
     appendLog('info', `开始 M9 私有位图打印：${device.name}`)
+    appendLog('info', 'M9 原生打印顺序：secure-spp-uuid -> 原生浓度包 -> 1F0105图片帧 -> 0A0A0A -> 1F0106')
     socket = await openPrinterSocket(device, strategy)
     const plusApi = ensureAndroidApp()
     outputStream = plusApi.android.invoke(socket, 'getOutputStream')
     inputStream = plusApi.android.invoke(socket, 'getInputStream')
     bitmap = await renderM9ReceiptBitmap(text)
 
-    await sendOfficialHandshakeStep({
-      inputStream,
-      label: 'M9 打印前查询 ALL',
-      outputStream,
-      payload: OFFICIAL_DEVICE_INFO_ALL,
-      strategy,
-      waitAfterMs: DEFAULT_CLASSIC_HANDSHAKE_GAP,
-      readTimeoutMs: 800,
-    })
-    appendLog('info', `M9 打印前浓度 G组：${OFFICIAL_DENSITY_G_NORMAL}`)
-    await sendClassicPayload(outputStream, OFFICIAL_DENSITY_G_NORMAL, 'hex', strategy, DEFAULT_CLASSIC_HANDSHAKE_GAP)
-
+    appendLog('info', `M9 打印前原生浓度：${NATIVE_M9_DENSITY_NORMAL}`)
+    await sendClassicPayload(outputStream, NATIVE_M9_DENSITY_NORMAL, 'hex', strategy, DEFAULT_CLASSIC_HANDSHAKE_GAP)
     await sendM9BitmapFrames(outputStream, bitmap)
     await sendClassicPayload(outputStream, OFFICIAL_NEWLINE_G, 'hex', strategy, DEFAULT_CLASSIC_HANDSHAKE_GAP)
     await sleep(M9_POST_PRINT_SETTLE_MS)
@@ -1897,6 +2036,18 @@ export async function runPrinterConnectionSweep(device?: BluetoothPrinterDevice 
   }
 
   const strategy = getStrategyById(getSavedPrinterTransportStrategyId())
+  if (isM9GGroupDevice(target)) {
+    let socket: any = null
+    try {
+      appendLog('info', `M9 已固定使用 secure-spp-uuid，跳过连接爆破：${target.name}`)
+      socket = await openPrinterSocket(target, strategy)
+      appendLog('info', 'M9 固定 SPP 连接验证成功：secure-spp-uuid')
+      return 'secure-spp-uuid'
+    } finally {
+      safeClose(socket)
+    }
+  }
+
   const UUID = ensureAndroidApp().android.importClass('java.util.UUID')
   const uuid = UUID.fromString(SPP_UUID)
   const { plusApi, adapter } = await ensureBluetoothEnabled()
@@ -1996,12 +2147,15 @@ async function openPrinterSocket(device: BluetoothPrinterDevice, strategy: Bluet
 
   const UUID = plusApi.android.importClass('java.util.UUID')
   const remoteDevice = plusApi.android.invoke(adapter, 'getRemoteDevice', device.address)
+  if (!remoteDevice) {
+    throw new Error(`未找到蓝牙设备：${formatPrinterName(device.name)}`)
+  }
   const uuid = UUID.fromString(SPP_UUID)
 
   if (isM9GGroupDevice(device)) {
     let socket: any = null
     try {
-      appendLog('info', `M9 按 Testbluetooth 基线路径连接：secure-spp-uuid`)
+      appendLog('info', 'M9 使用 Testbluetooth 固定连接顺序：cancelDiscovery -> getRemoteDevice -> createRfcommSocketToServiceRecord -> connect')
       socket = plusApi.android.invoke(remoteDevice, 'createRfcommSocketToServiceRecord', uuid)
       plusApi.android.invoke(socket, 'connect')
       await sleep(strategy.connectDelay)
@@ -2009,9 +2163,9 @@ async function openPrinterSocket(device: BluetoothPrinterDevice, strategy: Bluet
       appendLog('info', 'M9 基线连接成功：secure-spp-uuid')
       return socket
     } catch (error: any) {
-      appendLog('warn', `M9 基线连接失败：${error?.message || '未知错误'}`)
+      appendLog('error', `M9 Testbluetooth 基线连接失败：${error?.message || '未知错误'}`)
       safeClose(socket)
-      await sleep(120)
+      throw new Error(error?.message || `无法连接打印机：${formatPrinterName(device.name)}`)
     }
   }
 
