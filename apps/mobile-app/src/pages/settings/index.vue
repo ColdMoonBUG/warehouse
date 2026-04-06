@@ -68,6 +68,9 @@
         <view class="menu-item" v-if="!isAdmin" @tap="goStoreAdd">
           <text class="menu-text">新增超市</text>
         </view>
+        <view class="menu-item" @tap="goPrinter">
+          <text class="menu-text">蓝牙打印</text>
+        </view>
         <view class="menu-item" @tap="goStock">
           <text class="menu-text">库存查询</text>
         </view>
@@ -220,6 +223,10 @@ function goProduct() {
 function goSupplier() {
   if (!userStore.isAdmin) return
   uni.navigateTo({ url: '/pages/admin/supplier/index' })
+}
+
+function goPrinter() {
+  uni.navigateTo({ url: '/pages/settings/printer' })
 }
 
 function goStock() {

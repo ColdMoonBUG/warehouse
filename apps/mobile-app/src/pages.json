@@ -92,6 +92,13 @@
       }
     },
     {
+      "path": "pages/settings/printer",
+      "style": {
+        "navigationBarTitleText": "蓝牙打印",
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/settings/stock",
       "style": {
         "navigationBarTitleText": "库存查询",

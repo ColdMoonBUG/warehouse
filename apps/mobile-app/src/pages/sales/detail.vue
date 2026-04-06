@@ -52,6 +52,7 @@ import { onLoad } from '@dcloudio/uni-app'
 import { getSaleDetail, getStores, getSalespersonAccounts, getProducts, voidSale, isSameSalespersonId } from '@/api'
 import type { SaleDoc, Store, Salesperson, Product } from '@/types'
 import { getPageQueryParam, formatPackSummary, normalizeCount } from '@/utils'
+import { buildSaleReceipt, printText } from '@/utils/bluetooth-printer'
 
 async function voidDoc() {
   if (!doc.value) return
@@ -99,8 +100,28 @@ function lineQtyText(line: { productId: string; qty: number; boxQty?: number }) 
   return formatPackSummary(normalizeCount(line.qty), normalizeCount(line.boxQty), packQty)
 }
 
-function printSale() {
-  uni.showToast({ title: '打印功能待接入蓝牙', icon: 'none' })
+async function printSale() {
+  if (!doc.value) return
+  try {
+    const receipt = buildSaleReceipt(doc.value, storeName.value, salespersonName.value, products.value)
+    await printText(receipt)
+    uni.showToast({ title: '小票已发送', icon: 'success' })
+  } catch (error: any) {
+    const message = error?.message || '打印失败'
+    if (message.includes('请先在蓝牙打印页面选择打印机')) {
+      uni.showModal({
+        title: '未选择打印机',
+        content: '请先到设置里的蓝牙打印页面选择打印机并打印测试页。',
+        success: (res) => {
+          if (res.confirm) {
+            uni.navigateTo({ url: '/pages/settings/printer' })
+          }
+        },
+      })
+      return
+    }
+    uni.showToast({ title: message, icon: 'none' })
+  }
 }
 
 async function loadDetail() {
