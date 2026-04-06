@@ -119,13 +119,17 @@ const DEFAULT_CLASSIC_READ_TIMEOUT = 1200
 const DEFAULT_CLASSIC_HANDSHAKE_GAP = 220
 const OFFICIAL_STATUS_ACK = '1F010506'
 const OFFICIAL_DENSITY_NORMAL = '1B401FFD0101101FFD01023C1FFD0103011FFD0104021FFD0105021FFD010600'
+const OFFICIAL_DENSITY_G_NORMAL = '11'
 const OFFICIAL_STATUS_QUERY = '1F0106'
 const OFFICIAL_DEVICE_INFO_ALL = '10040A'
 const OFFICIAL_WAKE_COMMAND = '1F010700'
 const OFFICIAL_NEWLINE_G = '0A0A0A'
 const M9_BITMAP_WIDTH = 1680
 const M9_FRAME_HEIGHT = 40
+const M9_WORD_FRAME_HEIGHT = 50
 const M9_FRAME_THROTTLE_MS = 60
+const M9_POST_PRINT_SETTLE_MS = 1200
+const M9_WORD_THRESHOLD = 160
 const M9_TEXT_FONT_SIZE = 64
 const M9_TEXT_LINE_HEIGHT = 88
 const M9_TEXT_PADDING_X = 88
@@ -172,8 +176,8 @@ const CLASSIC_COMPATIBILITY_CASES: BluetoothClassicCompatibilityCase[] = [
     label: '官方换行 G组',
     protocol: 'plain-text',
     writeMode: 'hex',
-    payload: '0A',
-    description: 'M9/M10 这类 G 组机型常见单换行收尾',
+    payload: '0A0A0A',
+    description: 'M9/M10 这类 G 组机型常见三次换行收尾',
     waitAfterMs: 200,
   },
   {
@@ -1205,7 +1209,7 @@ function bitmapToM9MonoBytes(bitmap: any) {
   const height = Number(plusApi.android.invoke(bitmap, 'getHeight') || 0)
   const pixels = plusApi.android.newObject('int[]', width * height)
   plusApi.android.invoke(bitmap, 'getPixels', pixels, 0, width, 0, 0, width, height)
-  const output = new Uint8Array(width * height)
+  const mono = new Uint8Array(width * height)
 
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
@@ -1214,11 +1218,11 @@ function bitmapToM9MonoBytes(bitmap: any) {
       const green = (color >> 8) & 0xff
       const blue = color & 0xff
       const gray = Math.round(red * 0.299 + green * 0.587 + blue * 0.114)
-      output[y * width + x] = gray <= 180 ? 0 : 255
+      mono[y * width + x] = gray <= M9_WORD_THRESHOLD ? 0 : 255
     }
   }
 
-  return { bytes: output, width, height }
+  return { bytes: mono, width, height }
 }
 
 function packM9FrameRows(mono: Uint8Array, width: number, height: number) {
@@ -1262,7 +1266,8 @@ async function sendM9BitmapFrames(outputStream: any, bitmap: any) {
   const frameBytesLength = bytesPerRow * M9_FRAME_HEIGHT
   const frameCount = Math.ceil(height / M9_FRAME_HEIGHT)
 
-  appendLog('info', `M9 位图发送：宽 ${width}，高 ${height}，共 ${frameCount} 帧`)
+  appendLog('info', `M9 位图发送：宽 ${width}，高 ${height}，共 ${frameCount} 帧，总长 ${packed.length} 字节`)
+  appendLog('warn', '当前仍未复现原厂 JBIG 压缩，先按未压缩 1F0105 帧发送')
 
   for (let index = 0; index < frameCount; index += 1) {
     const start = index * frameBytesLength
@@ -1302,18 +1307,12 @@ async function printTextAsM9Bitmap(text: string, device: BluetoothPrinterDevice,
       waitAfterMs: DEFAULT_CLASSIC_HANDSHAKE_GAP,
       readTimeoutMs: 800,
     })
-    await sendOfficialHandshakeStep({
-      inputStream,
-      label: 'M9 打印前浓度 NORMAL',
-      outputStream,
-      payload: OFFICIAL_DENSITY_NORMAL,
-      strategy,
-      waitAfterMs: DEFAULT_CLASSIC_HANDSHAKE_GAP,
-      readTimeoutMs: 700,
-    })
+    appendLog('info', `M9 打印前浓度 G组：${OFFICIAL_DENSITY_G_NORMAL}`)
+    await sendClassicPayload(outputStream, OFFICIAL_DENSITY_G_NORMAL, 'hex', strategy, DEFAULT_CLASSIC_HANDSHAKE_GAP)
 
     await sendM9BitmapFrames(outputStream, bitmap)
     await sendClassicPayload(outputStream, OFFICIAL_NEWLINE_G, 'hex', strategy, DEFAULT_CLASSIC_HANDSHAKE_GAP)
+    await sleep(M9_POST_PRINT_SETTLE_MS)
     await sendOfficialHandshakeStep({
       inputStream,
       label: 'M9 打印后状态查询',
@@ -1321,7 +1320,7 @@ async function printTextAsM9Bitmap(text: string, device: BluetoothPrinterDevice,
       payload: OFFICIAL_STATUS_QUERY,
       strategy,
       waitAfterMs: DEFAULT_CLASSIC_HANDSHAKE_GAP,
-      readTimeoutMs: 1800,
+      readTimeoutMs: 2400,
     })
 
     savePrinter(device)
