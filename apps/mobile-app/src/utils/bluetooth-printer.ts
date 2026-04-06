@@ -84,6 +84,12 @@ export interface BluetoothClassicCompatibilityCase {
   waitAfterMs?: number
 }
 
+export interface BluetoothClassicReadResult {
+  hex: string
+  text: string
+  length: number
+}
+
 interface BluetoothPrinterStrategy extends BluetoothPrinterStrategyOption {
   encoding: 'GB18030' | 'GBK' | 'GB2312'
   lineEnding: '\r\n' | '\n'
@@ -109,6 +115,14 @@ const SPP_UUID = '00001101-0000-1000-8000-00805F9B34FB'
 const DEFAULT_BLE_SCAN_MS = 4000
 const DEFAULT_BLE_MTU = 180
 const DEFAULT_BLE_VALUE_TIMEOUT = 3000
+const DEFAULT_CLASSIC_READ_TIMEOUT = 1200
+const DEFAULT_CLASSIC_HANDSHAKE_GAP = 220
+const OFFICIAL_STATUS_ACK = '1F010506'
+const OFFICIAL_DENSITY_NORMAL = '1B401FFD0101101FFD01023C1FFD0103011FFD0104021FFD0105021FFD010600'
+const OFFICIAL_STATUS_QUERY = '1F0106'
+const OFFICIAL_DEVICE_INFO_ALL = '10040A'
+const OFFICIAL_WAKE_COMMAND = '1F010700'
+const OFFICIAL_NEWLINE_G = '0A'
 const CLASSIC_COMPATIBILITY_CASES: BluetoothClassicCompatibilityCase[] = [
   {
     id: 'official-device-info-all',
@@ -957,6 +971,67 @@ function formatRawPayloadForLog(payload: string, writeMode: BluetoothClassicWrit
   return JSON.stringify(payload)
 }
 
+function summarizeClassicRead(value: BluetoothClassicReadResult) {
+  const parts = [`${value.length}字节`]
+  if (value.hex) parts.push(`HEX ${truncateText(value.hex, 72)}`)
+  if (value.text) parts.push(`文本 ${truncateText(value.text.replace(/\s+/g, ' '), 40)}`)
+  return parts.join(' · ')
+}
+
+function normalizeClassicRead(bytes: number[]): BluetoothClassicReadResult {
+  return {
+    hex: bytesToHex(bytes).replace(/\s+/g, ''),
+    text: bytesToText(bytes),
+    length: bytes.length,
+  }
+}
+
+async function readClassicInput(inputStream: any, timeoutMs = DEFAULT_CLASSIC_READ_TIMEOUT) {
+  if (!inputStream) {
+    return null
+  }
+  const plusApi = ensureAndroidApp()
+  const startedAt = Date.now()
+  let availableAtRead = 0
+
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      availableAtRead = Number(plusApi.android.invoke(inputStream, 'available') || 0)
+    } catch {
+      availableAtRead = 0
+    }
+    if (availableAtRead > 0) break
+    await sleep(60)
+  }
+
+  if (availableAtRead <= 0) {
+    return null
+  }
+
+  const byteArray = plusApi.android.newObject('byte[]', Math.max(availableAtRead, 256))
+  const readLength = Number(plusApi.android.invoke(inputStream, 'read', byteArray) || 0)
+  if (readLength <= 0) {
+    return null
+  }
+
+  const bytes: number[] = []
+  for (let index = 0; index < readLength; index += 1) {
+    bytes.push((Number(byteArray[index]) + 256) % 256)
+  }
+  return normalizeClassicRead(bytes)
+}
+
+async function logClassicReply(inputStream: any, context: string, timeoutMs = DEFAULT_CLASSIC_READ_TIMEOUT) {
+  const result = await readClassicInput(inputStream, timeoutMs)
+  if (!result) {
+    appendLog('warn', `${context}：未读到设备回包`)
+    return null
+  }
+  const ackTag = result.hex.toUpperCase().includes(OFFICIAL_STATUS_ACK) ? ' · 命中 ACK' : ''
+  appendLog('info', `${context}：${summarizeClassicRead(result)}${ackTag}`)
+  return result
+}
+
 function getClassicCompatibilityCaseById(id?: string | null) {
   return CLASSIC_COMPATIBILITY_CASES.find(item => item.id === id) || CLASSIC_COMPATIBILITY_CASES[0]
 }
@@ -1053,6 +1128,39 @@ async function writeTextWithPacing(outputStream: any, text: string, strategy: Bl
     plusApi.android.invoke(outputStream, 'flush')
     await sleep(chunk === strategy.lineEnding ? strategy.blankDelay : strategy.chunkDelay)
   }
+}
+
+async function sendClassicPayload(
+  outputStream: any,
+  payload: string,
+  writeMode: BluetoothClassicWriteMode,
+  strategy: BluetoothPrinterStrategy,
+  waitAfterMs?: number,
+) {
+  const plusApi = ensureAndroidApp()
+  if (writeMode === 'hex') {
+    const bytes = arrayBufferToByteArray(hexToArrayBuffer(payload))
+    await writeRawBytes(outputStream, bytes, waitAfterMs || strategy.chunkDelay)
+    return
+  }
+  const bytes = toPrinterBytes(payload, strategy.encoding)
+  plusApi.android.invoke(outputStream, 'write', bytes, 0, bytes.length)
+  plusApi.android.invoke(outputStream, 'flush')
+  await sleep(waitAfterMs || strategy.chunkDelay)
+}
+
+async function sendOfficialHandshakeStep(options: {
+  inputStream: any
+  label: string
+  outputStream: any
+  payload: string
+  readTimeoutMs?: number
+  strategy: BluetoothPrinterStrategy
+  waitAfterMs?: number
+}) {
+  appendLog('info', `${options.label} 发送：${options.payload}`)
+  await sendClassicPayload(options.outputStream, options.payload, 'hex', options.strategy, options.waitAfterMs)
+  return logClassicReply(options.inputStream, `${options.label} 回包`, options.readTimeoutMs || DEFAULT_CLASSIC_READ_TIMEOUT)
 }
 
 export function getSavedPrinter() {
@@ -1390,23 +1498,20 @@ export async function runClassicPrinterCompatibilitySuite(device?: BluetoothPrin
   for (const strategy of strategyOrder) {
     let socket: any = null
     let outputStream: any = null
+    let inputStream: any = null
     try {
       appendLog('info', `开始经典蓝牙兼容测试：${target.name}，策略 ${strategy.label}，共 ${CLASSIC_COMPATIBILITY_CASES.length} 组`)
       socket = await openPrinterSocket(target, strategy)
       const plusApi = ensureAndroidApp()
       outputStream = plusApi.android.invoke(socket, 'getOutputStream')
+      inputStream = plusApi.android.invoke(socket, 'getInputStream')
 
       for (const testCase of CLASSIC_COMPATIBILITY_CASES) {
         appendLog('info', `经典兼容测试：${testCase.label} · ${testCase.protocol} · ${testCase.description}`)
         appendLog('info', `经典兼容测试载荷：${formatRawPayloadForLog(testCase.payload, testCase.writeMode)}`)
-        if (testCase.writeMode === 'hex') {
-          const bytes = arrayBufferToByteArray(hexToArrayBuffer(testCase.payload))
-          await writeRawBytes(outputStream, bytes, testCase.waitAfterMs || strategy.chunkDelay)
-        } else {
-          const bytes = toPrinterBytes(testCase.payload, strategy.encoding)
-          plusApi.android.invoke(outputStream, 'write', bytes, 0, bytes.length)
-          plusApi.android.invoke(outputStream, 'flush')
-          await sleep(testCase.waitAfterMs || strategy.chunkDelay)
+        await sendClassicPayload(outputStream, testCase.payload, testCase.writeMode, strategy, testCase.waitAfterMs)
+        if (inputStream) {
+          await logClassicReply(inputStream, `经典兼容测试回包 ${testCase.label}`, Math.max(testCase.waitAfterMs || 0, DEFAULT_CLASSIC_READ_TIMEOUT))
         }
       }
 
@@ -1419,6 +1524,7 @@ export async function runClassicPrinterCompatibilitySuite(device?: BluetoothPrin
       lastError = error
       appendLog('warn', `经典蓝牙兼容测试失败 ${strategy.label}：${error?.message || '未知错误'}`)
     } finally {
+      safeClose(inputStream)
       safeClose(outputStream)
       safeClose(socket)
     }
@@ -1441,27 +1547,109 @@ export async function runSingleClassicCompatibilityCase(options: {
   const testCase = getClassicCompatibilityCaseById(options.caseId)
   let socket: any = null
   let outputStream: any = null
+  let inputStream: any = null
 
   try {
     appendLog('info', `开始单项测试：${testCase.label} · ${testCase.protocol} · ${testCase.description}`)
     socket = await openPrinterSocket(target, strategy)
     const plusApi = ensureAndroidApp()
     outputStream = plusApi.android.invoke(socket, 'getOutputStream')
+    inputStream = plusApi.android.invoke(socket, 'getInputStream')
     appendLog('info', `单项测试载荷：${formatRawPayloadForLog(testCase.payload, testCase.writeMode)}`)
-
-    if (testCase.writeMode === 'hex') {
-      const bytes = arrayBufferToByteArray(hexToArrayBuffer(testCase.payload))
-      await writeRawBytes(outputStream, bytes, testCase.waitAfterMs || strategy.chunkDelay)
-    } else {
-      const bytes = toPrinterBytes(testCase.payload, strategy.encoding)
-      plusApi.android.invoke(outputStream, 'write', bytes, 0, bytes.length)
-      plusApi.android.invoke(outputStream, 'flush')
-      await sleep(testCase.waitAfterMs || strategy.chunkDelay)
+    await sendClassicPayload(outputStream, testCase.payload, testCase.writeMode, strategy, testCase.waitAfterMs)
+    if (inputStream) {
+      await logClassicReply(inputStream, `单项测试回包 ${testCase.label}`, Math.max(testCase.waitAfterMs || 0, DEFAULT_CLASSIC_READ_TIMEOUT))
     }
-
     appendLog('info', `单项测试完成：${testCase.label}`)
     return testCase.id
   } finally {
+    safeClose(inputStream)
+    safeClose(outputStream)
+    safeClose(socket)
+  }
+}
+
+export async function runOfficialM9Handshake(device?: BluetoothPrinterDevice | null) {
+  const target = normalizePrinter(device) || getSavedPrinter()
+  if (!target) {
+    throw new Error('请先在蓝牙打印页面选择打印机')
+  }
+
+  const strategy = getStrategyById(getSavedPrinterTransportStrategyId())
+  let socket: any = null
+  let outputStream: any = null
+  let inputStream: any = null
+
+  try {
+    appendLog('info', `开始官方 M9 握手：${target.name}`)
+    socket = await openPrinterSocket(target, strategy)
+    const plusApi = ensureAndroidApp()
+    outputStream = plusApi.android.invoke(socket, 'getOutputStream')
+    inputStream = plusApi.android.invoke(socket, 'getInputStream')
+
+    if (!inputStream) {
+      appendLog('warn', '当前连接未拿到 InputStream，回包日志可能缺失')
+    }
+
+    await sendOfficialHandshakeStep({
+      inputStream,
+      label: '官方查询 ALL',
+      outputStream,
+      payload: OFFICIAL_DEVICE_INFO_ALL,
+      strategy,
+      waitAfterMs: DEFAULT_CLASSIC_HANDSHAKE_GAP,
+      readTimeoutMs: 1500,
+    })
+
+    await sendOfficialHandshakeStep({
+      inputStream,
+      label: '官方唤醒命令',
+      outputStream,
+      payload: OFFICIAL_WAKE_COMMAND,
+      strategy,
+      waitAfterMs: DEFAULT_CLASSIC_HANDSHAKE_GAP,
+      readTimeoutMs: 900,
+    })
+
+    await sendOfficialHandshakeStep({
+      inputStream,
+      label: '官方浓度 NORMAL',
+      outputStream,
+      payload: OFFICIAL_DENSITY_NORMAL,
+      strategy,
+      waitAfterMs: DEFAULT_CLASSIC_HANDSHAKE_GAP,
+      readTimeoutMs: 900,
+    })
+
+    await sendOfficialHandshakeStep({
+      inputStream,
+      label: '官方换行 G组',
+      outputStream,
+      payload: OFFICIAL_NEWLINE_G,
+      strategy,
+      waitAfterMs: DEFAULT_CLASSIC_HANDSHAKE_GAP,
+      readTimeoutMs: 900,
+    })
+
+    const statusReply = await sendOfficialHandshakeStep({
+      inputStream,
+      label: '官方状态查询',
+      outputStream,
+      payload: OFFICIAL_STATUS_QUERY,
+      strategy,
+      waitAfterMs: DEFAULT_CLASSIC_HANDSHAKE_GAP,
+      readTimeoutMs: 1800,
+    })
+
+    savePrinter(target)
+    if (statusReply?.hex?.toUpperCase().includes(OFFICIAL_STATUS_ACK)) {
+      appendLog('info', '官方 M9 握手完成：收到 ACK，可继续测试主打印帧')
+    } else {
+      appendLog('warn', '官方 M9 握手完成：未命中 ACK，请结合蓝灯状态和日志继续判断')
+    }
+    return statusReply
+  } finally {
+    safeClose(inputStream)
     safeClose(outputStream)
     safeClose(socket)
   }

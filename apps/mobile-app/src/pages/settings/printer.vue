@@ -77,6 +77,9 @@
           <button class="btn primary" :disabled="testing" @tap="printTest">
             {{ testing ? '正在打印...' : '打印测试页' }}
           </button>
+          <button class="btn ghost" :disabled="officialHandshaking" @tap="runOfficialHandshake">
+            {{ officialHandshaking ? '握手中...' : '官方 M9 握手' }}
+          </button>
           <button class="btn ghost" :disabled="connectingSweep" @tap="runConnectionSweep">
             {{ connectingSweep ? '连接爆破中...' : '爆破连接' }}
           </button>
@@ -86,6 +89,9 @@
           <button class="btn ghost" :disabled="inspecting" @tap="inspectBle">
             {{ inspecting ? '正在探测 BLE...' : '探测 BLE 服务' }}
           </button>
+        </view>
+        <view class="handshake-tip">
+          <text class="device-meta">按官方顺序发送 10040A → 1F010700 → 浓度初始化 → 0A → 1F0106，并记录回包。</text>
         </view>
         <view class="classic-case-list">
           <text class="ble-selected-title">M9 爆破清单</text>
@@ -215,6 +221,7 @@ import {
   readBlePrinterCharacteristic,
   runBlePrinterCompatibilitySuite,
   runClassicPrinterCompatibilitySuite,
+  runOfficialM9Handshake,
   runPrinterConnectionSweep,
   runSingleClassicCompatibilityCase,
   savePrinter,
@@ -241,6 +248,7 @@ import { useUserStore } from '@/store/user'
 const userStore = useUserStore()
 const loading = ref(false)
 const testing = ref(false)
+const officialHandshaking = ref(false)
 const classicTesting = ref(false)
 const singleCaseTestingId = ref('')
 const connectingSweep = ref(false)
@@ -441,6 +449,24 @@ async function runClassicSuite() {
     uni.showToast({ title: error?.message || 'M9 爆破失败', icon: 'none' })
   } finally {
     classicTesting.value = false
+  }
+}
+
+async function runOfficialHandshake() {
+  if (!selectedPrinter.value) {
+    uni.showToast({ title: '请先选择打印机', icon: 'none' })
+    return
+  }
+  officialHandshaking.value = true
+  try {
+    const reply = await runOfficialM9Handshake(selectedPrinter.value)
+    refreshLogs()
+    uni.showToast({ title: reply?.hex?.includes('1F010506') ? '已收到 ACK' : '握手已发送', icon: 'success' })
+  } catch (error: any) {
+    refreshLogs()
+    uni.showToast({ title: error?.message || '官方握手失败', icon: 'none' })
+  } finally {
+    officialHandshaking.value = false
   }
 }
 
@@ -820,7 +846,8 @@ onShow(async () => {
 
 .ble-case-list,
 .ble-log-file,
-.classic-case-list {
+.classic-case-list,
+.handshake-tip {
   border-top: 2rpx solid #f1f5f9;
   padding-top: 18rpx;
   margin-top: 18rpx;
