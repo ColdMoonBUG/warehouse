@@ -24,6 +24,21 @@
       <view class="card">
         <view class="card-head">
           <view>
+            <text class="card-title">连接协议</text>
+            <text class="card-sub">M9 优先选 SPP，再试 RFCOMM Channel 3</text>
+          </view>
+        </view>
+        <picker mode="selector" :range="transportOptions" range-key="label" :value="transportIndex" @change="onTransportChange">
+          <view class="picker">
+            <text>{{ selectedTransport?.label || '请选择连接协议' }}</text>
+          </view>
+        </picker>
+        <view v-if="selectedTransport" class="strategy-desc">{{ selectedTransport.description }}</view>
+      </view>
+
+      <view class="card">
+        <view class="card-head">
+          <view>
             <text class="card-title">兼容策略</text>
             <text class="card-sub">打印失败时可切换不同编码和命令方案</text>
           </view>
@@ -61,6 +76,9 @@
         <view class="debug-actions">
           <button class="btn primary" :disabled="testing" @tap="printTest">
             {{ testing ? '正在打印...' : '打印测试页' }}
+          </button>
+          <button class="btn ghost" :disabled="connectingSweep" @tap="runConnectionSweep">
+            {{ connectingSweep ? '连接爆破中...' : '爆破连接' }}
           </button>
           <button class="btn ghost" :disabled="classicTesting" @tap="runClassicSuite">
             {{ classicTesting ? '爆破中...' : '爆破 M9 协议' }}
@@ -180,8 +198,10 @@ import {
   getBluetoothPrinterLogFilePath,
   getBluetoothPrinterLogs,
   getClassicCompatibilityCases,
+  getPrinterTransportOptions,
   getPrinterTransportStrategies,
   getSavedPrinter,
+  getSavedPrinterTransportId,
   getSavedPrinterTransportStrategyId,
   inspectBlePrinter,
   listBlePrinterDiagnosticsDevices,
@@ -192,7 +212,9 @@ import {
   readBlePrinterCharacteristic,
   runBlePrinterCompatibilitySuite,
   runClassicPrinterCompatibilitySuite,
+  runPrinterConnectionSweep,
   savePrinter,
+  savePrinterTransportId,
   savePrinterTransportStrategy,
   setBlePrinterCharacteristicNotify,
   writeBlePrinterCharacteristic,
@@ -208,6 +230,7 @@ import type {
   BluetoothPrinterDevice,
   BluetoothPrinterRuntimeLog,
   BluetoothPrinterStrategyOption,
+  BluetoothPrinterTransportOption,
 } from '@/utils/bluetooth-printer'
 import { useUserStore } from '@/store/user'
 
@@ -215,6 +238,7 @@ const userStore = useUserStore()
 const loading = ref(false)
 const testing = ref(false)
 const classicTesting = ref(false)
+const connectingSweep = ref(false)
 const inspecting = ref(false)
 const probingBle = ref(false)
 const bleLoading = ref(false)
@@ -234,15 +258,23 @@ const bleLastValue = ref<BluetoothBleValueResult | null>(null)
 const bleCompatibilityCases = ref<BluetoothBleCompatibilityCase[]>(getBleCompatibilityCases())
 const classicCompatibilityCases = ref<BluetoothClassicCompatibilityCase[]>(getClassicCompatibilityCases())
 const logFilePath = getBluetoothPrinterLogFilePath()
+const transportOptions = ref<BluetoothPrinterTransportOption[]>(getPrinterTransportOptions())
+const selectedTransportId = ref(getSavedPrinterTransportId())
 const strategyOptions = ref<BluetoothPrinterStrategyOption[]>(getPrinterTransportStrategies())
 const selectedStrategyId = ref(getSavedPrinterTransportStrategyId())
 const logs = ref<BluetoothPrinterRuntimeLog[]>(getBluetoothPrinterLogs())
+
+const transportIndex = computed(() => {
+  const index = transportOptions.value.findIndex(item => item.id === selectedTransportId.value)
+  return index >= 0 ? index : 0
+})
 
 const strategyIndex = computed(() => {
   const index = strategyOptions.value.findIndex(item => item.id === selectedStrategyId.value)
   return index >= 0 ? index : 0
 })
 
+const selectedTransport = computed(() => transportOptions.value[transportIndex.value] || null)
 const selectedStrategy = computed(() => strategyOptions.value[strategyIndex.value] || null)
 const selectedBleDevice = computed(() => bleDevices.value.find(item => item.deviceId === selectedBleDeviceId.value) || null)
 const bleWriteModeOptions = ['文本', 'HEX']
@@ -341,6 +373,15 @@ function onStrategyChange(e: any) {
   uni.showToast({ title: `已切换：${next.label}`, icon: 'none' })
 }
 
+function onTransportChange(e: any) {
+  const next = transportOptions.value[Number(e.detail.value)]
+  if (!next) return
+  savePrinterTransportId(next.id)
+  selectedTransportId.value = next.id
+  refreshLogs()
+  uni.showToast({ title: `协议：${next.label}`, icon: 'none' })
+}
+
 function clearLogs() {
   clearBluetoothPrinterLogs()
   refreshLogs()
@@ -395,6 +436,25 @@ async function runClassicSuite() {
     uni.showToast({ title: error?.message || 'M9 爆破失败', icon: 'none' })
   } finally {
     classicTesting.value = false
+  }
+}
+
+async function runConnectionSweep() {
+  if (!selectedPrinter.value) {
+    uni.showToast({ title: '请先选择打印机', icon: 'none' })
+    return
+  }
+  connectingSweep.value = true
+  try {
+    const result = await runPrinterConnectionSweep(selectedPrinter.value)
+    selectedTransportId.value = result
+    refreshLogs()
+    uni.showToast({ title: `连接成功：${result}`, icon: 'success' })
+  } catch (error: any) {
+    refreshLogs()
+    uni.showToast({ title: error?.message || '连接爆破失败', icon: 'none' })
+  } finally {
+    connectingSweep.value = false
   }
 }
 
@@ -555,6 +615,8 @@ onShow(async () => {
   }
   strategyOptions.value = getPrinterTransportStrategies()
   selectedStrategyId.value = getSavedPrinterTransportStrategyId()
+  transportOptions.value = getPrinterTransportOptions()
+  selectedTransportId.value = getSavedPrinterTransportId()
   refreshLogs()
   await loadDevices()
   await scanBleDevices()

@@ -19,6 +19,12 @@ export interface BluetoothPrinterStrategyOption {
   description: string
 }
 
+export interface BluetoothPrinterTransportOption {
+  id: string
+  label: string
+  description: string
+}
+
 export type BluetoothBleWriteMode = 'text' | 'hex'
 
 export interface BluetoothBleDevice {
@@ -96,6 +102,7 @@ interface BleValueWaiter {
 
 const STORAGE_KEY = 'mobile_bluetooth_printer_v1'
 const STRATEGY_STORAGE_KEY = 'mobile_bluetooth_printer_strategy_v1'
+const TRANSPORT_STORAGE_KEY = 'mobile_bluetooth_printer_transport_v1'
 const LOG_STORAGE_KEY = 'mobile_bluetooth_printer_logs_v1'
 const LOG_LIMIT = 400
 const SPP_UUID = '00001101-0000-1000-8000-00805F9B34FB'
@@ -264,6 +271,39 @@ const PRINTER_STRATEGIES: BluetoothPrinterStrategy[] = [
     blankDelay: 120,
     connectDelay: 260,
     initCommands: [],
+  },
+]
+
+const TRANSPORT_OPTIONS: BluetoothPrinterTransportOption[] = [
+  {
+    id: 'secure-spp-uuid',
+    label: 'SPP 安全连接',
+    description: '标准 createRfcommSocketToServiceRecord，优先用于 M9',
+  },
+  {
+    id: 'insecure-spp-uuid',
+    label: 'SPP 非安全连接',
+    description: '标准 SPP 非安全连接，兼容部分旧设备',
+  },
+  {
+    id: 'secure-channel-3',
+    label: 'RFCOMM 通道3',
+    description: '按抓包里的 Channel 3 直连',
+  },
+  {
+    id: 'insecure-channel-3',
+    label: 'RFCOMM 通道3 非安全',
+    description: '按 Channel 3 非安全直连',
+  },
+  {
+    id: 'secure-channel-1',
+    label: 'RFCOMM 通道1',
+    description: '旧设备常见兜底通道',
+  },
+  {
+    id: 'insecure-channel-1',
+    label: 'RFCOMM 通道1 非安全',
+    description: '旧设备常见兜底通道的非安全连接',
   },
 ]
 
@@ -835,6 +875,10 @@ function getStrategyById(id?: string | null) {
   return PRINTER_STRATEGIES.find(item => item.id === id) || PRINTER_STRATEGIES[0]
 }
 
+function getTransportOptionById(id?: string | null) {
+  return TRANSPORT_OPTIONS.find(item => item.id === id) || TRANSPORT_OPTIONS[0]
+}
+
 function buildStrategyOrder(preferredId?: string | null) {
   const preferred = getStrategyById(preferredId)
   return [preferred, ...PRINTER_STRATEGIES.filter(item => item.id !== preferred.id)]
@@ -850,14 +894,19 @@ function arrayBufferToByteArray(value: ArrayBuffer) {
   return Array.from(new Uint8Array(value)).map(item => item & 0xff)
 }
 
+function bytesToJavaByteArray(bytes: number[]) {
+  const plusApi = ensureAndroidApp()
+  const byteArray = plusApi.android.newObject('byte[]', bytes.length)
+  bytes.forEach((byte, index) => {
+    byteArray[index] = byte > 127 ? byte - 256 : byte
+  })
+  return byteArray
+}
+
 async function writeRawBytes(outputStream: any, bytes: number[], delay = 0) {
   const plusApi = ensureAndroidApp()
   if (bytes.length === 0) return
-  const Byte = plusApi.android.importClass('java.lang.Byte')
-  const byteArray = plusApi.android.newObject('byte[]', bytes.length)
-  bytes.forEach((byte, index) => {
-    byteArray[index] = Byte.$new(byte > 127 ? byte - 256 : byte)
-  })
+  const byteArray = bytesToJavaByteArray(bytes)
   plusApi.android.invoke(outputStream, 'write', byteArray, 0, bytes.length)
   plusApi.android.invoke(outputStream, 'flush')
   if (delay > 0) {
@@ -1007,6 +1056,25 @@ export function getBleCompatibilityCases() {
 
 export function getClassicCompatibilityCases() {
   return CLASSIC_COMPATIBILITY_CASES.map(item => ({ ...item }))
+}
+
+export function getPrinterTransportOptions(): BluetoothPrinterTransportOption[] {
+  return TRANSPORT_OPTIONS.map(item => ({ ...item }))
+}
+
+export function getSavedPrinterTransportId() {
+  try {
+    const raw = uni.getStorageSync(TRANSPORT_STORAGE_KEY)
+    return typeof raw === 'string' && raw ? getTransportOptionById(raw).id : TRANSPORT_OPTIONS[0].id
+  } catch {
+    return TRANSPORT_OPTIONS[0].id
+  }
+}
+
+export function savePrinterTransportId(transportId: string) {
+  const transport = getTransportOptionById(transportId)
+  uni.setStorageSync(TRANSPORT_STORAGE_KEY, transport.id)
+  appendLog('info', `已切换连接协议：${transport.label}`)
 }
 
 export async function listNearbyBlePrinters() {
@@ -1339,6 +1407,44 @@ export function savePrinterTransportStrategy(strategyId: string) {
   appendLog('info', `已切换兼容策略：${strategy.label}`)
 }
 
+export async function runPrinterConnectionSweep(device?: BluetoothPrinterDevice | null) {
+  const target = normalizePrinter(device) || getSavedPrinter()
+  if (!target) {
+    throw new Error('请先在蓝牙打印页面选择打印机')
+  }
+
+  const strategy = getStrategyById(getSavedPrinterTransportStrategyId())
+  const UUID = ensureAndroidApp().android.importClass('java.util.UUID')
+  const uuid = UUID.fromString(SPP_UUID)
+  const { plusApi, adapter } = await ensureBluetoothEnabled()
+  plusApi.android.invoke(adapter, 'cancelDiscovery')
+  const remoteDevice = plusApi.android.invoke(adapter, 'getRemoteDevice', target.address)
+  const factories = buildSocketFactories(plusApi, remoteDevice, uuid)
+
+  appendLog('info', `开始连接爆破：${target.name}，共 ${factories.length} 组`)
+
+  for (const factory of factories) {
+    let socket: any = null
+    try {
+      appendLog('info', `连接爆破：尝试 ${factory.label}`)
+      socket = factory.create()
+      plusApi.android.invoke(socket, 'connect')
+      await sleep(strategy.connectDelay)
+      appendLog('info', `连接爆破成功：${factory.label}`)
+      savePrinterTransportId(factory.label)
+      return factory.label
+    } catch (error: any) {
+      appendLog('warn', `连接爆破失败 ${factory.label}：${error?.message || '未知错误'}`)
+      safeClose(socket)
+      await sleep(180)
+    } finally {
+      safeClose(socket)
+    }
+  }
+
+  throw new Error(`连接爆破失败：${formatPrinterName(target.name)}`)
+}
+
 export function openBluetoothSettings() {
   const plusApi = ensureAndroidApp()
   const main = plusApi.android.runtimeMainActivity()
@@ -1367,8 +1473,8 @@ export async function listPairedPrinters() {
   return devices.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'))
 }
 
-function buildSocketFactories(plusApi: any, remoteDevice: any, uuid: any) {
-  return [
+function buildSocketFactories(plusApi: any, remoteDevice: any, uuid: any, preferredTransportId?: string | null) {
+  const factories = [
     {
       label: 'secure-spp-uuid',
       create: () => plusApi.android.invoke(remoteDevice, 'createRfcommSocketToServiceRecord', uuid),
@@ -1394,6 +1500,11 @@ function buildSocketFactories(plusApi: any, remoteDevice: any, uuid: any) {
       create: () => plusApi.android.invoke(remoteDevice, 'createInsecureRfcommSocket', 1),
     },
   ]
+  const preferred = getTransportOptionById(preferredTransportId)
+  return [
+    factories.find(item => item.label === preferred.id) || factories[0],
+    ...factories.filter(item => item.label !== preferred.id),
+  ]
 }
 
 async function openPrinterSocket(device: BluetoothPrinterDevice, strategy: BluetoothPrinterStrategy) {
@@ -1403,7 +1514,7 @@ async function openPrinterSocket(device: BluetoothPrinterDevice, strategy: Bluet
   const UUID = plusApi.android.importClass('java.util.UUID')
   const remoteDevice = plusApi.android.invoke(adapter, 'getRemoteDevice', device.address)
   const uuid = UUID.fromString(SPP_UUID)
-  const factories = buildSocketFactories(plusApi, remoteDevice, uuid)
+  const factories = buildSocketFactories(plusApi, remoteDevice, uuid, getSavedPrinterTransportId())
 
   for (const factory of factories) {
     let socket: any = null
