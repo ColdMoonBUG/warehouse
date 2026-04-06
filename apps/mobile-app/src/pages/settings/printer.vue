@@ -62,9 +62,18 @@
           <button class="btn primary" :disabled="testing" @tap="printTest">
             {{ testing ? '正在打印...' : '打印测试页' }}
           </button>
+          <button class="btn ghost" :disabled="classicTesting" @tap="runClassicSuite">
+            {{ classicTesting ? '爆破中...' : '爆破 M9 协议' }}
+          </button>
           <button class="btn ghost" :disabled="inspecting" @tap="inspectBle">
             {{ inspecting ? '正在探测 BLE...' : '探测 BLE 服务' }}
           </button>
+        </view>
+        <view class="classic-case-list">
+          <text class="ble-selected-title">M9 爆破清单</text>
+          <text v-for="item in classicCompatibilityCases" :key="item.id" class="device-meta">
+            {{ item.label }} · {{ item.protocol }}：{{ item.description }}
+          </text>
         </view>
       </view>
 
@@ -170,6 +179,7 @@ import {
   getBleCompatibilityCases,
   getBluetoothPrinterLogFilePath,
   getBluetoothPrinterLogs,
+  getClassicCompatibilityCases,
   getPrinterTransportStrategies,
   getSavedPrinter,
   getSavedPrinterTransportStrategyId,
@@ -181,6 +191,7 @@ import {
   printTestPage,
   readBlePrinterCharacteristic,
   runBlePrinterCompatibilitySuite,
+  runClassicPrinterCompatibilitySuite,
   savePrinter,
   savePrinterTransportStrategy,
   setBlePrinterCharacteristicNotify,
@@ -193,6 +204,7 @@ import type {
   BluetoothBleProbeResult,
   BluetoothBleValueResult,
   BluetoothBleWriteMode,
+  BluetoothClassicCompatibilityCase,
   BluetoothPrinterDevice,
   BluetoothPrinterRuntimeLog,
   BluetoothPrinterStrategyOption,
@@ -202,6 +214,7 @@ import { useUserStore } from '@/store/user'
 const userStore = useUserStore()
 const loading = ref(false)
 const testing = ref(false)
+const classicTesting = ref(false)
 const inspecting = ref(false)
 const probingBle = ref(false)
 const bleLoading = ref(false)
@@ -219,6 +232,7 @@ const bleWritePayload = ref('')
 const bleWriteMode = ref<BluetoothBleWriteMode>('text')
 const bleLastValue = ref<BluetoothBleValueResult | null>(null)
 const bleCompatibilityCases = ref<BluetoothBleCompatibilityCase[]>(getBleCompatibilityCases())
+const classicCompatibilityCases = ref<BluetoothClassicCompatibilityCase[]>(getClassicCompatibilityCases())
 const logFilePath = getBluetoothPrinterLogFilePath()
 const strategyOptions = ref<BluetoothPrinterStrategyOption[]>(getPrinterTransportStrategies())
 const selectedStrategyId = ref(getSavedPrinterTransportStrategyId())
@@ -363,6 +377,24 @@ async function printTest() {
     uni.showToast({ title: error?.message || '测试打印失败', icon: 'none' })
   } finally {
     testing.value = false
+  }
+}
+
+async function runClassicSuite() {
+  if (!selectedPrinter.value) {
+    uni.showToast({ title: '请先选择打印机', icon: 'none' })
+    return
+  }
+  classicTesting.value = true
+  try {
+    await runClassicPrinterCompatibilitySuite(selectedPrinter.value)
+    refreshLogs()
+    uni.showToast({ title: 'M9 爆破已发送', icon: 'success' })
+  } catch (error: any) {
+    refreshLogs()
+    uni.showToast({ title: error?.message || 'M9 爆破失败', icon: 'none' })
+  } finally {
+    classicTesting.value = false
   }
 }
 
@@ -699,7 +731,8 @@ onShow(async () => {
 }
 
 .ble-case-list,
-.ble-log-file {
+.ble-log-file,
+.classic-case-list {
   border-top: 2rpx solid #f1f5f9;
   padding-top: 18rpx;
   margin-top: 18rpx;

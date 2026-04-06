@@ -66,6 +66,18 @@ export interface BluetoothBleCompatibilityCase {
   payload: string
 }
 
+export type BluetoothClassicWriteMode = 'text' | 'hex'
+
+export interface BluetoothClassicCompatibilityCase {
+  id: string
+  label: string
+  protocol: 'plain-text' | 'escpos' | 'tspl' | 'cpcl' | 'zpl' | 'epl'
+  writeMode: BluetoothClassicWriteMode
+  payload: string
+  description: string
+  waitAfterMs?: number
+}
+
 interface BluetoothPrinterStrategy extends BluetoothPrinterStrategyOption {
   encoding: 'GB18030' | 'GBK' | 'GB2312'
   lineEnding: '\r\n' | '\n'
@@ -90,6 +102,93 @@ const SPP_UUID = '00001101-0000-1000-8000-00805F9B34FB'
 const DEFAULT_BLE_SCAN_MS = 4000
 const DEFAULT_BLE_MTU = 180
 const DEFAULT_BLE_VALUE_TIMEOUT = 3000
+const CLASSIC_COMPATIBILITY_CASES: BluetoothClassicCompatibilityCase[] = [
+  {
+    id: 'plain-test',
+    label: '纯文本 TEST',
+    protocol: 'plain-text',
+    writeMode: 'text',
+    payload: 'TEST\r\n\r\n',
+    description: '最小串口文本，验证设备是否接受裸文本',
+  },
+  {
+    id: 'json-test',
+    label: 'JSON TEST',
+    protocol: 'plain-text',
+    writeMode: 'text',
+    payload: '{"cmd":"print","text":"TEST"}\n',
+    description: '尝试命中抓包里出现过的 7B22 ({") 结构化起始',
+  },
+  {
+    id: 'device-info',
+    label: '设备信息命令',
+    protocol: 'plain-text',
+    writeMode: 'text',
+    payload: '{"cmd":"device_info"}\n',
+    description: '尝试触发厂商 app 中的设备信息查询链路',
+  },
+  {
+    id: 'escpos-init-test',
+    label: 'ESC/POS 初始化+TEST',
+    protocol: 'escpos',
+    writeMode: 'hex',
+    payload: '1B401B6100544553540D0A0D0A',
+    description: '标准 ESC/POS 初始化后打印 TEST',
+  },
+  {
+    id: 'escpos-cut-test',
+    label: 'ESC/POS 初始化+走纸',
+    protocol: 'escpos',
+    writeMode: 'hex',
+    payload: '1B400A0A0A1D5600',
+    description: '只发初始化、走纸、切纸，确认是否为小票机协议',
+  },
+  {
+    id: 'tspl-text',
+    label: 'TSPL 文本标签',
+    protocol: 'tspl',
+    writeMode: 'text',
+    payload: 'SIZE 40 mm,30 mm\r\nGAP 2 mm,0 mm\r\nDENSITY 8\r\nDIRECTION 1\r\nCLS\r\nTEXT 20,20,"TSS24.BF2",0,1,1,"TEST"\r\nPRINT 1,1\r\n',
+    description: '按常见标签机 TSPL 命令打印一张 TEST 标签',
+    waitAfterMs: 900,
+  },
+  {
+    id: 'tspl-text-rotated',
+    label: 'TSPL 方向切换',
+    protocol: 'tspl',
+    writeMode: 'text',
+    payload: 'SIZE 40 mm,30 mm\r\nGAP 2 mm,0 mm\r\nDENSITY 12\r\nDIRECTION 0\r\nCLS\r\nTEXT 20,20,"TSS24.BF2",0,1,1,"TEST"\r\nPRINT 1,1\r\n',
+    description: '切换方向和浓度，覆盖纸张方向/浓度兼容性',
+    waitAfterMs: 900,
+  },
+  {
+    id: 'cpcl-text',
+    label: 'CPCL 文本标签',
+    protocol: 'cpcl',
+    writeMode: 'text',
+    payload: '! 0 200 200 240 1\r\nTEXT 4 0 30 40 TEST\r\nFORM\r\nPRINT\r\n',
+    description: '尝试 CPCL 指令链路',
+    waitAfterMs: 900,
+  },
+  {
+    id: 'zpl-text',
+    label: 'ZPL 文本标签',
+    protocol: 'zpl',
+    writeMode: 'text',
+    payload: '^XA^PW400^LL240^FO30,30^A0N,40,40^FDTEST^FS^XZ',
+    description: '尝试 ZPL 指令链路',
+    waitAfterMs: 900,
+  },
+  {
+    id: 'epl-text',
+    label: 'EPL 文本标签',
+    protocol: 'epl',
+    writeMode: 'text',
+    payload: 'N\nA30,30,0,4,1,1,N,"TEST"\nP1\n',
+    description: '尝试 EPL 指令链路',
+    waitAfterMs: 900,
+  },
+]
 const BLE_COMPATIBILITY_CASES: BluetoothBleCompatibilityCase[] = [
   { id: 'esc-init', label: 'ESC 初始化', writeMode: 'hex', payload: '1B40' },
   { id: 'esc-init-feed-lf', label: 'ESC 初始化+LF', writeMode: 'hex', payload: '1B400A0A' },
@@ -747,6 +846,32 @@ function toPrinterBytes(text: string, encoding: BluetoothPrinterStrategy['encodi
   return plusApi.android.invoke(javaString, 'getBytes', encoding)
 }
 
+function arrayBufferToByteArray(value: ArrayBuffer) {
+  return Array.from(new Uint8Array(value)).map(item => item & 0xff)
+}
+
+async function writeRawBytes(outputStream: any, bytes: number[], delay = 0) {
+  const plusApi = ensureAndroidApp()
+  if (bytes.length === 0) return
+  const Byte = plusApi.android.importClass('java.lang.Byte')
+  const byteArray = plusApi.android.newObject('byte[]', bytes.length)
+  bytes.forEach((byte, index) => {
+    byteArray[index] = Byte.$new(byte > 127 ? byte - 256 : byte)
+  })
+  plusApi.android.invoke(outputStream, 'write', byteArray, 0, bytes.length)
+  plusApi.android.invoke(outputStream, 'flush')
+  if (delay > 0) {
+    await sleep(delay)
+  }
+}
+
+function formatRawPayloadForLog(payload: string, writeMode: BluetoothClassicWriteMode) {
+  if (writeMode === 'hex') {
+    return payload.replace(/\s+/g, ' ').trim()
+  }
+  return JSON.stringify(payload)
+}
+
 async function requestBluetoothPermissions() {
   const plusApi = ensureAndroidApp()
   const sdkInt = getSdkInt()
@@ -878,6 +1003,10 @@ export function getBluetoothPrinterLogFilePath() {
 
 export function getBleCompatibilityCases() {
   return BLE_COMPATIBILITY_CASES.map(item => ({ ...item }))
+}
+
+export function getClassicCompatibilityCases() {
+  return CLASSIC_COMPATIBILITY_CASES.map(item => ({ ...item }))
 }
 
 export async function listNearbyBlePrinters() {
@@ -1139,6 +1268,56 @@ export async function runBlePrinterCompatibilitySuite(options: { characteristicI
 
   appendLog('info', 'BLE 兼容测试完成，请结合设备反应与日志判断有效负载')
   return results
+}
+
+export async function runClassicPrinterCompatibilitySuite(device?: BluetoothPrinterDevice | null) {
+  const target = normalizePrinter(device) || getSavedPrinter()
+  if (!target) {
+    throw new Error('请先在蓝牙打印页面选择打印机')
+  }
+
+  const strategyOrder = buildStrategyOrder(getSavedPrinterTransportStrategyId())
+  let lastError: any = null
+
+  for (const strategy of strategyOrder) {
+    let socket: any = null
+    let outputStream: any = null
+    try {
+      appendLog('info', `开始经典蓝牙兼容测试：${target.name}，策略 ${strategy.label}，共 ${CLASSIC_COMPATIBILITY_CASES.length} 组`)
+      socket = await openPrinterSocket(target, strategy)
+      const plusApi = ensureAndroidApp()
+      outputStream = plusApi.android.invoke(socket, 'getOutputStream')
+
+      for (const testCase of CLASSIC_COMPATIBILITY_CASES) {
+        appendLog('info', `经典兼容测试：${testCase.label} · ${testCase.protocol} · ${testCase.description}`)
+        appendLog('info', `经典兼容测试载荷：${formatRawPayloadForLog(testCase.payload, testCase.writeMode)}`)
+        if (testCase.writeMode === 'hex') {
+          const bytes = arrayBufferToByteArray(hexToArrayBuffer(testCase.payload))
+          await writeRawBytes(outputStream, bytes, testCase.waitAfterMs || strategy.chunkDelay)
+        } else {
+          const bytes = toPrinterBytes(testCase.payload, strategy.encoding)
+          plusApi.android.invoke(outputStream, 'write', bytes, 0, bytes.length)
+          plusApi.android.invoke(outputStream, 'flush')
+          await sleep(testCase.waitAfterMs || strategy.chunkDelay)
+        }
+      }
+
+      await sleep(strategy.connectDelay)
+      savePrinter(target)
+      savePrinterTransportStrategy(strategy.id)
+      appendLog('info', `经典蓝牙兼容测试完成：${target.name}，策略 ${strategy.label}`)
+      return
+    } catch (error: any) {
+      lastError = error
+      appendLog('warn', `经典蓝牙兼容测试失败 ${strategy.label}：${error?.message || '未知错误'}`)
+    } finally {
+      safeClose(outputStream)
+      safeClose(socket)
+    }
+  }
+
+  appendLog('error', `经典蓝牙兼容测试失败：${target.name}，${lastError?.message || '未知错误'}`)
+  throw new Error(lastError?.message || `兼容测试失败：${formatPrinterName(target.name)}`)
 }
 
 export function getPrinterTransportStrategies(): BluetoothPrinterStrategyOption[] {
