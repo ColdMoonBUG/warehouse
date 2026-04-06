@@ -1241,14 +1241,17 @@ function packM9FrameRows(mono: Uint8Array, width: number, height: number) {
 
 function buildM9FramePayload(frameData: Uint8Array, bytesPerRow: number, frameHeight: number) {
   const len = frameData.length
-  const bytes = new Uint8Array(6 + len)
+  const bytes = new Uint8Array(9 + len)
   bytes[0] = 0x1f
   bytes[1] = 0x01
   bytes[2] = 0x05
   bytes[3] = bytesPerRow & 0xff
-  bytes[4] = frameHeight & 0xff
-  bytes[5] = len & 0xff
-  bytes.set(frameData, 6)
+  bytes[4] = (bytesPerRow >> 8) & 0xff
+  bytes[5] = frameHeight & 0xff
+  bytes[6] = (frameHeight >> 8) & 0xff
+  bytes[7] = len & 0xff
+  bytes[8] = (len >> 8) & 0xff
+  bytes.set(frameData, 9)
   return Array.from(bytes)
 }
 
@@ -1268,6 +1271,9 @@ async function sendM9BitmapFrames(outputStream: any, bitmap: any) {
     const remainingRows = height - index * M9_FRAME_HEIGHT
     const frameHeight = Math.min(M9_FRAME_HEIGHT, remainingRows)
     const payload = buildM9FramePayload(frameData, bytesPerRow, frameHeight)
+    if (index === 0 || index === frameCount - 1) {
+      appendLog('info', `M9 帧${index + 1}/${frameCount} 头：${bytesToHex(payload.slice(0, 9))}`)
+    }
     await writeRawBytes(outputStream, payload, 0)
     await sleep(M9_FRAME_THROTTLE_MS)
   }
