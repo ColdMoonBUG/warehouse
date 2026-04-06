@@ -97,11 +97,30 @@ function safeClose(target: any) {
   }
 }
 
+function sleep(ms = 400) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
 function toPrinterBytes(text: string) {
   const plusApi = ensureAndroidApp()
-  const normalized = `${text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')}\n\n\n`
+  const normalized = `${text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').join('\r\n')}\r\n`
+  const payload = plusApi.android.newObject('java.io.ByteArrayOutputStream')
+
+  // ESC @ 初始化
+  plusApi.android.invoke(payload, 'write', 0x1b)
+  plusApi.android.invoke(payload, 'write', 0x40)
+
   const javaString = plusApi.android.newObject('java.lang.String', normalized)
-  return plusApi.android.invoke(javaString, 'getBytes', 'GBK')
+  const body = plusApi.android.invoke(javaString, 'getBytes', 'GB18030')
+  plusApi.android.invoke(payload, 'write', body)
+
+  // 多送几行，确保有走纸动作
+  plusApi.android.invoke(payload, 'write', 0x0a)
+  plusApi.android.invoke(payload, 'write', 0x0a)
+  plusApi.android.invoke(payload, 'write', 0x0a)
+  plusApi.android.invoke(payload, 'write', 0x0a)
+
+  return plusApi.android.invoke(payload, 'toByteArray')
 }
 
 export function getSavedPrinter() {
@@ -165,7 +184,11 @@ async function openPrinterSocket(device: BluetoothPrinterDevice) {
     try {
       return plusApi.android.invoke(remoteDevice, 'createInsecureRfcommSocketToServiceRecord', uuid)
     } catch {
-      throw new Error(`无法创建打印机连接：${formatPrinterName(device.name)}`)
+      try {
+        return plusApi.android.invoke(remoteDevice, 'createRfcommSocket', 1)
+      } catch {
+        throw new Error(`无法创建打印机连接：${formatPrinterName(device.name)}`)
+      }
     }
   }
 }
@@ -184,8 +207,9 @@ export async function printText(text: string, device?: BluetoothPrinterDevice | 
     plusApi.android.invoke(socket, 'connect')
     outputStream = plusApi.android.invoke(socket, 'getOutputStream')
     const bytes = toPrinterBytes(text)
-    plusApi.android.invoke(outputStream, 'write', bytes)
+    plusApi.android.invoke(outputStream, 'write', bytes, 0, bytes.length)
     plusApi.android.invoke(outputStream, 'flush')
+    await sleep(600)
     savePrinter(target)
   } catch (error: any) {
     throw new Error(error?.message || `打印失败：${formatPrinterName(target.name)}`)

@@ -85,11 +85,6 @@ export interface Store {
   createdAt: string
 }
 
-export interface BluetoothPrinterDevice {
-  name: string
-  address: string
-}
-
 export interface SaleLine {
   id: string
   productId: string
