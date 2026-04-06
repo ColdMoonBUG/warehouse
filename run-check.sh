@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -u
 
+# 初始化路径和配置
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOGDIR="$ROOT/logs"
 BACKEND_LOG="$LOGDIR/backend.log"
@@ -22,25 +23,30 @@ BACKEND_REASON=""
 
 mkdir -p "$LOGDIR"
 
+# 检查命令是否存在
 command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
+# 探测 url 是否连通
 probe_url() {
   local url="$1"
   curl -fsS --max-time 2 "$url" >/dev/null 2>&1
 }
 
+# 获取 http 状态码
 http_code() {
   local url="$1"
   curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "$url" 2>/dev/null || true
 }
 
+# 检查端口是否在监听
 is_port_listening() {
   local port="$1"
   ss -ltn "sport = :$port" | tail -n +2 | grep -q .
 }
 
+# 打印日志末尾内容辅助调试
 show_last_log_lines() {
   local log_file="$1"
   if [ -f "$log_file" ]; then
@@ -51,6 +57,7 @@ show_last_log_lines() {
   fi
 }
 
+# 校验 java 版本
 check_java8() {
   if ! command_exists java; then
     echo "Java 未安装或未加入 PATH，请先安装 JDK 8。"
@@ -65,6 +72,7 @@ check_java8() {
   fi
 }
 
+# 打印后端日志查看方式
 follow_backend_log() {
   echo "[log] Backend log: $BACKEND_LOG"
   if [ ! -f "$BACKEND_LOG" ]; then
@@ -74,10 +82,12 @@ follow_backend_log() {
   echo "[log] 可使用: tail -f $BACKEND_LOG"
 }
 
+# 启动后端服务
 start_backend() {
   nohup bash -lc "cd \"$ROOT\" && ./mvnw spring-boot:run" >>"$BACKEND_LOG" 2>&1 &
 }
 
+# 启动前端页面
 start_admin_web() {
   if command_exists pnpm; then
     nohup bash -lc "cd \"$ROOT/apps/admin-web\" && pnpm exec vite --host 0.0.0.0 --port 5173 --strictPort" >>"$WEB_LOG" 2>&1 &
@@ -86,6 +96,7 @@ start_admin_web() {
   fi
 }
 
+# 检查后端健康状态
 probe_backend() {
   BACKEND_STATUS=""
   BACKEND_REASON=""
@@ -114,6 +125,7 @@ probe_backend() {
   esac
 }
 
+# 根据日志分析后端失败原因
 diagnose_backend_log() {
   BACKEND_REASON=""
   if [ ! -f "$BACKEND_LOG" ]; then
@@ -146,6 +158,7 @@ diagnose_backend_log() {
   fi
 }
 
+# 等待前端 ready
 wait_web() {
   local max_tries="$1"
   local tries=0
@@ -165,6 +178,7 @@ wait_web() {
   done
 }
 
+# 等待后端 ready
 wait_backend() {
   local max_tries="$1"
   local tries=0
@@ -196,6 +210,7 @@ wait_backend() {
   done
 }
 
+# 业务 api 连通性测试
 test_api_url() {
   local url="$1"
   local name="$2"
@@ -213,6 +228,7 @@ test_api_url() {
   return 1
 }
 
+# 批量执行 api 测试
 test_api() {
   echo "Test APIs ($BACKEND_BASE_URL)..."
 
@@ -249,6 +265,7 @@ test_api() {
   esac
 }
 
+# 错误处理函数
 web_stale() {
   echo "Existing 5173 listener is not serving HTTP."
   echo "Please stop that process and rerun this script."
@@ -322,12 +339,7 @@ backend_sale_warn() {
   fi
 }
 
-open_browser() {
-  if command_exists xdg-open; then
-    xdg-open "$LOCAL_WEB_URL" >/dev/null 2>&1 || true
-  fi
-}
-
+# 环境检查
 echo "[1/6] Use JDK 8..."
 check_java8
 
@@ -346,6 +358,7 @@ if ! command_exists ss; then
   exit 1
 fi
 
+# 检查后端
 BACKEND_RUNNING=""
 if is_port_listening 8888; then
   BACKEND_RUNNING=1
@@ -359,6 +372,7 @@ else
   follow_backend_log
 fi
 
+# 检查前端
 WEB_RUNNING=""
 WEB_LISTENING=""
 if probe_url "$WEB_CHECK_URL"; then
@@ -378,6 +392,7 @@ else
   start_admin_web
 fi
 
+# 等待服务就绪
 echo "[4/6] Wait admin-web ($WEB_CHECK_URL)..."
 wait_web 30 || web_err
 
@@ -387,6 +402,7 @@ wait_backend_rc=$?
 if [ "$wait_backend_rc" -ne 0 ] && [ -z "$BACKEND_STATUS" ]; then
   backend_err
 fi
+
 case "$BACKEND_STATUS" in
   db_error)
     backend_db_err
@@ -405,8 +421,8 @@ case "$BACKEND_STATUS" in
     ;;
 esac
 
-echo "[6/6] Open browser..."
-open_browser
+# 打印访问链接
+echo "[6/6] Services are ready."
 echo "Local: $LOCAL_WEB_URL"
 echo "Public: $PUBLIC_WEB_URL"
 echo "Done."

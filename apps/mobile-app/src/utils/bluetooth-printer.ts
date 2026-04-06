@@ -1199,6 +1199,14 @@ function buildSocketFactories(plusApi: any, remoteDevice: any, uuid: any) {
       create: () => plusApi.android.invoke(remoteDevice, 'createInsecureRfcommSocketToServiceRecord', uuid),
     },
     {
+      label: 'secure-channel-3',
+      create: () => plusApi.android.invoke(remoteDevice, 'createRfcommSocket', 3),
+    },
+    {
+      label: 'insecure-channel-3',
+      create: () => plusApi.android.invoke(remoteDevice, 'createInsecureRfcommSocket', 3),
+    },
+    {
       label: 'secure-channel-1',
       create: () => plusApi.android.invoke(remoteDevice, 'createRfcommSocket', 1),
     },
