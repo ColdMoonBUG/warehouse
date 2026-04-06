@@ -183,6 +183,10 @@ function normalizeDeviceId(value?: string) {
   return String(value || '').trim().toLowerCase()
 }
 
+function normalizeBleUuid(value?: string) {
+  return String(value || '').trim().toLowerCase()
+}
+
 async function openBleAdapter() {
   const uniApi = getUniBluetooth()
   await new Promise<void>((resolve, reject) => {
@@ -327,6 +331,12 @@ function describeBleProperties(properties: any) {
   if (properties?.notify) labels.push('notify')
   if (properties?.indicate) labels.push('indicate')
   return labels.length > 0 ? labels : ['unknown']
+}
+
+function isBleWriteCandidate(characteristic: any) {
+  const uuid = normalizeBleUuid(characteristic?.uuid || characteristic?.characteristicId)
+  const properties = characteristic?.properties || {}
+  return !!(properties.write || properties.writeNoResponse) || uuid.startsWith('49535343-aca3'.toLowerCase())
 }
 
 async function resolveBleDeviceId(target: BluetoothPrinterDevice) {
@@ -505,20 +515,35 @@ export async function inspectBlePrinter(device?: BluetoothPrinterDevice | null) 
   }
 
   const deviceId = await resolveBleDeviceId(target)
+  appendLog('info', `BLE 探测目标：${target.name}，保存地址 ${target.address}，实际连接 ${deviceId}`)
   await openBleAdapter()
   await createBleConnection(deviceId)
 
   try {
-    const services = await getBleDeviceServices(deviceId)
+    const services = (await getBleDeviceServices(deviceId))
+      .map((service: any) => ({
+        ...service,
+        _serviceId: String(service?.uuid || service?.serviceId || ''),
+      }))
+      .sort((a, b) => a._serviceId.localeCompare(b._serviceId))
+
     appendLog('info', `BLE 服务数量：${services.length}`)
     for (const service of services) {
-      const serviceId = String(service?.uuid || service?.serviceId || '')
+      const serviceId = service._serviceId
       appendLog('info', `BLE 服务：${serviceId}${service?.isPrimary ? ' · primary' : ''}`)
-      const characteristics = await getBleDeviceCharacteristics(deviceId, serviceId)
+      const characteristics = (await getBleDeviceCharacteristics(deviceId, serviceId))
+        .map((characteristic: any) => ({
+          ...characteristic,
+          _characteristicId: String(characteristic?.uuid || characteristic?.characteristicId || ''),
+        }))
+        .sort((a, b) => a._characteristicId.localeCompare(b._characteristicId))
+
       appendLog('info', `特征数量：${characteristics.length}`)
       for (const characteristic of characteristics) {
-        const characteristicId = String(characteristic?.uuid || characteristic?.characteristicId || '')
-        appendLog('info', `特征：${characteristicId} · ${describeBleProperties(characteristic?.properties).join(', ')}`)
+        const characteristicId = characteristic._characteristicId
+        const tags = describeBleProperties(characteristic?.properties)
+        const candidate = isBleWriteCandidate(characteristic) ? ' · 候选写入特征' : ''
+        appendLog('info', `特征：${characteristicId} · ${tags.join(', ')}${candidate}`)
       }
     }
   } finally {
