@@ -111,6 +111,42 @@ const DEFAULT_BLE_MTU = 180
 const DEFAULT_BLE_VALUE_TIMEOUT = 3000
 const CLASSIC_COMPATIBILITY_CASES: BluetoothClassicCompatibilityCase[] = [
   {
+    id: 'official-device-info-all',
+    label: '官方查询 ALL',
+    protocol: 'plain-text',
+    writeMode: 'hex',
+    payload: '10040A',
+    description: '官方设备信息查询包，查询 paper/bat/ver/all',
+    waitAfterMs: 320,
+  },
+  {
+    id: 'official-density-normal',
+    label: '官方浓度 NORMAL',
+    protocol: 'plain-text',
+    writeMode: 'hex',
+    payload: '1B401FFD0101101FFD01023C1FFD0103011FFD0104021FFD0105021FFD010600',
+    description: '官方常见初始化和浓度配置串',
+    waitAfterMs: 260,
+  },
+  {
+    id: 'official-newline-g',
+    label: '官方换行 G组',
+    protocol: 'plain-text',
+    writeMode: 'hex',
+    payload: '0A',
+    description: 'M9/M10 这类 G 组机型常见单换行收尾',
+    waitAfterMs: 200,
+  },
+  {
+    id: 'official-status-query',
+    label: '官方状态查询',
+    protocol: 'plain-text',
+    writeMode: 'hex',
+    payload: '1F0106',
+    description: '官方打印后状态查询，期望收到 ACK 或文本状态包',
+    waitAfterMs: 360,
+  },
+  {
     id: 'plain-test',
     label: '纯文本 TEST',
     protocol: 'plain-text',
@@ -921,6 +957,10 @@ function formatRawPayloadForLog(payload: string, writeMode: BluetoothClassicWrit
   return JSON.stringify(payload)
 }
 
+function getClassicCompatibilityCaseById(id?: string | null) {
+  return CLASSIC_COMPATIBILITY_CASES.find(item => item.id === id) || CLASSIC_COMPATIBILITY_CASES[0]
+}
+
 async function requestBluetoothPermissions() {
   const plusApi = ensureAndroidApp()
   const sdkInt = getSdkInt()
@@ -1386,6 +1426,45 @@ export async function runClassicPrinterCompatibilitySuite(device?: BluetoothPrin
 
   appendLog('error', `经典蓝牙兼容测试失败：${target.name}，${lastError?.message || '未知错误'}`)
   throw new Error(lastError?.message || `兼容测试失败：${formatPrinterName(target.name)}`)
+}
+
+export async function runSingleClassicCompatibilityCase(options: {
+  caseId: string
+  device?: BluetoothPrinterDevice | null
+}) {
+  const target = normalizePrinter(options.device) || getSavedPrinter()
+  if (!target) {
+    throw new Error('请先在蓝牙打印页面选择打印机')
+  }
+
+  const strategy = getStrategyById(getSavedPrinterTransportStrategyId())
+  const testCase = getClassicCompatibilityCaseById(options.caseId)
+  let socket: any = null
+  let outputStream: any = null
+
+  try {
+    appendLog('info', `开始单项测试：${testCase.label} · ${testCase.protocol} · ${testCase.description}`)
+    socket = await openPrinterSocket(target, strategy)
+    const plusApi = ensureAndroidApp()
+    outputStream = plusApi.android.invoke(socket, 'getOutputStream')
+    appendLog('info', `单项测试载荷：${formatRawPayloadForLog(testCase.payload, testCase.writeMode)}`)
+
+    if (testCase.writeMode === 'hex') {
+      const bytes = arrayBufferToByteArray(hexToArrayBuffer(testCase.payload))
+      await writeRawBytes(outputStream, bytes, testCase.waitAfterMs || strategy.chunkDelay)
+    } else {
+      const bytes = toPrinterBytes(testCase.payload, strategy.encoding)
+      plusApi.android.invoke(outputStream, 'write', bytes, 0, bytes.length)
+      plusApi.android.invoke(outputStream, 'flush')
+      await sleep(testCase.waitAfterMs || strategy.chunkDelay)
+    }
+
+    appendLog('info', `单项测试完成：${testCase.label}`)
+    return testCase.id
+  } finally {
+    safeClose(outputStream)
+    safeClose(socket)
+  }
 }
 
 export function getPrinterTransportStrategies(): BluetoothPrinterStrategyOption[] {

@@ -89,9 +89,12 @@
         </view>
         <view class="classic-case-list">
           <text class="ble-selected-title">M9 爆破清单</text>
-          <text v-for="item in classicCompatibilityCases" :key="item.id" class="device-meta">
-            {{ item.label }} · {{ item.protocol }}：{{ item.description }}
-          </text>
+          <view v-for="item in classicCompatibilityCases" :key="item.id" class="classic-case-item">
+            <text class="device-meta">{{ item.label }} · {{ item.protocol }}：{{ item.description }}</text>
+            <button class="mini-btn" :disabled="classicTesting || singleCaseTestingId === item.id" @tap="runSingleCase(item.id)">
+              {{ singleCaseTestingId === item.id ? '发送中...' : '单测' }}
+            </button>
+          </view>
         </view>
       </view>
 
@@ -213,6 +216,7 @@ import {
   runBlePrinterCompatibilitySuite,
   runClassicPrinterCompatibilitySuite,
   runPrinterConnectionSweep,
+  runSingleClassicCompatibilityCase,
   savePrinter,
   savePrinterTransportId,
   savePrinterTransportStrategy,
@@ -238,6 +242,7 @@ const userStore = useUserStore()
 const loading = ref(false)
 const testing = ref(false)
 const classicTesting = ref(false)
+const singleCaseTestingId = ref('')
 const connectingSweep = ref(false)
 const inspecting = ref(false)
 const probingBle = ref(false)
@@ -455,6 +460,27 @@ async function runConnectionSweep() {
     uni.showToast({ title: error?.message || '连接爆破失败', icon: 'none' })
   } finally {
     connectingSweep.value = false
+  }
+}
+
+async function runSingleCase(caseId: string) {
+  if (!selectedPrinter.value) {
+    uni.showToast({ title: '请先选择打印机', icon: 'none' })
+    return
+  }
+  singleCaseTestingId.value = caseId
+  try {
+    await runSingleClassicCompatibilityCase({
+      caseId,
+      device: selectedPrinter.value,
+    })
+    refreshLogs()
+    uni.showToast({ title: '单项已发送', icon: 'success' })
+  } catch (error: any) {
+    refreshLogs()
+    uni.showToast({ title: error?.message || '单项测试失败', icon: 'none' })
+  } finally {
+    singleCaseTestingId.value = ''
   }
 }
 
