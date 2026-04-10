@@ -14,8 +14,11 @@
           <text class="status" :class="doc.status">{{ statusText(doc.status) }}</text>
         </view>
         <view class="row">
+          <text class="supplier">{{ supplierName(doc.supplierId) }}</text>
           <text class="date">{{ doc.date }}</text>
-          <text class="qty">数量: {{ totalQty(doc) }}袋</text>
+        </view>
+        <view v-if="doc.remark" class="row">
+          <text class="remark">{{ doc.remark }}</text>
         </view>
       </view>
     </view>
@@ -26,10 +29,12 @@
 import { ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
+import { useReferenceStore } from '@/store/reference'
 import { getInbounds } from '@/api'
 import type { InboundDoc } from '@/types'
 
 const userStore = useUserStore()
+const referenceStore = useReferenceStore()
 const list = ref<InboundDoc[]>([])
 
 function guard() {
@@ -47,8 +52,8 @@ function statusText(status: string) {
   return '草稿'
 }
 
-function totalQty(doc: InboundDoc) {
-  return doc.lines.reduce((s, l) => s + l.qty, 0)
+function supplierName(id: string) {
+  return referenceStore.suppliers.find(s => s.id === id)?.name || '-'
 }
 
 function goCreate() { uni.navigateTo({ url: '/pages/admin/inbound/form' }) }
@@ -58,7 +63,9 @@ function goBack() { uni.navigateBack() }
 onShow(async () => {
   userStore.init()
   if (!guard()) return
+  referenceStore.hydrate()
   list.value = await getInbounds()
+  referenceStore.preloadSuppliers()
 })
 </script>
 
@@ -72,8 +79,11 @@ onShow(async () => {
 .btn { width:100%; height:88rpx; background:#1890ff; color:#fff; border-radius:44rpx; font-size:32rpx; border:none; }
 .card { background:#fff; border-radius:16rpx; padding:20rpx; margin-bottom:16rpx; }
 .row { display:flex; justify-content:space-between; margin-bottom:6rpx; }
-.code { font-size:30rpx; color:#333; }
-.date, .qty { font-size:24rpx; color:#666; }
+.code { font-size:30rpx; color:#333; font-weight:500; }
+.supplier { font-size:28rpx; color:#1890ff; }
+.date { font-size:24rpx; color:#666; }
+.remark { font-size:24rpx; color:#666; flex:1; }
+.status { font-size:24rpx; }
 .status.posted { color:#52c41a; }
 .status.voided { color:#ff4d4f; }
 .empty { text-align:center; color:#999; padding:40rpx 0; }

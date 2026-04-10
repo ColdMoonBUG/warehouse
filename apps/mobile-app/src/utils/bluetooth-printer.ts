@@ -582,12 +582,16 @@ export async function printSaleA4(
   device?: PrinterDevice | null
 ) {
   const { buildSalePrintData } = await import('./canvas-print')
-  const { cpclBuffer } = await buildSalePrintData(doc, store, salespersonName, products, payType)
+  const { cpclBuffer, journalSetup } = await buildSalePrintData(doc, store, salespersonName, products, payType)
   const target = device || getSavedPrinter()
   if (!target) {
     throw new Error('请先选择打印机')
   }
   await connectPrinter(target.deviceId)
+  appendLog('info', '[A4打印] 发送 JOURNAL+SETFF 配置...')
+  await sendCpcl(journalSetup)
+  await sleep(500)
+  appendLog('info', '[A4打印] 发送打印指令...')
   await sendCpcl(cpclBuffer)
 }
 
@@ -599,12 +603,16 @@ export async function printReturnA4(
   device?: PrinterDevice | null
 ) {
   const { buildReturnPrintData } = await import('./canvas-print')
-  const { cpclBuffer } = await buildReturnPrintData(doc, store, salespersonName, products)
+  const { cpclBuffer, journalSetup } = await buildReturnPrintData(doc, store, salespersonName, products)
   const target = device || getSavedPrinter()
   if (!target) {
     throw new Error('请先选择打印机')
   }
   await connectPrinter(target.deviceId)
+  appendLog('info', '[A4打印] 发送 JOURNAL+SETFF 配置...')
+  await sendCpcl(journalSetup)
+  await sleep(500)
+  appendLog('info', '[A4打印] 发送打印指令...')
   await sendCpcl(cpclBuffer)
 }
 

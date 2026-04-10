@@ -35,7 +35,7 @@
           </view>
           <view class="field">
             <text class="field-label">商品</text>
-            <picker mode="selector" :range="products" range-key="name" @change="(e)=>onProductChange(e,i)">
+            <picker mode="selector" :range="filteredProducts" range-key="name" @change="(e)=>onProductChange(e,i)">
               <view class="field-box picker-box"><text>{{ productName(l.productId) || '请选择商品' }}</text></view>
             </picker>
           </view>
@@ -71,6 +71,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
+import { useUserStore } from '@/store/user'
 import { useReferenceStore } from '@/store/reference'
 import { getInboundDetail, saveInbound, postInbound, voidInbound, getStock, getSupplierDetail, getProductDetail } from '@/api'
 import type { InboundDoc, InboundLine, Supplier, Product, Warehouse, StockItem } from '@/types'
@@ -92,13 +93,17 @@ const pageLoading = ref(false)
 
 const supplierName = computed(() => suppliers.value.find(s => s.id === form.value.supplierId)?.name || '')
 const mainWarehouse = computed(() => warehouses.value.find(w => w.type === 'main') || null)
+const filteredProducts = computed(() => {
+  if (!form.value.supplierId) return products.value
+  return products.value.filter(p => p.supplierId === form.value.supplierId)
+})
 const stockHint = computed(() => {
   if (stockLoading.value) return '库存加载中'
   return mainWarehouse.value ? '将入主仓库存' : ''
 })
 
 function productById(id: string) {
-  return products.value.find(p => p.id === id)
+  return filteredProducts.value.find(p => p.id === id) || products.value.find(p => p.id === id)
 }
 
 function productPackQty(productId: string) {
@@ -216,7 +221,7 @@ function onSupplierChange(e: any) {
 
 function onProductChange(e: any, i: number) {
   const idx = Number(e.detail.value)
-  lines.value[i].productId = products.value[idx]?.id || ''
+  lines.value[i].productId = filteredProducts.value[idx]?.id || ''
   syncLineQty(lines.value[i])
 }
 

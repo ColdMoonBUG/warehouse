@@ -6,10 +6,10 @@
       <view style="width: 60rpx" />
     </view>
     <view class="content">
-      <view class="section"><text class="label">编码</text><input v-model="form.code" placeholder="供应商编码" /></view>
       <view class="section"><text class="label">名称</text><input v-model="form.name" placeholder="供应商名称" /></view>
       <view class="section"><text class="label">联系人</text><input v-model="form.contact" placeholder="联系人" /></view>
       <view class="section"><text class="label">电话</text><input v-model="form.phone" placeholder="电话" /></view>
+      <view class="section"><text class="label">地址</text><input v-model="form.address" placeholder="地址" /></view>
       <view class="actions">
         <button class="btn-save" @tap="submit">保存</button>
         <button class="btn-toggle" v-if="form.id" @tap="toggleStatus">{{ form.status === 'active' ? '停用' : '启用' }}</button>

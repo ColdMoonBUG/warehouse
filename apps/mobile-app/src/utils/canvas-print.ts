@@ -5,8 +5,9 @@ import { getSavedPrinter, appendLog } from './bluetooth-printer'
 
 const CANVAS_ID = 'printCanvas'
 const DPI = 300
-const PAGE_WIDTH_DOTS = 2480
-const CONTENT_WIDTH_DOTS = PAGE_WIDTH_DOTS - 120
+const PAGE_WIDTH_DOTS = Math.floor(148 * DPI / 25.4)
+const PAGE_HEIGHT_DOTS = Math.floor(210 * DPI / 25.4)
+const CONTENT_WIDTH_DOTS = PAGE_WIDTH_DOTS - 100
 
 function mmToDots(mm: number): number {
   return Math.floor(mm * DPI / 25.4)
@@ -39,141 +40,116 @@ interface PrintDocData {
 }
 
 function estimateContentHeight(data: PrintDocData): number {
-  const headerLines = 4
-  const infoLines = 4
-  const tableHeaderLines = 1
-  const itemLines = data.items.length
-  const footerLines = 4
-  const lineH = mmToDots(6)
-  const sectionGap = mmToDots(4)
-  const topBottom = mmToDots(10)
+  const headerH = 72
+  const infoLineH = 50
+  const infoH = 4 * infoLineH + 12
+  const tableLineH = 46
+  const tableH = (1 + data.items.length) * tableLineH + 22
+  const footerLineH = 50
+  const remarkH = data.remark ? 42 : 0
+  const footerH = footerLineH + remarkH + 22
 
-  return topBottom
-    + headerLines * lineH + sectionGap
-    + infoLines * lineH + sectionGap
-    + tableHeaderLines * lineH + itemLines * lineH + sectionGap
-    + footerLines * lineH
-    + topBottom
+  const margin = mmToDots(5)
+  return Math.min(margin + headerH + 15 + infoH + 15 + tableH + 15 + footerH + margin, PAGE_HEIGHT_DOTS)
 }
 
 async function drawPrintContent(ctx: any, data: PrintDocData, width: number, height: number): Promise<void> {
   ctx.setFillStyle('white')
   ctx.fillRect(0, 0, width, height)
 
-  const leftMargin = 60
-  const rightMargin = 60
-  const contentWidth = width - leftMargin - rightMargin
-  let y = 80
+  const lm = 30
+  const rm = 30
+  let y = 35
+  const ll = 1
 
   ctx.setFillStyle('black')
 
-  // 标题
-  ctx.setFontSize(84)
-  const titleText = '车销系统'
-  ctx.fillText(titleText, Math.floor((width - titleText.length * 84 * 0.6) / 2), y + 84)
-  y += 120
-
-  // 副标题
-  ctx.setFontSize(68)
-  const docTypeText = data.type === 'sale' ? '销 货 单' : '退 货 单'
-  const payTypeText = data.payType === 'cash' ? '【现金】' : '【单子】'
-  const fullTitle = `${docTypeText}  ${payTypeText}`
-  ctx.fillText(fullTitle, Math.floor((width - fullTitle.length * 68 * 0.6) / 2), y + 68)
-  y += 108
-
-  // 分隔线（粗）
-  ctx.setStrokeStyle('black')
-  ctx.setLineWidth(6)
-  ctx.moveTo(leftMargin, y)
-  ctx.lineTo(width - rightMargin, y)
-  ctx.stroke()
-  y += 36
-
-  // 信息行
   ctx.setFontSize(56)
-  ctx.fillText(`单号：${data.code}`, leftMargin, y + 56)
-  y += 80
-  ctx.fillText(`日期：${data.date}`, leftMargin, y + 56)
-  y += 80
-  ctx.fillText(`店铺：${data.storeName}`, leftMargin, y + 56)
-  y += 80
-  ctx.fillText(`业务员：${data.salespersonName}`, leftMargin, y + 56)
-  y += 90
+  const titleText = data.type === 'sale' ? '艳萍麻花销单' : '艳萍麻花退单'
+  const payTag = data.payType === 'cash' ? '[现金]' : '[单子]'
+  ctx.fillText(`${titleText} ${payTag}`, lm, y + 56)
+  y += 72
 
-  // 分隔线
-  ctx.setLineWidth(4)
-  ctx.moveTo(leftMargin, y)
-  ctx.lineTo(width - rightMargin, y)
+  ctx.setStrokeStyle('black')
+  ctx.setLineWidth(ll)
+  ctx.moveTo(lm, y)
+  ctx.lineTo(width - rm, y)
   ctx.stroke()
-  y += 30
+  y += 14
 
-  // 表头
-  ctx.setFontSize(44)
-  const colName = 45
-  const colBarcode = 630
-  const colQty = 1230
-  const colPrice = 1530
-  const colAmount = 1920
+  ctx.setFontSize(38)
+  ctx.fillText(`单号:${data.code}`, lm, y + 38)
+  y += 50
+  ctx.fillText(`日期:${data.date}`, lm, y + 38)
+  y += 50
+  ctx.fillText(`店铺:${data.storeName}`, lm, y + 38)
+  y += 50
+  ctx.fillText(`业务员:${data.salespersonName}`, lm, y + 38)
+  y += 54
 
-  ctx.fillText('商品名称', colName, y + 44)
-  ctx.fillText('条形码', colBarcode, y + 44)
-  ctx.fillText('数量', colQty, y + 44)
-  ctx.fillText('单价', colPrice, y + 44)
-  ctx.fillText('金额', colAmount, y + 44)
-  y += 64
-
-  ctx.setLineWidth(4)
-  ctx.moveTo(leftMargin, y)
-  ctx.lineTo(width - rightMargin, y)
+  ctx.setLineWidth(ll)
+  ctx.moveTo(lm, y)
+  ctx.lineTo(width - rm, y)
   ctx.stroke()
-  y += 20
+  y += 14
 
-  // 商品行
-  ctx.setFontSize(44)
+  ctx.setFontSize(34)
+  const colBarcode = lm
+  const colName = 480
+  const colQty = 980
+  const colPrice = 1200
+  const colAmount = 1450
+
+  ctx.fillText('条形码', colBarcode, y + 34)
+  ctx.fillText('商品', colName, y + 34)
+  ctx.fillText('数量', colQty, y + 34)
+  ctx.fillText('进价', colPrice, y + 34)
+  ctx.fillText('总计', colAmount, y + 34)
+  y += 46
+
+  ctx.setLineWidth(ll)
+  ctx.moveTo(lm, y)
+  ctx.lineTo(width - rm, y)
+  ctx.stroke()
+  y += 12
+
   for (const item of data.items) {
-    const displayName = item.name.length > 10 ? item.name.slice(0, 10) + '..' : item.name
-    const displayBarcode = (item.barcode || '-').slice(0, 13)
+    const barcodeText = (item.barcode || '-').slice(0, 13)
+    const nameText = item.name.length > 5 ? item.name.slice(0, 5) + '..' : item.name
     const qtyText = `${normalizeCount(item.qty)}`
     const priceText = moneyText(item.price)
     const amountText = moneyText(item.amount)
 
-    ctx.fillText(displayName, colName, y + 44)
-    ctx.fillText(displayBarcode, colBarcode, y + 44)
-    ctx.fillText(qtyText, colQty, y + 44)
-    ctx.fillText(priceText, colPrice, y + 44)
-    ctx.fillText(amountText, colAmount, y + 44)
-    y += 72
+    ctx.fillText(barcodeText, colBarcode, y + 34)
+    ctx.fillText(nameText, colName, y + 34)
+    ctx.fillText(qtyText, colQty, y + 34)
+    ctx.fillText(priceText, colPrice, y + 34)
+    ctx.fillText(amountText, colAmount, y + 34)
+    y += 46
   }
 
-  y += 20
-  // 分隔线（粗）
-  ctx.setLineWidth(6)
-  ctx.moveTo(leftMargin, y)
-  ctx.lineTo(width - rightMargin, y)
+  y += 8
+  ctx.setLineWidth(ll)
+  ctx.moveTo(lm, y)
+  ctx.lineTo(width - rm, y)
   ctx.stroke()
-  y += 36
+  y += 15
 
-  // 合计
-  ctx.setFontSize(56)
-  ctx.fillText(`合计数量：${normalizeCount(data.totalQty)}`, leftMargin, y + 56)
-  ctx.fillText(`合计金额：${moneyText(data.totalAmount)}`, width - rightMargin - 800, y + 56)
-  y += 90
+  ctx.setFontSize(40)
+  ctx.fillText(`合计数量:${normalizeCount(data.totalQty)}`, lm, y + 40)
+  ctx.fillText(`合计金额:${moneyText(data.totalAmount)}`, width - rm - 520, y + 40)
+  y += 50
 
   if (data.remark) {
-    ctx.setFontSize(44)
-    ctx.fillText(`备注：${data.remark}`, leftMargin, y + 44)
-    y += 64
+    ctx.setFontSize(32)
+    ctx.fillText(`备注:${data.remark}`, lm, y + 32)
+    y += 42
   }
 
-  y += 36
-  ctx.setLineWidth(4)
-  ctx.moveTo(leftMargin, y)
-  ctx.lineTo(width - rightMargin, y)
+  ctx.setLineWidth(ll)
+  ctx.moveTo(lm, y)
+  ctx.lineTo(width - rm, y)
   ctx.stroke()
-  y += 30
-
-  ctx.setFontSize(36)
-  ctx.fillText(`打印时间：${formatDate(new Date(), 'YYYY-MM-DD HH:mm:ss')}`, leftMargin, y + 36)
 
   await new Promise<void>((resolve) => {
     let resolved = false
@@ -205,37 +181,49 @@ async function generatePrintImageData(data: PrintDocData): Promise<any> {
   try {
     const height = estimateContentHeight(data)
     const width = PAGE_WIDTH_DOTS
-    appendLog('info', `[A4打印] 开始Canvas绘制：${width}x${height}，${data.items.length} 项商品`)
+    appendLog('info', `[A5打印] 开始Canvas绘制：${width}x${height}，${data.items.length} 项商品`)
 
     const ctx = uni.createCanvasContext(CANVAS_ID)
-    appendLog('info', '[A4打印] Canvas上下文创建成功')
+    appendLog('info', '[A5打印] Canvas上下文创建成功')
 
     await drawPrintContent(ctx, data, width, height)
-    appendLog('info', '[A4打印] Canvas绘制完成，开始获取图片数据')
+    appendLog('info', '[A5打印] Canvas绘制完成，开始获取图片数据')
 
     const imageData = await getCanvasImageData(width, height)
-    appendLog('info', `[A4打印] 图片数据获取成功：${imageData.width}x${imageData.height}，数据长度 ${imageData.data?.length || 0}`)
+    appendLog('info', `[A5打印] 图片数据获取成功：${imageData.width}x${imageData.height}，数据长度 ${imageData.data?.length || 0}`)
 
     return imageData
   } catch (error: any) {
-    appendLog('error', `[A4打印] Canvas绘制失败：${error?.message || error}`)
+    appendLog('error', `[A5打印] Canvas绘制失败：${error?.message || error}`)
     throw error
   }
 }
 
-function buildCpclCommand(imageData: any, taskId: string): ArrayBuffer {
+function strToBytes(str: string): Uint8Array {
+  return new Uint8Array(str.split('').map(c => c.charCodeAt(0)))
+}
+
+function buildJournalSetup(): ArrayBuffer {
+  const setup = '! DF RUN.BAT\n! UTILITIES\nJOURNAL\nSETFF 50 5\nPRINT\n'
+  return strToBytes(setup).buffer
+}
+
+function buildCpclCommand(imageData: any, taskId: string): { cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer } {
   try {
-    appendLog('info', `[A4打印] 开始构建CPCL指令：taskId=${taskId}，图片 ${imageData.width}x${imageData.height}`)
-    const cpcl = CPCL.Builder.createArea(0, imageData.height, 1)
+    appendLog('info', `[A5打印] 开始构建CPCL指令：taskId=${taskId}，图片 ${imageData.width}x${imageData.height}`)
+
+    const cpclBuffer = CPCL.Builder.createArea(0, imageData.height, 1)
       .taskId(taskId || '1')
-      .pageWidth(2592)
+      .pageWidth(PAGE_WIDTH_DOTS)
       .imageGG(imageData, 0, 0)
       .formPrint()
       .build()
-    appendLog('info', `[A4打印] CPCL指令构建成功：${cpcl.byteLength} 字节`)
-    return cpcl
+
+    const journalSetup = buildJournalSetup()
+    appendLog('info', `[A5打印] CPCL指令构建成功：${cpclBuffer.byteLength} 字节，JOURNAL配置 ${journalSetup.byteLength} 字节`)
+    return { cpclBuffer, journalSetup }
   } catch (error: any) {
-    appendLog('error', `[A4打印] CPCL指令构建失败：${error?.message || error}`)
+    appendLog('error', `[A5打印] CPCL指令构建失败：${error?.message || error}`)
     throw error
   }
 }
@@ -246,7 +234,7 @@ export async function buildSalePrintData(
   salespersonName: string,
   products: Product[],
   payType: 'cash' | 'card' = 'card'
-): Promise<{ imageData: any; cpclBuffer: ArrayBuffer; data: PrintDocData }> {
+): Promise<{ imageData: any; cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer; data: PrintDocData }> {
   const items: PrintItem[] = doc.lines.map((line) => {
     const product = products.find((p) => p.id === line.productId)
     return {
@@ -275,12 +263,12 @@ export async function buildSalePrintData(
     remark: doc.remark,
   }
 
-  appendLog('info', `[A4打印] 开始生成销单图片：${doc.code}，${items.length} 项商品`)
+  appendLog('info', `[A5打印] 开始生成销单图片：${doc.code}，${items.length} 项商品`)
   const imageData = await generatePrintImageData(data)
-  const cpclBuffer = buildCpclCommand(imageData, doc.id || doc.code)
-  appendLog('info', `[A4打印] 销单 CPCL 指令生成完成：${cpclBuffer.byteLength} 字节，图片 ${imageData.width}x${imageData.height}`)
+  const { cpclBuffer, journalSetup } = buildCpclCommand(imageData, doc.id || doc.code)
+  appendLog('info', `[A5打印] 销单 CPCL 指令生成完成：${cpclBuffer.byteLength} 字节，图片 ${imageData.width}x${imageData.height}`)
 
-  return { imageData, cpclBuffer, data }
+  return { imageData, cpclBuffer, journalSetup, data }
 }
 
 export async function buildReturnPrintData(
@@ -288,7 +276,7 @@ export async function buildReturnPrintData(
   store: Store | undefined,
   salespersonName: string,
   products: Product[]
-): Promise<{ imageData: any; cpclBuffer: ArrayBuffer; data: PrintDocData }> {
+): Promise<{ imageData: any; cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer; data: PrintDocData }> {
   const items: PrintItem[] = doc.lines.map((line) => {
     const product = products.find((p) => p.id === line.productId)
     return {
@@ -319,13 +307,13 @@ export async function buildReturnPrintData(
     remark: doc.remark ? `${returnTypeText} - ${doc.remark}` : returnTypeText,
   }
 
-  appendLog('info', `[A4打印] 开始生成退货单图片：${doc.code}，${items.length} 项商品`)
+  appendLog('info', `[A5打印] 开始生成退货单图片：${doc.code}，${items.length} 项商品`)
   const imageData = await generatePrintImageData(data)
-  const cpclBuffer = buildCpclCommand(imageData, doc.id || doc.code)
-  appendLog('info', `[A4打印] 退货单 CPCL 指令生成完成：${cpclBuffer.byteLength} 字节，图片 ${imageData.width}x${imageData.height}`)
+  const { cpclBuffer, journalSetup } = buildCpclCommand(imageData, doc.id || doc.code)
+  appendLog('info', `[A5打印] 退货单 CPCL 指令生成完成：${cpclBuffer.byteLength} 字节，图片 ${imageData.width}x${imageData.height}`)
 
-  return { imageData, cpclBuffer, data }
+  return { imageData, cpclBuffer, journalSetup, data }
 }
 
-export { CANVAS_ID, PAGE_WIDTH_DOTS, DPI, estimateContentHeight, generatePrintImageData, buildCpclCommand }
+export { CANVAS_ID, PAGE_WIDTH_DOTS, DPI, estimateContentHeight, generatePrintImageData, buildCpclCommand, buildJournalSetup }
 export type { PrintDocData, PrintItem }

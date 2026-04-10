@@ -12,10 +12,10 @@ baseUrl = PUBLIC_BASE_URL
 // #endif
 export const BASE_URL = baseUrl
 
-// 高德地图Key
+// 高德地图Key（Web端 JS API，用于 map 组件）
 export const AMAP_KEY = 'f4b4dc7f2c6ab34d28831cf946effcc8'
-// 高德 Web API Key（用于POI搜索）
-export const AMAP_WEB_KEY = 'f4b4dc7f2c6ab34d28831cf946effcc8'
+// 高德 Web服务 Key（用于 restapi.amap.com POI搜索）
+export const AMAP_WEB_KEY = 'f17efc0524e58b07ca3d4ba40be896dc'
 
 // Session配置
 export const SESSION_KEY = 'wh_session'

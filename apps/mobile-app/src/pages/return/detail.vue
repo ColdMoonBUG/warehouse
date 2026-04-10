@@ -86,7 +86,7 @@
     </view>
 
     <scroll-view scroll-x scroll-y style="width:0;height:0;">
-      <canvas :canvas-id="canvasId" style="width:2480px;" :style="{ height: canvasHeightPx + 'px' }" />
+      <canvas :canvas-id="canvasId" :style="{ width: PAGE_WIDTH_DOTS + 'px', height: canvasHeightPx + 'px' }" />
     </scroll-view>
   </view>
 </template>
@@ -119,22 +119,19 @@ const printing = ref(false)
 const canvasId = CANVAS_ID
 
 const canvasHeightPx = computed(() => {
-  if (!doc.value) return 3600
-  const items = doc.value.lines.length || 1
-  const headerLines = 4
-  const infoLines = 4
-  const tableHeaderLines = 1
-  const footerLines = 4
-  const lineH = Math.floor(300 * 6 / 25.4)
-  const sectionGap = Math.floor(300 * 4 / 25.4)
-  const topBottom = Math.floor(300 * 10 / 25.4)
-  const height = topBottom
-    + headerLines * lineH + sectionGap
-    + infoLines * lineH + sectionGap
-    + tableHeaderLines * lineH + items * lineH + sectionGap
-    + footerLines * lineH
-    + topBottom
-  return Math.max(1200, Math.min(height, 3510))
+  if (!doc.value) return 2480
+  return estimateContentHeight({
+    type: 'return',
+    code: doc.value.code,
+    date: doc.value.date,
+    storeName: '',
+    salespersonName: '',
+    items: doc.value.lines,
+    totalQty: 0,
+    totalAmount: 0,
+    payType: 'card',
+    remark: doc.value.remark,
+  })
 })
 
 const storeName = computed(() => stores.value.find(i => i.id === doc.value?.storeId)?.name || '-')

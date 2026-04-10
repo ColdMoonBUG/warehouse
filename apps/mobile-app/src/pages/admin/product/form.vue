@@ -7,20 +7,7 @@
     </view>
     <view class="content">
       <view class="section">
-        <text class="label">商品图片</text>
-        <view class="image-row">
-          <image v-if="previewUrl" :src="previewUrl" class="thumb" mode="aspectFill" />
-          <view v-else class="thumb placeholder">暂无图片</view>
-          <button class="btn" @tap="takePhoto">拍照</button>
-        </view>
-      </view>
-
-      <view class="section">
-        <text class="label">编码</text>
-        <input v-model="form.code" placeholder="商品编码" />
-      </view>
-      <view class="section">
-        <text class="label">名称</text>
+        <text class="label">名称 *</text>
         <input v-model="form.name" placeholder="商品名称" />
       </view>
       <view class="section">
@@ -28,30 +15,38 @@
         <input v-model="form.barcode" placeholder="条形码" />
       </view>
       <view class="section">
-        <text class="label">供应商</text>
+        <text class="label">厂家 *</text>
         <picker mode="selector" :range="suppliers" range-key="name" @change="onSupplierChange">
-          <view class="picker"><text>{{ supplierName || '请选择供应商' }}</text></view>
+          <view class="picker"><text>{{ supplierName || '请选择厂家' }}</text></view>
         </picker>
-      </view>
-      <view class="section">
-        <text class="label">基础单位</text>
-        <view class="picker"><text>袋</text></view>
-      </view>
-      <view class="section">
-        <text class="label">每箱袋数</text>
-        <input v-model.number="form.boxQty" type="number" placeholder="请输入每箱袋数" />
       </view>
       <view class="section">
         <text class="label">保质期(天)</text>
         <input v-model.number="form.shelfDays" type="number" placeholder="保质期" />
       </view>
       <view class="section">
-        <text class="label">进价</text>
+        <text class="label">单位</text>
+        <view class="picker"><text>袋</text></view>
+      </view>
+      <view class="section">
+        <text class="label">每箱袋数 *</text>
+        <input v-model.number="form.boxQty" type="number" placeholder="请输入每箱袋数" />
+      </view>
+      <view class="section">
+        <text class="label">进价(从厂家) *</text>
         <input v-model.number="form.purchasePrice" type="number" placeholder="进价" />
       </view>
       <view class="section">
-        <text class="label">售价</text>
-        <input v-model.number="form.salePrice" type="number" placeholder="售价" />
+        <text class="label">供货价 *</text>
+        <input v-model.number="form.salePrice" type="number" placeholder="供货价" />
+      </view>
+      <view class="section">
+        <text class="label">商品图片</text>
+        <view class="image-row">
+          <image v-if="previewUrl" :src="previewUrl" class="thumb" mode="aspectFill" />
+          <view v-else class="thumb placeholder">暂无图片</view>
+          <button class="btn" @tap="takePhoto">拍照</button>
+        </view>
       </view>
 
       <view class="actions">
@@ -124,8 +119,12 @@ async function takePhoto() {
 }
 
 async function submit() {
-  if (!form.value.code || !form.value.name) {
-    uni.showToast({ title: '请填写编码和名称', icon: 'none' })
+  if (!form.value.name) {
+    uni.showToast({ title: '请填写名称', icon: 'none' })
+    return
+  }
+  if (!form.value.supplierId) {
+    uni.showToast({ title: '请选择厂家', icon: 'none' })
     return
   }
   if (uploading.value) {
