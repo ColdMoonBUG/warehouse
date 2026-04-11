@@ -40,7 +40,9 @@ public class CorsConfig {
         config.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        // 同时配置 /api/** 和 /file/** 路径
         source.registerCorsConfiguration("/api/**", config);
+        source.registerCorsConfiguration("/file/**", config);
 
         return new CorsFilter(source);
     }
