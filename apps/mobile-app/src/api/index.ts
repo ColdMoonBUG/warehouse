@@ -472,11 +472,12 @@ export async function loginByGesture(username: string, gesture: string): Promise
   }
 
   console.log('[登录] 开始手势登录，用户名:', username)
-  const accounts = await getAccounts()
-  const acc = accounts.find(a => a.username === username && a.status === 'active')
-  if (!acc) throw new Error('账户不存在')
-  if (acc.gestureHash !== normalizedHash) throw new Error('手势密码错误')
+  const acc = await request<Account>('/api/account/loginByGesture', 'POST', {
+    username,
+    gestureHash: normalizedHash,
+  })
   console.log('[登录] 手势登录成功，当前 JSESSIONID:', jsessionid ? jsessionid.substring(0, 8) + '...' : '无')
+  if (!acc) throw new Error('账户不存在')
   return saveSession(acc)
 }
 
