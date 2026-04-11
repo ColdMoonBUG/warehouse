@@ -31,6 +31,13 @@ export async function requestCurrentLocation(): Promise<LocationResult> {
     if (auth === false) {
       throw { errMsg: 'auth deny' }
     }
+    if (auth === undefined) {
+      try {
+        await uni.authorize({ scope: 'scope.userLocation' })
+      } catch (authError: any) {
+        throw normalizeLocationError(authError)
+      }
+    }
   } catch (error: any) {
     const normalized = normalizeLocationError(error)
     if (normalized.reason === 'permission') {

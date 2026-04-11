@@ -25,23 +25,18 @@
 
     <!-- 图例 -->
     <view class="legend">
-      <view class="legend-title">近30天销量</view>
-      <view class="legend-item">
-        <view class="dot" style="background: #22c55e" />
-        <text>低</text>
-      </view>
-      <view class="legend-item">
-        <view class="dot" style="background: #eab308" />
-        <text>中低</text>
-      </view>
-      <view class="legend-item">
-        <view class="dot" style="background: #f97316" />
-        <text>中高</text>
-      </view>
-      <view class="legend-item">
-        <view class="dot" style="background: #ef4444" />
-        <text>高</text>
-      </view>
+      <template v-if="userStore.isAdmin">
+        <view class="legend-title">近30天销量</view>
+        <view class="legend-item"><view class="dot" style="background: #22c55e" /><text>低</text></view>
+        <view class="legend-item"><view class="dot" style="background: #eab308" /><text>中低</text></view>
+        <view class="legend-item"><view class="dot" style="background: #f97316" /><text>中高</text></view>
+        <view class="legend-item"><view class="dot" style="background: #ef4444" /><text>高</text></view>
+      </template>
+      <template v-else>
+        <view class="legend-title">门店归属</view>
+        <view class="legend-item"><view class="dot" style="background: #ef4444" /><text>我的店</text></view>
+        <view class="legend-item"><view class="dot" style="background: #1890ff" /><text>其他店</text></view>
+      </template>
     </view>
 
     <!-- 门店信息弹窗 -->
@@ -129,6 +124,10 @@ function gradeColor(qty: number, max: number): string {
   return '#22c55e'
 }
 
+function ownershipColor(isOwn: boolean): string {
+  return isOwn ? '#ef4444' : '#1890ff'
+}
+
 function createMarkerIcon(color: string): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30">
     <circle cx="15" cy="15" r="12" fill="${color}" fill-opacity="0.9" stroke="#fff" stroke-width="2"/>
@@ -162,12 +161,15 @@ async function locateCurrentPosition(showToastOnFail = false) {
 }
 
 function updateMarkers(storeList: Store[], saleQty: Record<string, number>) {
+  const sessionSpId = getSessionSalespersonId(userStore.currentUser)
+  const isAdmin = userStore.isAdmin
   const maxQty = Math.max(...Object.values(saleQty), 1)
   stores.value = storeList
     .filter(s => s.lat && s.lng)
     .map(s => {
       const qty = saleQty[s.id] || 0
-      const color = gradeColor(qty, maxQty)
+      const isOwn = isOwnedStore(s, sessionSpId)
+      const color = isAdmin ? gradeColor(qty, maxQty) : ownershipColor(isOwn)
       const salesperson = salespersons.value.find(item => isSameSalespersonId(item.salespersonId || item.id, s.salespersonId))
       return {
         ...s,

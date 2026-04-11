@@ -12,7 +12,6 @@ import java.util.List;
  * 旧路径兼容层（无 /api 前缀）
  */
 @RestController
-@CrossOrigin
 public class LegacyApiController {
 
     @Autowired private ProductController productController;

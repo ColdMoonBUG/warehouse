@@ -16,7 +16,6 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/outbound")
-@CrossOrigin
 public class OutboundController {
 
     @Autowired

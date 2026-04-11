@@ -378,12 +378,14 @@ onMounted(async () => {
 
 .panel {
   flex: 1;
+  min-height: 0;
   background: #fff;
   border-radius: 24rpx 24rpx 0 0;
   margin-top: -20rpx;
   padding: 20rpx 24rpx 30rpx;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .search-row {
@@ -491,7 +493,8 @@ onMounted(async () => {
 
 .poi-list {
   flex: 1;
-  overflow: auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .poi-item {

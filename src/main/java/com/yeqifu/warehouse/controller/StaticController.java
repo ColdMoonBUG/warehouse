@@ -16,7 +16,6 @@ import java.util.Date;
 
 @RestController
 @RequestMapping("/api/static")
-@CrossOrigin
 public class StaticController {
 
     @Autowired

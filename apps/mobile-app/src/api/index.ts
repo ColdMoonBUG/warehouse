@@ -3,6 +3,37 @@ import { SESSION_KEY, SESSION_DAYS, BASE_URL, USE_MOCK } from '@/utils/config'
 import { simpleHash } from '@/utils'
 import { accountDb, storeDb, saleDb, warehouseDb, productDb, supplierDb, genId, now } from '@/mock/storage'
 const RETURN_STORAGE_KEY = 'wh_return'
+const JSESSIONID_KEY = 'wh_jsessionid'
+
+let jsessionid = uni.getStorageSync(JSESSIONID_KEY) || ''
+console.log('[Cookie] 模块加载时从 storage 读取 JSESSIONID:', jsessionid ? jsessionid.substring(0, 8) + '...' : '无')
+
+function saveJsessionid(val: string) {
+  jsessionid = val
+  uni.setStorageSync(JSESSIONID_KEY, val)
+  console.log('[Cookie] 保存 JSESSIONID 到 storage:', val.substring(0, 8) + '...')
+  const verify = uni.getStorageSync(JSESSIONID_KEY)
+  console.log('[Cookie] 验证 storage 读取:', verify ? verify.substring(0, 8) + '...' : '读取失败')
+}
+
+function clearJsessionid() {
+  jsessionid = ''
+  uni.removeStorageSync(JSESSIONID_KEY)
+  console.log('[Cookie] 已清除 JSESSIONID')
+}
+
+function extractJsessionid(header: Record<string, string>): string {
+  const setCookie = header['Set-Cookie'] || header['set-cookie'] || ''
+  console.log('[Cookie] 响应头 Set-Cookie:', setCookie || '无')
+  const m = setCookie.match(/JSESSIONID=([^;]+)/)
+  const extracted = m ? m[1] : ''
+  if (extracted) {
+    console.log('[Cookie] 提取到 JSESSIONID:', extracted.substring(0, 8) + '...')
+  } else {
+    console.log('[Cookie] 未提取到 JSESSIONID')
+  }
+  return extracted
+}
 
 type PersistablePackLine = {
   bagQty?: number
@@ -198,15 +229,27 @@ export function getSalespersonName(accounts: Array<{ salespersonId?: string; id?
 
 function request<T>(url: string, method: 'GET' | 'POST', data?: any): Promise<T> {
   const fullUrl = `${BASE_URL}${url}`
-  console.log('[API] 请求:', fullUrl)
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (jsessionid) {
+    headers['Cookie'] = `JSESSIONID=${jsessionid}`
+    console.log('[API] 请求:', fullUrl, '携带 Cookie:', jsessionid.substring(0, 8) + '...')
+  } else {
+    console.log('[API] 请求:', fullUrl, '无 Cookie')
+  }
   return new Promise((resolve, reject) => {
     uni.request({
       url: fullUrl,
       method,
       data,
-      header: { 'Content-Type': 'application/json' },
+      header: headers,
       success: (res) => {
-        console.log('[API] 响应:', fullUrl, JSON.stringify(res.data))
+        const resHeader = (res.header || {}) as Record<string, string>
+        const newSid = extractJsessionid(resHeader)
+        if (newSid) {
+          console.log('[API] 响应携带新 JSESSIONID:', newSid.substring(0, 8) + '...')
+          saveJsessionid(newSid)
+        }
+        console.log('[API] 响应:', fullUrl, 'code:', (res.data as any)?.code)
         const body = res.data as ApiResult<T>
         if (body && body.code === 200) {
           resolve(body.data)
@@ -374,6 +417,7 @@ export function saveSession(account: Account): Session {
 
 export function logout() {
   uni.removeStorageSync(SESSION_KEY)
+  clearJsessionid()
   clearReferenceDataCache()
 }
 
@@ -405,10 +449,12 @@ export async function loginByPassword(username: string, password: string): Promi
     return saveSession(acc)
   }
 
+  console.log('[登录] 开始密码登录，用户名:', username)
   const acc = await request<Account>('/api/account/login', 'POST', {
     username,
     passwordHash: simpleHash(password),
   })
+  console.log('[登录] 登录成功，当前 JSESSIONID:', jsessionid ? jsessionid.substring(0, 8) + '...' : '无')
   if (!acc) throw new Error('账户不存在')
   return saveSession(acc)
 }
@@ -425,10 +471,12 @@ export async function loginByGesture(username: string, gesture: string): Promise
     throw new Error('手势密码错误')
   }
 
+  console.log('[登录] 开始手势登录，用户名:', username)
   const accounts = await getAccounts()
   const acc = accounts.find(a => a.username === username && a.status === 'active')
   if (!acc) throw new Error('账户不存在')
   if (acc.gestureHash !== normalizedHash) throw new Error('手势密码错误')
+  console.log('[登录] 手势登录成功，当前 JSESSIONID:', jsessionid ? jsessionid.substring(0, 8) + '...' : '无')
   return saveSession(acc)
 }
 
@@ -729,11 +777,19 @@ export function clearReferenceDataCache() {
 
 export async function uploadFile(filePath: string) {
   return new Promise<UploadResult>((resolve, reject) => {
+    const headers: Record<string, string> = {}
+    if (jsessionid) headers['Cookie'] = `JSESSIONID=${jsessionid}`
+
     uni.uploadFile({
       url: `${BASE_URL}/file/uploadFile`,
       filePath,
       name: 'mf',
+      header: headers,
       success: (res) => {
+        const resHeader = (res.header || {}) as Record<string, string>
+        const newSid = extractJsessionid(resHeader)
+        if (newSid) saveJsessionid(newSid)
+
         let payload: any = null
         try {
           payload = typeof res.data === 'string' ? JSON.parse(res.data) : res.data

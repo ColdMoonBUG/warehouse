@@ -15,7 +15,6 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/transfer")
-@CrossOrigin
 public class TransferController {
 
     @Autowired

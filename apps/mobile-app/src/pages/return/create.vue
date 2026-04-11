@@ -71,11 +71,11 @@
           <view class="qty-grid">
             <view class="qty-field">
               <text class="qty-label">箱数</text>
-              <input class="qty-input" v-model.number="qtyMap[p.id].boxQty" type="number" placeholder="0" @blur="syncQty(p.id)" />
+              <input class="qty-input" v-model.number="qtyMap[p.id].boxQty" type="number" placeholder="0" @focus="onQtyFocus(p.id, 'boxQty')" @blur="syncQty(p.id)" />
             </view>
             <view class="qty-field">
               <text class="qty-label">袋数</text>
-              <input class="qty-input" v-model.number="qtyMap[p.id].bagQty" type="number" placeholder="0" @blur="syncQty(p.id)" />
+              <input class="qty-input" v-model.number="qtyMap[p.id].bagQty" type="number" placeholder="0" @focus="onQtyFocus(p.id, 'bagQty')" @blur="syncQty(p.id)" />
             </view>
           </view>
           <text class="qty-total">共 {{ qtyMap[p.id].qty }} 袋</text>
@@ -181,11 +181,20 @@ const effectiveSalespersonId = computed(() => {
 
 const filteredProducts = computed(() => {
   const key = keyword.value.trim().toLowerCase()
-  if (!key) return products.value
-  return products.value.filter(p => {
-    const name = (p.name || '').toLowerCase()
-    const code = (p.barcode || '').toLowerCase()
-    return name.includes(key) || code.includes(key)
+  let list = products.value
+  if (key) {
+    list = list.filter(p => {
+      const name = (p.name || '').toLowerCase()
+      const code = (p.barcode || '').toLowerCase()
+      return name.includes(key) || code.includes(key)
+    })
+  }
+  const sm = vehicleStockMap.value
+  return [...list].sort((a, b) => {
+    const sa = sm[a.id] || 0, sb = sm[b.id] || 0
+    if (sa > 0 && sb === 0) return -1
+    if (sa === 0 && sb > 0) return 1
+    return sb - sa
   })
 })
 
@@ -245,6 +254,14 @@ function syncQty(productId: string) {
   current.boxQty = normalizeCount(current.boxQty)
   current.bagQty = normalizeCount(current.bagQty)
   current.qty = calcQty(current.boxQty, current.bagQty, productById(productId)?.boxQty)
+}
+
+function onQtyFocus(productId: string, field: 'boxQty' | 'bagQty') {
+  const current = qtyMap.value[productId]
+  if (current && !current[field]) {
+    current[field] = '' as any
+    qtyMap.value = { ...qtyMap.value }
+  }
 }
 
 function productPackageSummary(product: Product) {

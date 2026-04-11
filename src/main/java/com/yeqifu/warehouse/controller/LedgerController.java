@@ -11,7 +11,6 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/ledger")
-@CrossOrigin
 public class LedgerController {
 
     @Autowired

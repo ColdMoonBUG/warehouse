@@ -6,16 +6,21 @@
 
     <view class="content">
       <view class="tabs">
-        <view class="tab" :class="{active: activeTab==='sale'}" @tap="activeTab='sale'">销售</view>
-        <view class="tab" :class="{active: activeTab==='return'}" @tap="activeTab='return'">退货</view>
+        <view class="tab" :class="{active: activeTab==='sale'}" @tap="switchTab('sale')">销售</view>
+        <view class="tab" :class="{active: activeTab==='return'}" @tap="switchTab('return')">退货</view>
+      </view>
+
+      <view v-if="userStore.isAdmin" class="search-bar">
+        <input v-model="searchKeyword" class="search-input" placeholder="搜索单号" />
+        <text v-if="searchKeyword" class="search-clear" @tap="searchKeyword = ''">×</text>
       </view>
 
       <view v-if="activeTab==='sale'">
         <view class="actions">
           <button class="btn-create" @tap="goCreate">创建销单</button>
         </view>
-        <view v-if="sales.length === 0" class="empty">暂无销单</view>
-        <view v-for="doc in sales" :key="doc.id" class="sale-card" @tap="goDetail(doc.id)">
+        <view v-if="filteredSales.length === 0" class="empty">暂无销单</view>
+        <view v-for="doc in filteredSales" :key="doc.id" class="sale-card" @tap="goDetail(doc.id)">
           <view class="row">
             <text class="code">{{ doc.code }}</text>
             <text class="status" :class="doc.status">{{ statusText(doc.status) }}</text>
@@ -35,8 +40,8 @@
         <view class="actions">
           <button class="btn-create" @tap="goReturnCreate">创建退货单</button>
         </view>
-        <view v-if="returns.length === 0" class="empty">暂无退货单</view>
-        <view v-for="doc in returns" :key="doc.id" class="sale-card" @tap="goReturnDetail(doc.id)">
+        <view v-if="filteredReturns.length === 0" class="empty">暂无退货单</view>
+        <view v-for="doc in filteredReturns" :key="doc.id" class="sale-card" @tap="goReturnDetail(doc.id)">
           <view class="row">
             <text class="code">{{ doc.code }}</text>
             <text class="status" :class="doc.status">{{ statusText(doc.status) }}</text>
@@ -56,7 +61,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
 import { getSales, getStores, getReturns, getSessionSalespersonId, isSameSalespersonId } from '@/api'
@@ -67,6 +72,24 @@ const activeTab = ref<'sale'|'return'>('sale')
 const sales = ref<SaleDoc[]>([])
 const returns = ref<ReturnDoc[]>([])
 const stores = ref<Store[]>([])
+const searchKeyword = ref('')
+
+const filteredSales = computed(() => {
+  const key = searchKeyword.value.trim().toLowerCase()
+  if (!key) return sales.value
+  return sales.value.filter(d => (d.code || '').toLowerCase().includes(key))
+})
+
+const filteredReturns = computed(() => {
+  const key = searchKeyword.value.trim().toLowerCase()
+  if (!key) return returns.value
+  return returns.value.filter(d => (d.code || '').toLowerCase().includes(key))
+})
+
+function switchTab(tab: 'sale' | 'return') {
+  activeTab.value = tab
+  searchKeyword.value = ''
+}
 
 function goReturnCreate() { uni.navigateTo({ url: '/pages/return/create' }) }
 function goReturnDetail(id: string) { uni.navigateTo({ url: `/pages/return/detail?id=${id}` }) }
@@ -170,6 +193,37 @@ onShow(() => {
   color: #1890ff;
   font-weight: 600;
   background: rgba(24, 144, 255, 0.08);
+}
+
+.search-bar {
+  position: relative;
+  margin-bottom: 20rpx;
+
+  .search-input {
+    width: 100%;
+    height: 72rpx;
+    padding: 0 80rpx 0 24rpx;
+    background: #fff;
+    border-radius: 36rpx;
+    font-size: 28rpx;
+    border: 1rpx solid #e8e8e8;
+  }
+
+  .search-clear {
+    position: absolute;
+    right: 24rpx;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 48rpx;
+    height: 48rpx;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 40rpx;
+    color: #999;
+    background: #f5f5f5;
+    border-radius: 50%;
+  }
 }
 
 .actions {

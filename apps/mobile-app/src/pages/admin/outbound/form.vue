@@ -41,7 +41,7 @@
           </view>
           <view class="field">
             <text class="field-label">商品</text>
-            <picker mode="selector" :range="products" range-key="name" @change="(e)=>onProductChange(e,i)">
+            <picker mode="selector" :range="productsWithStock" range-key="displayName" @change="(e)=>onProductChange(e,i)">
               <view class="field-box picker-box"><text>{{ productName(l.productId) || '请选择商品' }}</text></view>
             </picker>
           </view>
@@ -89,6 +89,28 @@ const userStore = useUserStore()
 const referenceStore = useReferenceStore()
 const warehouses = ref<Warehouse[]>([])
 const products = ref<Product[]>([])
+const sortedProducts = computed(() => {
+  if (!fromWarehouse.value) return products.value
+  const sm = sourceStockMap.value
+  return [...products.value].sort((a, b) => {
+    const sa = sm[a.id] || 0, sb = sm[b.id] || 0
+    if (sa > 0 && sb === 0) return -1
+    if (sa === 0 && sb > 0) return 1
+    return sb - sa
+  })
+})
+
+const productsWithStock = computed(() => {
+  if (!fromWarehouse.value) {
+    return sortedProducts.value.map(p => ({ ...p, displayName: p.name }))
+  }
+  const sm = sourceStockMap.value
+  return sortedProducts.value.map(p => {
+    const stock = sm[p.id] || 0
+    const displayName = stock > 0 ? `${p.name} (库存: ${stock}袋)` : `${p.name} (无库存)`
+    return { ...p, displayName }
+  })
+})
 const lines = ref<FormLine[]>([])
 const form = ref<Partial<TransferDoc>>({ fromWarehouseId: 'main', date: formatDate(new Date(), 'YYYY-MM-DD'), status: 'draft' })
 const queryId = ref('')
@@ -203,7 +225,7 @@ function onToWhChange(e: any) {
 
 function onProductChange(e: any, i: number) {
   const idx = Number(e.detail.value)
-  lines.value[i].productId = products.value[idx]?.id || ''
+  lines.value[i].productId = productsWithStock.value[idx]?.id || ''
   syncLineQty(lines.value[i])
 }
 

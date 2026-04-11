@@ -16,7 +16,6 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/inbound")
-@CrossOrigin
 public class InboundController {
 
     private static final String MAIN_WAREHOUSE_ID = "main";

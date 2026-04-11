@@ -588,11 +588,21 @@ export async function printSaleA4(
     throw new Error('请先选择打印机')
   }
   await connectPrinter(target.deviceId)
-  appendLog('info', '[A4打印] 发送 JOURNAL+SETFF 配置...')
-  await sendCpcl(journalSetup)
-  await sleep(500)
-  appendLog('info', '[A4打印] 发送打印指令...')
-  await sendCpcl(cpclBuffer)
+
+  const copies = payType === 'card' ? 3 : 2
+  appendLog('info', `[A4打印] 付款方式: ${payType === 'card' ? '单子' : '现金'}, 打印 ${copies} 张`)
+
+  for (let i = 0; i < copies; i++) {
+    appendLog('info', `[A4打印] 第 ${i + 1}/${copies} 张 - 发送 JOURNAL+SETFF 配置...`)
+    await sendCpcl(journalSetup)
+    await sleep(500)
+    appendLog('info', `[A4打印] 第 ${i + 1}/${copies} 张 - 发送打印指令...`)
+    await sendCpcl(cpclBuffer)
+    if (i < copies - 1) {
+      await sleep(1000)
+    }
+  }
+  appendLog('info', `[A4打印] 完成，共打印 ${copies} 张`)
 }
 
 export async function printReturnA4(

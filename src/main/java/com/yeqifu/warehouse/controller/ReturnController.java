@@ -19,7 +19,6 @@ import java.math.RoundingMode;
 
 @RestController
 @RequestMapping("/api/return")
-@CrossOrigin
 public class ReturnController {
 
     private static final String MAIN_WAREHOUSE_ID = "main";

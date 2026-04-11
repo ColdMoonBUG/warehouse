@@ -73,6 +73,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
+import { useUserStore } from '@/store/user'
 import { useReferenceStore } from '@/store/reference'
 import { getTransferDetail, saveTransfer, postTransfer, voidTransfer, getStock, getProductDetail } from '@/api'
 import type { TransferDoc, TransferLine, Product, Warehouse, StockItem } from '@/types'

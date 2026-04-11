@@ -15,7 +15,6 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/stock")
-@CrossOrigin
 public class StockController {
 
     @Autowired
