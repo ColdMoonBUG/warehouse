@@ -19,6 +19,7 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping({"file", "api/file"})
+@CrossOrigin(origins = "*", allowCredentials = "true")
 public class FileController {
 
     /**

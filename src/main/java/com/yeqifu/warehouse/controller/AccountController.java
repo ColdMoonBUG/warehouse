@@ -12,6 +12,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/account")
+@CrossOrigin(origins = "*", allowCredentials = "true")
 public class AccountController {
 
     @Autowired

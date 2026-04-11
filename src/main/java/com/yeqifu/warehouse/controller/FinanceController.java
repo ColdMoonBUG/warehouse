@@ -35,6 +35,7 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/finance/commission")
+@CrossOrigin(origins = "*", allowCredentials = "true")
 public class FinanceController {
 
     private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
