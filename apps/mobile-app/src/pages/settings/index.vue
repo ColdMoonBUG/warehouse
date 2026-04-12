@@ -62,11 +62,8 @@
       </view>
 
       <view class="menu-group">
-        <view class="menu-item" v-if="isAdmin" @tap="goStoreList">
+        <view class="menu-item" @tap="goStoreList">
           <text class="menu-text">门店管理</text>
-        </view>
-        <view class="menu-item" v-if="!isAdmin" @tap="goStoreAdd">
-          <text class="menu-text">新增超市</text>
         </view>
         <view class="menu-item" @tap="goPrinter">
           <text class="menu-text">蓝牙打印</text>
@@ -111,7 +108,7 @@ import { computed, ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { getTodayCommissionSummary } from '@/api'
 import type { TodayCommissionItem, TodayCommissionSummary } from '@/types'
-import { formatDate } from '@/utils'
+import { formatDate, todayLocalDate } from '@/utils'
 import { useUserStore } from '@/store/user'
 
 const userStore = useUserStore()
@@ -123,7 +120,7 @@ const todayCommission = ref<TodayCommissionSummary>(createEmptyCommissionSummary
 
 function createEmptyCommissionSummary(): TodayCommissionSummary {
   return {
-    date: new Date().toISOString().slice(0, 10),
+    date: todayLocalDate(),
     salespersonId: '',
     salespersonName: '',
     saleAmount: 0,
@@ -207,7 +204,6 @@ function handleLogout() {
 }
 
 function goStoreList() {
-  if (!userStore.isAdmin) return
   uni.navigateTo({ url: '/pages/settings/store-list' })
 }
 

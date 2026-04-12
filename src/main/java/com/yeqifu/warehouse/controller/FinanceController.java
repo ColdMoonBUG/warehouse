@@ -273,15 +273,34 @@ public class FinanceController {
 
     private List<CommissionLedger> listTodayLedgers(String salespersonId) {
         LocalDate today = LocalDate.now(BUSINESS_ZONE);
-        Date startAt = Date.from(today.atStartOfDay(BUSINESS_ZONE).toInstant());
-        Date endAt = Date.from(today.plusDays(1).atStartOfDay(BUSINESS_ZONE).toInstant());
+        java.sql.Date docDate = java.sql.Date.valueOf(today);
+
+        Set<String> saleDocIds = saleDocMapper.selectList(
+            new LambdaQueryWrapper<SaleDoc>()
+                .eq(SaleDoc::getSalespersonId, salespersonId)
+                .eq(SaleDoc::getDocDate, docDate)
+        ).stream().map(SaleDoc::getId).collect(Collectors.toCollection(LinkedHashSet::new));
+
+        Set<String> returnDocIds = returnDocMapper.selectList(
+            new LambdaQueryWrapper<ReturnDoc>()
+                .eq(ReturnDoc::getSalespersonId, salespersonId)
+                .eq(ReturnDoc::getDocDate, docDate)
+        ).stream().map(ReturnDoc::getId).collect(Collectors.toCollection(LinkedHashSet::new));
+
+        if (saleDocIds.isEmpty() && returnDocIds.isEmpty()) {
+            return new ArrayList<>();
+        }
+
         return commissionLedgerMapper.selectList(
             new LambdaQueryWrapper<CommissionLedger>()
                 .eq(CommissionLedger::getSalespersonId, salespersonId)
-                .ge(CommissionLedger::getCreatedAt, startAt)
-                .lt(CommissionLedger::getCreatedAt, endAt)
                 .orderByDesc(CommissionLedger::getCreatedAt)
-        );
+        ).stream().filter(ledger -> {
+            if (isSaleCommissionBizType(ledger.getBizType())) {
+                return saleDocIds.contains(ledger.getDocId());
+            }
+            return returnDocIds.contains(ledger.getDocId());
+        }).collect(Collectors.toList());
     }
 
     private List<CommissionLedgerItemVO> buildCommissionLedgerItems(List<CommissionLedger> ledgers) {

@@ -124,7 +124,7 @@ import { useUserStore } from '@/store/user'
 import { useReferenceStore } from '@/store/reference'
 import { getStock, saveReturn, postReturn, isOwnedStore, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId } from '@/api'
 import type { Store, Product, Warehouse, ReturnDoc, ReturnLine, StockItem } from '@/types'
-import { genId, formatProductQuickPickLabel, formatProductPackageSummary, calcQty, deriveBagQty, normalizeCount, normalizeBoxPackQty, formatStockPreview, getProductStockQty, toStockQtyMap } from '@/utils'
+import { genId, formatProductQuickPickLabel, formatProductPackageSummary, calcQty, deriveBagQty, normalizeCount, normalizeBoxPackQty, formatStockPreview, getProductStockQty, toStockQtyMap, todayLocalDate } from '@/utils'
 
 interface QtyInput {
   boxQty: number
@@ -176,7 +176,7 @@ const vehicleWarehouses = computed(() => {
 })
 const mainWarehouse = computed(() => warehouses.value.find(w => w.type === 'main') || null)
 const effectiveSalespersonId = computed(() => {
-  return getWarehouseSalespersonId(fromWarehouse.value) || sessionSalespersonId.value
+  return sessionSalespersonId.value || getWarehouseSalespersonId(fromWarehouse.value)
 })
 
 const filteredProducts = computed(() => {
@@ -377,7 +377,7 @@ async function loadData() {
 
   pageLoading.value = true
   try {
-    await referenceStore.preloadCore()
+    await referenceStore.preloadCore(true)
     stores.value = [...referenceStore.stores]
     allStores.value = [...referenceStore.stores]
     products.value = [...referenceStore.products]
@@ -447,7 +447,7 @@ async function submit() {
   const draft = {
     salespersonId: currentSalespersonId(),
     storeId: selectedStore.value.id,
-    date: new Date().toISOString().slice(0, 10),
+    date: todayLocalDate(),
     status: 'draft',
     returnType: returnType.value,
     fromWarehouseId: fromWarehouse.value?.id || '',

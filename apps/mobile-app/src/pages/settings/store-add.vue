@@ -118,6 +118,7 @@ async function submit() {
     status: form.value.status,
     salespersonId: form.value.salespersonId || undefined,
   })
+  await referenceStore.preloadCore(true)
   uni.showToast({ title: '保存成功', icon: 'success' })
   setTimeout(() => {
     uni.navigateBack()
@@ -134,29 +135,6 @@ onMounted(async () => {
     uni.reLaunch({ url: '/pages/login/index' })
     return
   }
-  if (queryId.value && !userStore.isAdmin) {
-    uni.showToast({ title: '无权限', icon: 'none' })
-    uni.reLaunch({ url: '/pages/settings/index' })
-    return
-  }
-
-  referenceStore.hydrate()
-  syncSalespersons()
-  loading.value = true
-  try {
-    await referenceStore.preloadAllAccounts(true)
-    syncSalespersons()
-  } catch (e: any) {
-    syncSalespersons()
-    if (salespersons.value.length > 0) {
-      uni.showToast({ title: '业务员刷新失败，已显示缓存', icon: 'none' })
-    } else {
-      uni.showToast({ title: e.message || '业务员加载失败', icon: 'none' })
-    }
-  } finally {
-    loading.value = false
-  }
-
   if (queryId.value) {
     await loadEdit(queryId.value)
   } else {

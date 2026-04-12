@@ -128,7 +128,7 @@ import { useUserStore } from '@/store/user'
 import { useReferenceStore } from '@/store/reference'
 import { getStock, saveSale, postSale, isOwnedStore, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId } from '@/api'
 import type { Store, Product, SaleDoc, SaleLine, Warehouse, StockItem } from '@/types'
-import { genId, formatProductQuickPickLabel, formatProductPackageSummary, calcQty, deriveBagQty, normalizeCount, normalizeBoxPackQty, formatStockPreview, getProductStockQty, toStockQtyMap, COMMISSION_RATE } from '@/utils'
+import { genId, formatProductQuickPickLabel, formatProductPackageSummary, calcQty, deriveBagQty, normalizeCount, normalizeBoxPackQty, formatStockPreview, getProductStockQty, toStockQtyMap, COMMISSION_RATE, todayLocalDate } from '@/utils'
 
 interface QtyInput {
   boxQty: number
@@ -162,7 +162,7 @@ const vehicleWarehouses = computed(() => {
   return list.filter(w => isSameSalespersonId(w.salespersonId, sessionSalespersonId.value))
 })
 const effectiveSalespersonId = computed(() => {
-  return getWarehouseSalespersonId(selectedWarehouse.value) || sessionSalespersonId.value
+  return sessionSalespersonId.value || getWarehouseSalespersonId(selectedWarehouse.value)
 })
 const estimatedCommission = computed(() => Number((totalAmount.value * COMMISSION_RATE).toFixed(2)))
 const mainWarehouse = computed(() => warehouses.value.find(w => w.type === 'main') || null)
@@ -376,7 +376,7 @@ async function loadData() {
 
   pageLoading.value = true
   try {
-    await referenceStore.preloadCore()
+    await referenceStore.preloadCore(true)
     stores.value = [...referenceStore.stores]
     allStores.value = [...referenceStore.stores]
     products.value = [...referenceStore.products]
@@ -463,7 +463,7 @@ async function submitSale() {
     salespersonId: currentSalespersonId(),
     storeId: currentStoreId(),
     warehouseId: currentWarehouseId(),
-    date: new Date().toISOString().slice(0, 10),
+    date: todayLocalDate(),
     status: 'draft',
     lines,
   } as SaleDoc

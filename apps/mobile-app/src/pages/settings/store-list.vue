@@ -24,6 +24,7 @@
           <button class="btn" :class="s.status === 'active' ? 'btn-warn' : 'btn-ok'" @tap="toggle(s)">
             {{ s.status === 'active' ? '停用' : '启用' }}
           </button>
+          <button class="btn btn-danger" @tap="remove(s)">删除</button>
         </view>
       </view>
     </view>
@@ -33,7 +34,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
-import { getStoresAll, toggleStore, getSalespersonAccounts, getSalespersonName } from '@/api'
+import { getStoresAll, toggleStore, deleteStore, getSalespersonAccounts, getSalespersonName } from '@/api'
 import type { Store, Salesperson } from '@/types'
 import { useUserStore } from '@/store/user'
 
@@ -55,9 +56,8 @@ function salespersonName(store: Store) {
 }
 
 function guard() {
-  if (!userStore.isAdmin) {
-    uni.showToast({ title: '无权限', icon: 'none' })
-    uni.reLaunch({ url: '/pages/settings/index' })
+  if (!userStore.isLoggedIn) {
+    uni.reLaunch({ url: '/pages/login/index' })
     return false
   }
   return true
@@ -76,12 +76,25 @@ async function toggle(store: Store) {
   store.status = store.status === 'active' ? 'inactive' : 'active'
 }
 
+function remove(store: Store) {
+  uni.showModal({
+    title: '提示',
+    content: `确认删除门店“${store.name}”？`,
+    success: async (res) => {
+      if (!res.confirm) return
+      try {
+        await deleteStore(store.id)
+        uni.showToast({ title: '已删除', icon: 'success' })
+        await loadData()
+      } catch (e: any) {
+        uni.showToast({ title: e?.message || '删除失败', icon: 'none' })
+      }
+    },
+  })
+}
+
 onShow(() => {
   userStore.init()
-  if (!userStore.isLoggedIn) {
-    uni.reLaunch({ url: '/pages/login/index' })
-    return
-  }
   if (!guard()) return
   loadData()
 })
@@ -102,5 +115,6 @@ onShow(() => {
 .btn { padding: 0 20rpx; height: 64rpx; background:#1890ff; color:#fff; border-radius: 10rpx; font-size: 26rpx; line-height:64rpx; }
 .btn-warn { background:#ff4d4f; }
 .btn-ok { background:#52c41a; }
+.btn-danger { background:#722ed1; }
 .empty { text-align:center; padding: 40rpx 0; color:#999; }
 </style>

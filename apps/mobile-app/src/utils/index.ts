@@ -18,6 +18,11 @@ export function now(): string {
   return new Date().toISOString()
 }
 
+// 获取本地日期字符串（yyyy-MM-dd）
+export function todayLocalDate(): string {
+  return formatDate(new Date(), 'YYYY-MM-DD')
+}
+
 // 格式化日期
 export function formatDate(date: string | Date, fmt = 'YYYY-MM-DD'): string {
   const d = new Date(date)

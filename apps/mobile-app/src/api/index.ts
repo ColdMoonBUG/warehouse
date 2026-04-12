@@ -563,6 +563,17 @@ export async function toggleStore(id: string): Promise<void> {
   invalidateReferenceCache('stores_active', 'stores_all')
 }
 
+export async function deleteStore(id: string): Promise<void> {
+  if (USE_MOCK) {
+    const list = storeDb.list().filter(s => s.id !== id)
+    storeDb.save(list)
+    invalidateReferenceCache('stores_active', 'stores_all')
+    return
+  }
+  await request<void>(`/api/store/delete/${id}`, 'POST')
+  invalidateReferenceCache('stores_active', 'stores_all')
+}
+
 export async function saveStore(data: Partial<Store> & { name: string; code?: string }): Promise<void> {
   if (USE_MOCK) {
     const list = storeDb.list()
@@ -782,7 +793,7 @@ export async function uploadFile(filePath: string) {
     if (jsessionid) headers['Cookie'] = `JSESSIONID=${jsessionid}`
 
     uni.uploadFile({
-      url: `${BASE_URL}/file/uploadFile`,
+      url: `${BASE_URL}/api/file/uploadFile`,
       filePath,
       name: 'mf',
       header: headers,
@@ -826,7 +837,7 @@ export async function uploadFile(filePath: string) {
 
 export function getImageUrl(path: string) {
   if (!path) return ''
-  return `${BASE_URL}/file/showImageByPath?path=${encodeURIComponent(path)}`
+  return `${BASE_URL}/api/file/showImageByPath?path=${encodeURIComponent(path)}`
 }
 
 export async function getSales(): Promise<SaleDoc[]> {
