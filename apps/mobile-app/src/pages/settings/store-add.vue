@@ -135,12 +135,30 @@ onMounted(async () => {
     uni.reLaunch({ url: '/pages/login/index' })
     return
   }
+  // 先从本地缓存恢复业务员列表
+  referenceStore.hydrate()
+  syncSalespersons()
   if (queryId.value) {
     await loadEdit(queryId.value)
   } else {
     const currentSalespersonId = getSessionSalespersonId(userStore.currentUser)
     selectedSalesperson.value = salespersons.value.find(item => isSameSalespersonId(item.salespersonId || item.id, currentSalespersonId)) || null
     form.value.salespersonId = selectedSalesperson.value?.salespersonId || selectedSalesperson.value?.id || ''
+  }
+  // 后台刷新全部账户（含停用），确保业务员列表完整
+  loading.value = true
+  try {
+    await referenceStore.preloadAllAccounts(true)
+    syncSalespersons()
+    if (queryId.value) {
+      selectedSalesperson.value = salespersons.value.find(item => isSameSalespersonId(item.salespersonId || item.id, form.value.salespersonId)) || null
+    }
+  } catch (e: any) {
+    if (!salespersons.value.length) {
+      uni.showToast({ title: e?.message || '业务员数据加载失败', icon: 'none' })
+    }
+  } finally {
+    loading.value = false
   }
 })
 </script>

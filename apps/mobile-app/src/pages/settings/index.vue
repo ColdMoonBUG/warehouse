@@ -110,6 +110,7 @@ import { getTodayCommissionSummary } from '@/api'
 import type { TodayCommissionItem, TodayCommissionSummary } from '@/types'
 import { formatDate, todayLocalDate } from '@/utils'
 import { useUserStore } from '@/store/user'
+import { useReferenceStore } from '@/store/reference'
 
 const userStore = useUserStore()
 const currentUser = computed(() => userStore.currentUser)
@@ -183,8 +184,15 @@ async function loadTodayCommission() {
   try {
     todayCommission.value = await getTodayCommissionSummary()
   } catch (e: any) {
-    todayCommission.value = createEmptyCommissionSummary()
-    earningsError.value = e.message || '今日收益加载失败'
+    // API 失败可能是 JSESSIONID 过期，尝试刷新 session 后重试一次
+    try {
+      const referenceStore = useReferenceStore()
+      await referenceStore.preloadCore(true)
+      todayCommission.value = await getTodayCommissionSummary()
+    } catch (retryError: any) {
+      todayCommission.value = createEmptyCommissionSummary()
+      earningsError.value = retryError.message || '今日收益加载失败'
+    }
   } finally {
     earningsLoading.value = false
   }
