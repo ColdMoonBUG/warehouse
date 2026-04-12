@@ -24,9 +24,11 @@ function clearJsessionid() {
 
 function extractJsessionid(header: Record<string, string>): string {
   const setCookie = header['Set-Cookie'] || header['set-cookie'] || ''
+  const xSessionId = header['X-Session-Id'] || header['x-session-id'] || ''
   console.log('[Cookie] 响应头 Set-Cookie:', setCookie || '无')
+  console.log('[Cookie] 响应头 X-Session-Id:', xSessionId || '无')
   const m = setCookie.match(/JSESSIONID=([^;]+)/)
-  const extracted = m ? m[1] : ''
+  const extracted = m ? m[1] : (xSessionId || '')
   if (extracted) {
     console.log('[Cookie] 提取到 JSESSIONID:', extracted.substring(0, 8) + '...')
   } else {

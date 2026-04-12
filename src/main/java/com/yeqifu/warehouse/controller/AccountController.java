@@ -7,6 +7,7 @@ import com.yeqifu.warehouse.mapper.AccountMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
+import javax.servlet.http.HttpServletResponse;
 import javax.servlet.http.HttpSession;
 import java.util.List;
 
@@ -33,7 +34,7 @@ public class AccountController {
     }
 
     @PostMapping("/login")
-    public Result<Account> login(@RequestBody Account req, HttpSession session) {
+    public Result<Account> login(@RequestBody Account req, HttpSession session, HttpServletResponse response) {
         Account account = accountMapper.selectOne(
             new LambdaQueryWrapper<Account>()
                 .eq(Account::getUsername, req.getUsername())
@@ -46,11 +47,12 @@ public class AccountController {
             return Result.error("密码错误");
         }
         saveAccountSession(session, account);
+        response.setHeader("X-Session-Id", session.getId());
         return Result.ok(account);
     }
 
     @PostMapping("/loginByGesture")
-    public Result<Account> loginByGesture(@RequestBody Account req, HttpSession session) {
+    public Result<Account> loginByGesture(@RequestBody Account req, HttpSession session, HttpServletResponse response) {
         Account account = accountMapper.selectOne(
             new LambdaQueryWrapper<Account>()
                 .eq(Account::getUsername, req.getUsername())
@@ -66,6 +68,7 @@ public class AccountController {
             return Result.error("手势密码错误");
         }
         saveAccountSession(session, account);
+        response.setHeader("X-Session-Id", session.getId());
         return Result.ok(account);
     }
 
