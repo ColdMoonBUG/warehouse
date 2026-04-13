@@ -399,6 +399,8 @@ export async function connectPrinter(deviceId: string): Promise<void> {
   }
 
   appendLog('info', `连接完成 ✓ ${deviceId}`)
+  _connected = true
+  _currentDeviceId = deviceId
 }
 
 export async function testConnection(deviceId: string): Promise<boolean> {
@@ -415,6 +417,8 @@ export async function disconnectPrinter(): Promise<void> {
   if (!currentSession) return
   await closeBleConnection(currentSession.deviceId).catch(() => {})
   currentSession = null
+  _connected = false
+  _currentDeviceId = null
 }
 
 // ============================================================
@@ -568,7 +572,7 @@ export async function printTestPage(device?: PrinterDevice | null) {
     throw new Error('请先选择打印机')
   }
 
-  await connectPrinter(target.deviceId)
+  await ensurePrinterConnected(target)
   const cpcl = buildTestPageCpcl()
   await sendCpcl(cpcl)
 }
@@ -587,7 +591,7 @@ export async function printSaleA4(
   if (!target) {
     throw new Error('请先选择打印机')
   }
-  await connectPrinter(target.deviceId)
+  await ensurePrinterConnected(target)
 
   const copies = payType === 'card' ? 3 : 2
   appendLog('info', `[A4打印] 付款方式: ${payType === 'card' ? '单子' : '现金'}, 打印 ${copies} 张`)
@@ -618,12 +622,51 @@ export async function printReturnA4(
   if (!target) {
     throw new Error('请先选择打印机')
   }
-  await connectPrinter(target.deviceId)
+  await ensurePrinterConnected(target)
   appendLog('info', '[A4打印] 发送 JOURNAL+SETFF 配置...')
   await sendCpcl(journalSetup)
   await sleep(500)
   appendLog('info', '[A4打印] 发送打印指令...')
   await sendCpcl(cpclBuffer)
+}
+
+export async function printCombinedA4(
+  saleDoc: SaleDoc,
+  returnDoc: ReturnDoc,
+  store: Store | undefined,
+  salespersonName: string,
+  products: Product[],
+  payType: 'cash' | 'card' = 'card',
+  device?: PrinterDevice | null
+) {
+  const { buildCombinedPrintData } = await import('./canvas-print')
+  const { pages } = await buildCombinedPrintData(saleDoc, returnDoc, store, salespersonName, products, payType)
+  const target = device || getSavedPrinter()
+  if (!target) {
+    throw new Error('请先选择打印机')
+  }
+  await ensurePrinterConnected(target)
+
+  const copies = payType === 'card' ? 3 : 2
+  appendLog('info', `[合并打印] 付款方式: ${payType === 'card' ? '单子' : '现金'}, ${pages.length} 页, 打印 ${copies} 份`)
+
+  for (let c = 0; c < copies; c++) {
+    for (let p = 0; p < pages.length; p++) {
+      const { cpclBuffer, journalSetup } = pages[p]
+      appendLog('info', `[合并打印] 第 ${c + 1}/${copies} 份, 第 ${p + 1}/${pages.length} 页 - 发送配置...`)
+      await sendCpcl(journalSetup)
+      await sleep(500)
+      appendLog('info', `[合并打印] 第 ${c + 1}/${copies} 份, 第 ${p + 1}/${pages.length} 页 - 发送打印指令...`)
+      await sendCpcl(cpclBuffer)
+      if (p < pages.length - 1) {
+        await sleep(1500)
+      }
+    }
+    if (c < copies - 1) {
+      await sleep(1000)
+    }
+  }
+  appendLog('info', `[合并打印] 完成，共打印 ${copies} 份 x ${pages.length} 页`)
 }
 
 export function checkPrinterConnected(): PrinterDevice | null {
@@ -700,4 +743,116 @@ export function openBluetoothSettings() {
   } catch {
     uni.showToast({ title: '请在系统设置中开启蓝牙', icon: 'none' })
   }
+}
+
+// ============================================================
+// 蓝牙前台保活 + 10秒心跳
+// ============================================================
+
+let _connected = false
+let _heartbeatTimer: ReturnType<typeof setInterval> | null = null
+let _currentDeviceId: string | null = null
+let _reconnecting = false
+
+export function isBluetoothConnected(): boolean {
+  return _connected && !!currentSession
+}
+
+/** 尝试发送最小数据检测连接是否存活 */
+async function heartbeatPing(): Promise<boolean> {
+  if (!currentSession) return false
+  try {
+    // 发送一个空字节检测连接
+    const testData = new Uint8Array([0x00]).buffer
+    await writeBleCharacteristic(
+      currentSession.deviceId,
+      currentSession.serviceId,
+      currentSession.writeCharacteristicId,
+      testData,
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function attemptReconnect() {
+  if (_reconnecting) return
+  _reconnecting = true
+  const saved = getSavedPrinter()
+  if (!saved) {
+    _reconnecting = false
+    return
+  }
+  appendLog('info', '[心跳] 连接断开，尝试自动重连...')
+  try {
+    await connectPrinter(saved.deviceId)
+    _connected = true
+    _currentDeviceId = saved.deviceId
+    appendLog('info', '[心跳] 自动重连成功')
+  } catch (e: any) {
+    _connected = false
+    appendLog('warn', `[心跳] 自动重连失败: ${e?.message || e}`)
+  } finally {
+    _reconnecting = false
+  }
+}
+
+function startHeartbeat() {
+  stopHeartbeat()
+  _heartbeatTimer = setInterval(async () => {
+    if (_reconnecting) return
+    if (!_connected || !currentSession) {
+      await attemptReconnect()
+      return
+    }
+    const alive = await heartbeatPing()
+    if (!alive) {
+      _connected = false
+      appendLog('warn', '[心跳] 连接丢失')
+      await attemptReconnect()
+    }
+  }, 10000)
+}
+
+function stopHeartbeat() {
+  if (_heartbeatTimer) {
+    clearInterval(_heartbeatTimer)
+    _heartbeatTimer = null
+  }
+}
+
+/** App 进入前台时调用：启动心跳，自动重连 */
+export function startBluetoothDaemon() {
+  const saved = getSavedPrinter()
+  if (!saved) return
+  // 如果当前无连接，尝试重连
+  if (!_connected || !currentSession) {
+    attemptReconnect()
+  }
+  startHeartbeat()
+  appendLog('info', '[心跳] 前台保活已启动')
+}
+
+/** App 进入后台时调用：暂停心跳 */
+export function pauseBluetoothDaemon() {
+  stopHeartbeat()
+  appendLog('info', '[心跳] 后台暂停心跳')
+}
+
+/** 确保打印前连接就绪，已连接时跳过连接步骤 */
+export async function ensurePrinterConnected(device?: PrinterDevice | null): Promise<void> {
+  const target = device || getSavedPrinter()
+  if (!target) {
+    throw new Error('请先选择打印机')
+  }
+  if (_connected && currentSession && currentSession.deviceId === target.deviceId) {
+    // 已连接，验证一下
+    const alive = await heartbeatPing()
+    if (alive) return
+    appendLog('warn', '[打印] 连接已失效，重新连接...')
+  }
+  await connectPrinter(target.deviceId)
+  _connected = true
+  _currentDeviceId = target.deviceId
 }

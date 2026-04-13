@@ -16,7 +16,7 @@
         </picker>
       </view>
 
-      <view class="section">
+      <view class="section" v-if="returnType === 'vehicle_return'">
         <text class="label">选择超市</text>
         <view class="store-trigger" @tap="openStoreSelector">
           <view class="store-trigger-main">
@@ -55,12 +55,12 @@
       </view>
 
       <view class="section">
-        <text class="label">已选商品</text>
+        <text class="label">已选商品 <text v-if="selectedProducts.length" class="variety-count">({{ selectedProducts.length }}种)</text></text>
         <view v-if="selectedProducts.length === 0" class="empty">请先选择商品</view>
-        <view v-for="p in selectedProducts" :key="p.id" class="product-item">
+        <view v-for="(p, idx) in selectedProducts" :key="p.id" class="product-item">
           <view class="item-head">
             <view class="info">
-              <text class="name">{{ p.name }}</text>
+              <text class="name"><text class="seq-no">{{ idx + 1 }}.</text> {{ p.name }}</text>
               <text class="price">¥{{ p.salePrice }}</text>
               <text class="barcode" v-if="p.barcode">条码: {{ p.barcode }}</text>
               <text class="package">{{ productPackageSummary(p) }}</text>
@@ -83,7 +83,7 @@
       </view>
 
       <view class="summary">
-        <text>合计数量: {{ totalQty }}袋</text>
+        <text>品种: {{ selectedProducts.length }}种 | 合计数量: {{ totalQty }}袋</text>
         <text>合计金额: ¥{{ totalAmount.toFixed(2) }}</text>
       </view>
 
@@ -96,6 +96,9 @@
             <text class="store-popup-title">选择超市</text>
             <text class="store-popup-close" @tap="closeStoreSelector">×</text>
           </view>
+          <view class="store-search">
+            <input v-model="storeKeyword" placeholder="搜索超市名称/地址" class="store-search-input" />
+          </view>
           <scroll-view scroll-y class="store-popup-list">
             <view
               v-for="store in storeOptions"
@@ -107,6 +110,7 @@
               <view class="store-option-main">
                 <text class="store-option-name" :class="{ owned: isOwnedStoreItem(store) }">{{ store.name }}</text>
                 <text v-if="isOwnedStoreItem(store)" class="store-tag">我的店</text>
+                <text v-if="storeDistance(store)" class="store-distance">{{ storeDistance(store) }}</text>
               </view>
               <text v-if="store.address" class="store-option-address">{{ store.address }}</text>
             </view>
@@ -125,6 +129,8 @@ import { useReferenceStore } from '@/store/reference'
 import { getStock, saveReturn, postReturn, isOwnedStore, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId } from '@/api'
 import type { Store, Product, Warehouse, ReturnDoc, ReturnLine, StockItem } from '@/types'
 import { genId, formatProductQuickPickLabel, formatProductPackageSummary, calcQty, deriveBagQty, normalizeCount, normalizeBoxPackQty, formatStockPreview, getProductStockQty, toStockQtyMap, todayLocalDate } from '@/utils'
+import { requestCurrentLocation } from '@/utils/location'
+import { haversineDistance, formatDistance } from '@/utils/geo'
 
 interface QtyInput {
   boxQty: number
@@ -149,13 +155,18 @@ const vehicleStockMap = ref<Record<string, number>>({})
 const mainStockMap = ref<Record<string, number>>({})
 const stockLoading = ref(false)
 const pageLoading = ref(false)
+const userLocation = ref<{ lat: number; lng: number } | null>(null)
+const storeKeyword = ref('')
 
 function onTypeChange(e: any) {
   returnType.value = typeOptions[Number(e.detail.value)]?.value as any
   if (returnType.value !== 'warehouse_return') {
     toWarehouse.value = null
-  } else if (!toWarehouse.value) {
-    toWarehouse.value = returnWarehouses.value[0] || null
+  } else {
+    selectedStore.value = null
+    if (!toWarehouse.value) {
+      toWarehouse.value = returnWarehouses.value[0] || null
+    }
   }
   refreshStockPreview()
 }
@@ -166,7 +177,33 @@ const typeOptions = [
 ]
 const typeLabel = computed(() => typeOptions.find(t => t.value === returnType.value)?.label || '车库退货')
 
-const storeOptions = computed(() => stores.value)
+const storeOptions = computed(() => {
+  let list = stores.value
+  const kw = storeKeyword.value.trim().toLowerCase()
+  if (kw) {
+    list = list.filter(s => {
+      const name = (s.name || '').toLowerCase()
+      const addr = (s.address || '').toLowerCase()
+      return name.includes(kw) || addr.includes(kw)
+    })
+  }
+  if (userLocation.value) {
+    const { lat, lng } = userLocation.value
+    return [...list].sort((a, b) => {
+      const da = (a.lat && a.lng) ? haversineDistance(lat, lng, a.lat, a.lng) : Infinity
+      const db = (b.lat && b.lng) ? haversineDistance(lat, lng, b.lat, b.lng) : Infinity
+      return da - db
+    })
+  }
+  return list
+})
+
+function storeDistance(store: Store): string | null {
+  if (!userLocation.value || !store.lat || !store.lng) return null
+  const d = haversineDistance(userLocation.value.lat, userLocation.value.lng, store.lat, store.lng)
+  return formatDistance(d)
+}
+
 const sessionSalespersonId = computed(() => getSessionSalespersonId(userStore.currentUser))
 const vehicleWarehouses = computed(() => {
   const list = warehouses.value.filter(w => w.type === 'vehicle')
@@ -175,6 +212,7 @@ const vehicleWarehouses = computed(() => {
   return list.filter(w => isSameSalespersonId(w.salespersonId, sessionSalespersonId.value))
 })
 const mainWarehouse = computed(() => warehouses.value.find(w => w.type === 'main') || null)
+const returnWarehouses = computed(() => warehouses.value.filter(w => w.type === 'main'))
 const effectiveSalespersonId = computed(() => {
   return sessionSalespersonId.value || getWarehouseSalespersonId(fromWarehouse.value)
 })
@@ -225,7 +263,8 @@ const totalAmount = computed(() => {
   return total
 })
 const canSubmit = computed(() => {
-  if (!selectedStore.value || totalQty.value <= 0 || !fromWarehouse.value) return false
+  if (totalQty.value <= 0 || !fromWarehouse.value) return false
+  if (returnType.value === 'vehicle_return') return !!selectedStore.value
   if (returnType.value === 'warehouse_return') return !!toWarehouse.value
   return true
 })
@@ -415,13 +454,20 @@ async function loadData() {
   }
 
   await refreshStockPreview()
+
+  // 异步获取当前位置（用于超市距离排序）
+  requestCurrentLocation().then(loc => { userLocation.value = loc }).catch(() => {})
 }
 
 async function submit() {
   Object.keys(qtyMap.value).forEach(syncQty)
 
-  if (!canSubmit.value || !selectedStore.value) {
+  if (!canSubmit.value) {
     uni.showToast({ title: '请完善信息', icon: 'none' })
+    return
+  }
+  if (returnType.value === 'vehicle_return' && !selectedStore.value) {
+    uni.showToast({ title: '请选择超市', icon: 'none' })
     return
   }
 
@@ -446,7 +492,7 @@ async function submit() {
 
   const draft = {
     salespersonId: currentSalespersonId(),
-    storeId: selectedStore.value.id,
+    storeId: selectedStore.value?.id || '',
     date: todayLocalDate(),
     status: 'draft',
     returnType: returnType.value,
@@ -529,6 +575,9 @@ onMounted(() => {
 .store-option-name { flex:1; font-size:30rpx; color:#333; }
 .store-option-name.owned { color:#ff4d4f; }
 .store-option-address { display:block; margin-top:8rpx; font-size:22rpx; color:#94a3b8; }
+.store-search { margin-bottom:16rpx; }
+.store-search-input { width:100%; border:2rpx solid #eee; border-radius:12rpx; padding:16rpx 20rpx; font-size:28rpx; box-sizing:border-box; }
+.store-distance { font-size:22rpx; color:#1890ff; margin-left:auto; flex-shrink:0; }
 .btn-submit { width:100%; height:88rpx; background:#1890ff; color:#fff; font-size:32rpx; border-radius:44rpx; border:none; }
 .btn-submit::after { border:none; }
 .empty { text-align:center; padding: 20rpx 0; color:#999; }

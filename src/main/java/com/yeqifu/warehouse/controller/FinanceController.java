@@ -58,6 +58,69 @@ public class FinanceController {
     @Autowired
     private StoreMapper storeMapper;
 
+    @GetMapping("/store-summaries")
+    public Result<List<StoreCommissionSummaryVO>> storeSummaries(HttpSession session) {
+        Result<List<StoreCommissionSummaryVO>> auth = rejectIfNotAdmin(session);
+        if (auth != null) {
+            return auth;
+        }
+        List<CommissionLedger> allLedgers = commissionLedgerMapper.selectList(
+            new LambdaQueryWrapper<CommissionLedger>().orderByDesc(CommissionLedger::getCreatedAt)
+        );
+        // 按 storeId 聚合
+        Map<String, List<CommissionLedger>> grouped = new LinkedHashMap<>();
+        for (CommissionLedger ledger : allLedgers) {
+            String sid = ledger.getStoreId() != null ? ledger.getStoreId() : "";
+            grouped.computeIfAbsent(sid, k -> new ArrayList<>()).add(ledger);
+        }
+        // 加载所有门店名
+        Set<String> storeIds = grouped.keySet().stream().filter(s -> !s.isEmpty()).collect(Collectors.toSet());
+        Map<String, Store> storeMap = storeIds.isEmpty()
+            ? new LinkedHashMap<>()
+            : storeMapper.selectBatchIds(storeIds).stream()
+                .collect(Collectors.toMap(Store::getId, s -> s, (a, b) -> a, LinkedHashMap::new));
+
+        List<StoreCommissionSummaryVO> result = new ArrayList<>();
+        for (Map.Entry<String, List<CommissionLedger>> entry : grouped.entrySet()) {
+            String storeId = entry.getKey();
+            List<CommissionLedger> ledgers = entry.getValue();
+            BigDecimal saleAmount = BigDecimal.ZERO;
+            BigDecimal returnAmount = BigDecimal.ZERO;
+            for (CommissionLedger ledger : ledgers) {
+                BigDecimal amount = defaultAmount(ledger.getCommissionAmount());
+                if (isSaleCommissionBizType(ledger.getBizType())) {
+                    saleAmount = saleAmount.add(amount);
+                } else {
+                    returnAmount = returnAmount.add(amount);
+                }
+            }
+            StoreCommissionSummaryVO vo = new StoreCommissionSummaryVO();
+            vo.setStoreId(storeId);
+            Store store = storeMap.get(storeId);
+            vo.setStoreName(store != null ? store.getName() : (storeId.isEmpty() ? "未知门店" : storeId));
+            vo.setSaleCommission(saleAmount);
+            vo.setReturnCommission(returnAmount);
+            vo.setNetCommission(saleAmount.add(returnAmount));
+            vo.setLedgerCount(ledgers.size());
+            result.add(vo);
+        }
+        return Result.ok(result);
+    }
+
+    @GetMapping("/store-detail/{storeId}")
+    public Result<List<CommissionLedgerItemVO>> storeDetail(@PathVariable String storeId, HttpSession session) {
+        Result<List<CommissionLedgerItemVO>> auth = rejectIfNotAdmin(session);
+        if (auth != null) {
+            return auth;
+        }
+        List<CommissionLedger> ledgers = commissionLedgerMapper.selectList(
+            new LambdaQueryWrapper<CommissionLedger>()
+                .eq(CommissionLedger::getStoreId, storeId)
+                .orderByDesc(CommissionLedger::getCreatedAt)
+        );
+        return Result.ok(buildCommissionLedgerItems(ledgers));
+    }
+
     @GetMapping("/summary")
     public Result<List<CommissionSummaryVO>> summary(HttpSession session) {
         Result<List<CommissionSummaryVO>> auth = rejectIfNotAdmin(session);
@@ -540,5 +603,15 @@ public class FinanceController {
     public static class CommissionSettleRequest {
         private String salespersonId;
         private String remark;
+    }
+
+    @Data
+    public static class StoreCommissionSummaryVO {
+        private String storeId;
+        private String storeName;
+        private BigDecimal saleCommission;
+        private BigDecimal returnCommission;
+        private BigDecimal netCommission;
+        private Integer ledgerCount;
     }
 }

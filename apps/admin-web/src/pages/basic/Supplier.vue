@@ -30,6 +30,7 @@
     <el-dialog v-model="dlg" :title="form.id?'编辑厂家':'新增厂家'" width="480px">
       <el-form :model="form" :rules="rules" ref="formRef" label-width="80px">
         <el-form-item label="名称" prop="name"><el-input v-model="form.name" /></el-form-item>
+        <el-form-item label="编码" prop="code"><el-input v-model="form.code" placeholder="不填则自动生成" /></el-form-item>
         <el-form-item label="联系人"><el-input v-model="form.contact" /></el-form-item>
         <el-form-item label="电话"><el-input v-model="form.phone" /></el-form-item>
         <el-form-item label="地址"><el-input v-model="form.address" /></el-form-item>

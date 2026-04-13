@@ -25,16 +25,16 @@
       </view>
 
       <view class="card">
-        <view class="card-title">商品明细</view>
-        <view v-for="line in doc.lines" :key="line.id" class="line">
-          <text class="name">{{ getProductName(line.productId) }}</text>
+        <view class="card-title">商品明细 ({{ doc.lines.length }}种)</view>
+        <view v-for="(line, idx) in doc.lines" :key="line.id" class="line">
+          <text class="name"><text class="seq-no">{{ idx + 1 }}.</text> {{ getProductName(line.productId) }}</text>
           <text class="qty">{{ lineQtyText(line) }}</text>
           <text class="price">¥{{ line.price }}</text>
         </view>
       </view>
 
       <view class="summary">
-        <text>合计数量: {{ totalQty }}袋</text>
+        <text>品种: {{ doc.lines.length }}种 | 合计数量: {{ totalQty }}袋</text>
         <text>合计金额: ¥{{ totalAmount.toFixed(2) }}</text>
       </view>
 
@@ -52,6 +52,7 @@
 
       <button class="btn-print" @tap="previewPrint">预览并打印</button>
       <button class="btn-void" v-if="doc.status==='posted'" @tap="voidDoc">作废销单</button>
+      <button class="btn-void-rebuild" v-if="doc.status==='posted'" @tap="voidAndRebuild">作废并重建</button>
     </view>
 
     <view v-else class="empty">加载中...</view>
@@ -77,14 +78,15 @@
             </view>
             <view class="preview-divider"></view>
             <view class="preview-table-header">
+              <text class="preview-col-seq">序</text>
               <text class="preview-col-name">商品</text>
               <text class="preview-col-barcode">条码</text>
               <text class="preview-col-qty">数量</text>
               <text class="preview-col-price">单价</text>
               <text class="preview-col-amount">金额</text>
             </view>
-            <view v-for="item in previewItems" :key="item.productId" class="preview-table-row">
-              <text class="preview-col-name">{{ item.name }}</text>
+            <view v-for="(item, idx) in previewItems" :key="item.productId" class="preview-table-row">
+              <text class="preview-col-seq">{{ idx + 1 }}</text>              <text class="preview-col-name">{{ item.name }}</text>
               <text class="preview-col-barcode">{{ item.barcode || '-' }}</text>
               <text class="preview-col-qty">{{ item.qty }}</text>
               <text class="preview-col-price">¥{{ item.price.toFixed(2) }}</text>
@@ -124,9 +126,49 @@ import { CANVAS_ID, estimateContentHeight, PAGE_WIDTH_DOTS } from '@/utils/canva
 
 async function voidDoc() {
   if (!doc.value) return
-  await voidSale(doc.value.id)
-  uni.showToast({ title: '已作废', icon: 'success' })
-  await loadDetail()
+  uni.showModal({
+    title: '确认作废',
+    content: '作废后库存将自动回滚，是否确认？',
+    success: async (res) => {
+      if (!res.confirm || !doc.value) return
+      await voidSale(doc.value.id)
+      uni.showToast({ title: '已作废', icon: 'success' })
+      await loadDetail()
+    },
+  })
+}
+
+async function voidAndRebuild() {
+  if (!doc.value) return
+  uni.showModal({
+    title: '作废并重建',
+    content: '将作废此销单并跳转到创建页，保留本单商品数据作为新单基础。',
+    confirmText: '确认',
+    success: async (res) => {
+      if (!res.confirm || !doc.value) return
+      try {
+        // 先保存预填数据
+        const prefill = {
+          storeId: doc.value.storeId,
+          warehouseId: doc.value.warehouseId || '',
+          lines: doc.value.lines.map(l => ({
+            productId: l.productId,
+            qty: l.qty,
+            boxQty: l.boxQty || 0,
+          })),
+        }
+        uni.setStorageSync('wh_sale_prefill', JSON.stringify(prefill))
+        // 作废原单
+        await voidSale(doc.value.id)
+        uni.showToast({ title: '已作废，正在跳转...', icon: 'none' })
+        setTimeout(() => {
+          uni.redirectTo({ url: '/pages/sales/create?prefill=true' })
+        }, 400)
+      } catch (e: any) {
+        uni.showToast({ title: e.message || '作废失败', icon: 'none' })
+      }
+    },
+  })
 }
 import { useUserStore } from '@/store/user'
 
@@ -410,6 +452,23 @@ onMounted(() => {
   font-size: 32rpx;
   border-radius: 44rpx;
   border: none;
+  margin-bottom: 16rpx;
+}
+
+.btn-void-rebuild {
+  width: 100%;
+  height: 88rpx;
+  background: #fff;
+  color: #ff4d4f;
+  font-size: 32rpx;
+  border-radius: 44rpx;
+  border: 2rpx solid #ff4d4f;
+}
+
+.seq-no {
+  color: #999;
+  font-size: 26rpx;
+  margin-right: 6rpx;
 }
 
 .empty {
@@ -519,6 +578,7 @@ onMounted(() => {
   border-bottom: 1rpx solid #f5f5f5;
 }
 
+.preview-col-seq { width: 60rpx; text-align: center; }
 .preview-col-name { flex: 2; }
 .preview-col-barcode { flex: 2; }
 .preview-col-qty { flex: 1; text-align: right; }

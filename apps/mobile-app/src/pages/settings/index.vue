@@ -41,20 +41,25 @@
           </view>
 
           <view class="ledger-section">
-            <view class="ledger-head">
+            <view class="ledger-head" @tap="ledgerExpanded = !ledgerExpanded">
               <text class="ledger-title">收益流水</text>
-              <text class="ledger-count">{{ todayCommission.ledgerCount }}笔</text>
-            </view>
-            <view v-if="earningsError" class="earnings-empty">{{ earningsError }}</view>
-            <view v-else-if="todayCommission.ledgers.length === 0" class="earnings-empty">今日暂无收益流水</view>
-            <view v-for="item in todayCommission.ledgers" :key="item.id" class="ledger-item">
-              <view class="ledger-row">
-                <text class="ledger-name">{{ item.storeName || '未关联门店' }}</text>
-                <text class="ledger-amount" :class="amountClass(item.commissionAmount)">{{ signedAmountText(item.commissionAmount) }}</text>
+              <view class="ledger-head-right">
+                <text class="ledger-count">{{ todayCommission.ledgerCount }}笔</text>
+                <text class="ledger-arrow" :class="{ expanded: ledgerExpanded }">›</text>
               </view>
-              <view class="ledger-row ledger-row-sub">
-                <text class="ledger-meta">{{ secondaryText(item) }}</text>
-                <text class="ledger-time">{{ timeText(item.createdAt) }}</text>
+            </view>
+            <view v-if="ledgerExpanded">
+              <view v-if="earningsError" class="earnings-empty">{{ earningsError }}</view>
+              <view v-else-if="todayCommission.ledgers.length === 0" class="earnings-empty">今日暂无收益流水</view>
+              <view v-for="item in todayCommission.ledgers" :key="item.id" class="ledger-item">
+                <view class="ledger-row">
+                  <text class="ledger-name">{{ item.storeName || '未关联门店' }}</text>
+                  <text class="ledger-amount" :class="amountClass(item.commissionAmount)">{{ signedAmountText(item.commissionAmount) }}</text>
+                </view>
+                <view class="ledger-row ledger-row-sub">
+                  <text class="ledger-meta">{{ secondaryText(item) }}</text>
+                  <text class="ledger-time">{{ timeText(item.createdAt) }}</text>
+                </view>
               </view>
             </view>
           </view>
@@ -110,13 +115,13 @@ import { getTodayCommissionSummary } from '@/api'
 import type { TodayCommissionItem, TodayCommissionSummary } from '@/types'
 import { formatDate, todayLocalDate } from '@/utils'
 import { useUserStore } from '@/store/user'
-import { useReferenceStore } from '@/store/reference'
 
 const userStore = useUserStore()
 const currentUser = computed(() => userStore.currentUser)
 const isAdmin = computed(() => userStore.isAdmin)
 const earningsLoading = ref(false)
 const earningsError = ref('')
+const ledgerExpanded = ref(false)
 const todayCommission = ref<TodayCommissionSummary>(createEmptyCommissionSummary())
 
 function createEmptyCommissionSummary(): TodayCommissionSummary {
@@ -184,15 +189,20 @@ async function loadTodayCommission() {
   try {
     todayCommission.value = await getTodayCommissionSummary()
   } catch (e: any) {
-    // API 失败可能是 JSESSIONID 过期，尝试刷新 session 后重试一次
-    try {
-      const referenceStore = useReferenceStore()
-      await referenceStore.preloadCore(true)
-      todayCommission.value = await getTodayCommissionSummary()
-    } catch (retryError: any) {
+    const msg = e.message || ''
+    // 后端 session 过期返回"未登录"，需要重新登录
+    if (msg.includes('未登录')) {
       todayCommission.value = createEmptyCommissionSummary()
-      earningsError.value = retryError.message || '今日收益加载失败'
+      earningsError.value = '登录已过期，请重新登录'
+      uni.showToast({ title: '登录已过期，请重新登录', icon: 'none', duration: 2000 })
+      setTimeout(() => {
+        userStore.logout()
+        uni.reLaunch({ url: '/pages/login/index' })
+      }, 1500)
+      return
     }
+    todayCommission.value = createEmptyCommissionSummary()
+    earningsError.value = msg || '今日收益加载失败'
   } finally {
     earningsLoading.value = false
   }
@@ -411,6 +421,23 @@ onShow(async () => {
 
 .ledger-head {
   margin-bottom: 12rpx;
+}
+
+.ledger-head-right {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+}
+
+.ledger-arrow {
+  font-size: 28rpx;
+  color: #94a3b8;
+  transition: transform 0.2s;
+  transform: rotate(0deg);
+}
+
+.ledger-arrow.expanded {
+  transform: rotate(90deg);
 }
 
 .ledger-item {

@@ -18,6 +18,7 @@
           </view>
           <text class="store-trigger-arrow">›</text>
         </view>
+        <text v-if="selectedStore" class="store-history-link" @tap="goStoreHistory">查看历史销单 ›</text>
       </view>
 
       <view class="section">
@@ -30,7 +31,12 @@
       </view>
 
       <view class="section">
-        <text class="label">选择商品</text>
+        <view class="section-header">
+          <text class="label">选择商品</text>
+          <picker mode="selector" :range="sortModeOptions" range-key="label" :value="sortModeIndex" @change="onSortModeChange">
+            <text class="sort-trigger">{{ currentSortLabel }} ▾</text>
+          </picker>
+        </view>
         <view class="scan-row">
           <input v-model="keyword" placeholder="输入条码或名称筛选" />
         </view>
@@ -54,12 +60,12 @@
       </view>
 
       <view class="section">
-        <text class="label">已选商品</text>
+        <text class="label">已选商品 <text v-if="selectedProducts.length" class="variety-count">({{ selectedProducts.length }}种)</text></text>
         <view v-if="selectedProducts.length === 0" class="empty">请先选择商品</view>
-        <view v-for="p in selectedProducts" :key="p.id" class="product-item">
+        <view v-for="(p, idx) in selectedProducts" :key="p.id" class="product-item">
           <view class="item-head">
             <view class="info">
-              <text class="name">{{ p.name }}</text>
+              <text class="name"><text class="seq-no">{{ idx + 1 }}.</text> {{ p.name }}</text>
               <text class="price">¥{{ p.salePrice }}</text>
               <text class="barcode" v-if="p.barcode">条码: {{ p.barcode }}</text>
               <text class="package">{{ productPackageSummary(p) }}</text>
@@ -82,16 +88,92 @@
       </view>
 
       <view class="summary">
-        <text>合计数量: {{ totalQty }}袋</text>
+        <text>品种: {{ selectedProducts.length }}种 | 合计数量: {{ totalQty }}袋</text>
         <view class="summary-amounts">
           <text>合计金额: ¥{{ totalAmount.toFixed(2) }}</text>
           <text class="commission-text">本单预计提成: ¥{{ estimatedCommission.toFixed(2) }}</text>
         </view>
       </view>
 
-      <button class="btn-submit" @tap="submitSale" :disabled="!canSubmit">
-        生成销单
-      </button>
+      <view class="return-toggle">
+        <text class="return-toggle-label">同时创建退单</text>
+        <switch :checked="showReturnSection" @change="showReturnSection = $event.detail.value" color="#1890ff" />
+      </view>
+
+      <view v-if="showReturnSection" class="section return-section">
+        <text class="label">退单商品</text>
+        <view class="scan-row">
+          <input v-model="returnKeyword" placeholder="输入条码或名称筛选退货商品" />
+        </view>
+        <picker
+          mode="selector"
+          :range="returnQuickPickOptions"
+          range-key="name"
+          :value="-1"
+          :disabled="returnQuickPickOptions.length === 0"
+          @change="onReturnQuickPickChange"
+        >
+          <view class="picker quick-picker" :class="{ disabled: returnQuickPickOptions.length === 0 }">
+            <text>{{ returnQuickPickOptions.length ? '快捷选择退货商品' : '暂无可选商品' }}</text>
+          </view>
+        </picker>
+
+        <view v-if="returnSelectedProducts.length === 0" class="empty">请选择退货商品</view>
+        <view v-for="(p, idx) in returnSelectedProducts" :key="p.id" class="product-item">
+          <view class="item-head">
+            <view class="info">
+              <text class="name"><text class="seq-no">{{ idx + 1 }}.</text> {{ p.name }}</text>
+              <text class="price">¥{{ p.salePrice }}</text>
+              <text class="package">{{ returnProductPackageSummary(p) }}</text>
+            </view>
+            <button class="btn-remove" @tap="toggleReturnSelect(p)">移除</button>
+          </view>
+          <view class="qty-grid">
+            <view class="qty-field">
+              <text class="qty-label">箱数</text>
+              <input class="qty-input" v-model.number="returnQtyMap[p.id].boxQty" type="number" placeholder="0" @focus="onReturnQtyFocus(p.id, 'boxQty')" @blur="syncReturnQty(p.id)" />
+            </view>
+            <view class="qty-field">
+              <text class="qty-label">袋数</text>
+              <input class="qty-input" v-model.number="returnQtyMap[p.id].bagQty" type="number" placeholder="0" @focus="onReturnQtyFocus(p.id, 'bagQty')" @blur="syncReturnQty(p.id)" />
+            </view>
+          </view>
+          <text class="qty-total">共 {{ returnQtyMap[p.id].qty }} 袋</text>
+        </view>
+
+        <view v-if="returnSelectedProducts.length" class="summary return-summary">
+          <text>退货: {{ returnSelectedProducts.length }}种 | 合计: {{ returnTotalQty }}袋</text>
+          <text>退货金额: ¥{{ returnTotalAmount.toFixed(2) }}</text>
+        </view>
+      </view>
+
+      <view v-if="showReturnSection && returnTotalQty > 0" class="net-summary">
+        <text>净额: ¥{{ (totalAmount - returnTotalAmount).toFixed(2) }}</text>
+      </view>
+
+      <view class="pay-type-section" v-if="canSubmit">
+        <text class="pay-type-label">付款方式</text>
+        <view class="pay-type-options">
+          <view class="pay-type-option" :class="{ active: payType === 'card' }" @tap="payType = 'card'">
+            <text>单子</text>
+          </view>
+          <view class="pay-type-option" :class="{ active: payType === 'cash' }" @tap="payType = 'cash'">
+            <text>现金</text>
+          </view>
+        </view>
+      </view>
+
+      <view class="btn-group">
+        <button class="btn-submit btn-primary" @tap="submitAndPrint" :disabled="!canSubmit">
+          确认并打印
+        </button>
+        <button class="btn-submit btn-secondary" @tap="submitOnly" :disabled="!canSubmit">
+          只确认
+        </button>
+        <button class="btn-submit btn-gift" @tap="submitGift" :disabled="!canSubmit">
+          送老板试吃
+        </button>
+      </view>
 
       <view v-if="storeSelectorVisible" class="store-popup">
         <view class="store-popup-mask" @tap="closeStoreSelector" />
@@ -99,6 +181,9 @@
           <view class="store-popup-header">
             <text class="store-popup-title">选择超市</text>
             <text class="store-popup-close" @tap="closeStoreSelector">×</text>
+          </view>
+          <view class="store-search">
+            <input v-model="storeKeyword" placeholder="搜索超市名称/地址" class="store-search-input" />
           </view>
           <scroll-view scroll-y class="store-popup-list">
             <view
@@ -111,6 +196,7 @@
               <view class="store-option-main">
                 <text class="store-option-name" :class="{ owned: isOwnedStoreItem(store) }">{{ store.name }}</text>
                 <text v-if="isOwnedStoreItem(store)" class="store-tag">我的店</text>
+                <text v-if="storeDistance(store)" class="store-distance">{{ storeDistance(store) }}</text>
               </view>
               <text v-if="store.address" class="store-option-address">{{ store.address }}</text>
             </view>
@@ -123,12 +209,25 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { onLoad } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
 import { useReferenceStore } from '@/store/reference'
-import { getStock, saveSale, postSale, isOwnedStore, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId } from '@/api'
-import type { Store, Product, SaleDoc, SaleLine, Warehouse, StockItem } from '@/types'
-import { genId, formatProductQuickPickLabel, formatProductPackageSummary, calcQty, deriveBagQty, normalizeCount, normalizeBoxPackQty, formatStockPreview, getProductStockQty, toStockQtyMap, COMMISSION_RATE, todayLocalDate } from '@/utils'
+import { getStock, saveSale, postSale, saveReturn, postReturn, isOwnedStore, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId, getProductSaleQty } from '@/api'
+import type { Store, Product, SaleDoc, SaleLine, ReturnDoc, ReturnLine, Warehouse, StockItem } from '@/types'
+import { genId, formatProductQuickPickLabel, formatProductPackageSummary, calcQty, deriveBagQty, normalizeCount, normalizeBoxPackQty, formatStockPreview, getProductStockQty, toStockQtyMap, COMMISSION_RATE, todayLocalDate, debounce } from '@/utils'
+import { printSaleA4, printCombinedA4, checkPrinterConnected, navigateToPrinterSettings } from '@/utils/bluetooth-printer'
+import { requestCurrentLocation } from '@/utils/location'
+import { haversineDistance, formatDistance } from '@/utils/geo'
+import { stockPoller } from '@/utils/stock-sync'
+
+type SortMode = 'sales_desc' | 'stock_desc' | 'name_asc' | 'price_asc'
+const sortModeOptions = [
+  { label: '按销量(好卖优先)', value: 'sales_desc' as SortMode },
+  { label: '按库存(多的优先)', value: 'stock_desc' as SortMode },
+  { label: '按名称', value: 'name_asc' as SortMode },
+  { label: '按价格(低到高)', value: 'price_asc' as SortMode },
+]
 
 interface QtyInput {
   boxQty: number
@@ -152,9 +251,60 @@ const vehicleStockMap = ref<Record<string, number>>({})
 const mainStockMap = ref<Record<string, number>>({})
 const stockLoading = ref(false)
 const pageLoading = ref(false)
+const payType = ref<'cash' | 'card'>('card')
+const sortMode = ref<SortMode>('sales_desc')
+const productSaleQtyMap = ref<Record<string, number>>({})
+const userLocation = ref<{ lat: number; lng: number } | null>(null)
+const storeKeyword = ref('')
+const addedProductOrder = ref(new Map<string, number>())
+const showReturnSection = ref(false)
+const returnQtyMap = ref<Record<string, QtyInput>>({})
+const returnKeyword = ref('')
 
-const storeOptions = computed(() => stores.value)
+const DRAFT_KEY = 'wh_sale_draft'
+const DRAFT_TTL = 24 * 60 * 60 * 1000
+interface SaleDraft {
+  storeId: string
+  warehouseId: string
+  qtyMap: Record<string, { boxQty: number; bagQty: number; qty: number }>
+  keyword: string
+  savedAt: number
+}
+
+const storeOptions = computed(() => {
+  let list = stores.value
+  const kw = storeKeyword.value.trim().toLowerCase()
+  if (kw) {
+    list = list.filter(s => {
+      const name = (s.name || '').toLowerCase()
+      const addr = (s.address || '').toLowerCase()
+      return name.includes(kw) || addr.includes(kw)
+    })
+  }
+  if (userLocation.value) {
+    const { lat, lng } = userLocation.value
+    return [...list].sort((a, b) => {
+      const da = (a.lat && a.lng) ? haversineDistance(lat, lng, a.lat, a.lng) : Infinity
+      const db = (b.lat && b.lng) ? haversineDistance(lat, lng, b.lat, b.lng) : Infinity
+      return da - db
+    })
+  }
+  return list
+})
 const sessionSalespersonId = computed(() => getSessionSalespersonId(userStore.currentUser))
+const sortModeIndex = computed(() => sortModeOptions.findIndex(o => o.value === sortMode.value))
+const currentSortLabel = computed(() => sortModeOptions.find(o => o.value === sortMode.value)?.label || '排序')
+
+function onSortModeChange(e: any) {
+  sortMode.value = sortModeOptions[Number(e.detail.value)]?.value || 'sales_desc'
+}
+
+function storeDistance(store: Store): string | null {
+  if (!userLocation.value || !store.lat || !store.lng) return null
+  const d = haversineDistance(userLocation.value.lat, userLocation.value.lng, store.lat, store.lng)
+  return formatDistance(d)
+}
+
 const vehicleWarehouses = computed(() => {
   const list = warehouses.value.filter(w => w.type === 'vehicle')
   if (userStore.isAdmin) return list
@@ -178,11 +328,26 @@ const filteredProducts = computed(() => {
     })
   }
   const sm = vehicleStockMap.value
+  const salesMap = productSaleQtyMap.value
+  const mode = sortMode.value
   return [...list].sort((a, b) => {
     const sa = sm[a.id] || 0, sb = sm[b.id] || 0
     if (sa > 0 && sb === 0) return -1
     if (sa === 0 && sb > 0) return 1
-    return sb - sa
+    switch (mode) {
+      case 'sales_desc': {
+        const qa = salesMap[a.id] || 0, qb = salesMap[b.id] || 0
+        return qb - qa || sb - sa
+      }
+      case 'stock_desc':
+        return sb - sa
+      case 'name_asc':
+        return (a.name || '').localeCompare(b.name || '', 'zh')
+      case 'price_asc':
+        return (a.salePrice || 0) - (b.salePrice || 0)
+      default:
+        return sb - sa
+    }
   })
 })
 
@@ -202,7 +367,15 @@ const quickPickStockHint = computed(() => {
   return mainWarehouse.value ? '列表已显示车库和总仓库存' : '列表已显示车库库存'
 })
 
-const selectedProducts = computed(() => products.value.filter(p => !!qtyMap.value[p.id]))
+const selectedProducts = computed(() => {
+  const selected = products.value.filter(p => !!qtyMap.value[p.id])
+  const order = addedProductOrder.value
+  return [...selected].sort((a, b) => {
+    const oa = order.get(a.id) ?? 0
+    const ob = order.get(b.id) ?? 0
+    return ob - oa
+  })
+})
 
 const totalQty = computed(() => {
   return Object.values(qtyMap.value).reduce((sum, item) => sum + normalizeCount(item.qty), 0)
@@ -218,6 +391,38 @@ const totalAmount = computed(() => {
 
 const canSubmit = computed(() => {
   return !!currentStoreId() && totalQty.value > 0 && !!currentWarehouseId()
+})
+
+const returnFilteredProducts = computed(() => {
+  const key = returnKeyword.value.trim().toLowerCase()
+  let list = products.value
+  if (key) {
+    list = list.filter(p => {
+      const name = (p.name || '').toLowerCase()
+      const code = (p.barcode || '').toLowerCase()
+      return name.includes(key) || code.includes(key)
+    })
+  }
+  return list
+})
+
+const returnQuickPickOptions = computed(() => returnFilteredProducts.value.map(p => ({
+  id: p.id,
+  name: formatProductQuickPickLabel(p, productStockPreview(p.id)),
+})))
+
+const returnSelectedProducts = computed(() => products.value.filter(p => !!returnQtyMap.value[p.id]))
+
+const returnTotalQty = computed(() => {
+  return Object.values(returnQtyMap.value).reduce((sum, item) => sum + normalizeCount(item.qty), 0)
+})
+
+const returnTotalAmount = computed(() => {
+  let total = 0
+  for (const p of returnSelectedProducts.value) {
+    total += normalizeCount(returnQtyMap.value[p.id]?.qty) * (p.salePrice || 0)
+  }
+  return total
 })
 
 function currentSalespersonId() {
@@ -283,6 +488,43 @@ function productStockPreview(productId: string) {
   ])
 }
 
+function toggleReturnSelect(p: Product) {
+  if (returnQtyMap.value[p.id]) {
+    delete returnQtyMap.value[p.id]
+    returnQtyMap.value = { ...returnQtyMap.value }
+    return
+  }
+  returnQtyMap.value[p.id] = createQtyInput(p.id)
+  returnQtyMap.value = { ...returnQtyMap.value }
+}
+
+function syncReturnQty(productId: string) {
+  const current = returnQtyMap.value[productId]
+  if (!current) return
+  current.boxQty = normalizeCount(current.boxQty)
+  current.bagQty = normalizeCount(current.bagQty)
+  current.qty = calcQty(current.boxQty, current.bagQty, productById(productId)?.boxQty)
+}
+
+function onReturnQtyFocus(productId: string, field: 'boxQty' | 'bagQty') {
+  const current = returnQtyMap.value[productId]
+  if (current && !current[field]) {
+    current[field] = '' as any
+    returnQtyMap.value = { ...returnQtyMap.value }
+  }
+}
+
+function onReturnQuickPickChange(e: any) {
+  const product = returnFilteredProducts.value[Number(e.detail.value)]
+  if (!product) return
+  toggleReturnSelect(product)
+}
+
+function returnProductPackageSummary(product: Product) {
+  const current = returnQtyMap.value[product.id]
+  return formatProductPackageSummary(product, current?.qty || 0, current?.boxQty || 0)
+}
+
 async function refreshStockPreview() {
   if (!selectedWarehouse.value && !mainWarehouse.value) {
     vehicleStockMap.value = {}
@@ -314,10 +556,12 @@ function toggleSelect(p: Product) {
   if (isSelected(p.id)) {
     delete qtyMap.value[p.id]
     qtyMap.value = { ...qtyMap.value }
+    addedProductOrder.value.delete(p.id)
     return
   }
   qtyMap.value[p.id] = createQtyInput(p.id)
   qtyMap.value = { ...qtyMap.value }
+  addedProductOrder.value.set(p.id, Date.now())
 }
 
 function onQuickPickChange(e: any) {
@@ -343,10 +587,18 @@ function isOwnedStoreItem(store?: Store | null) {
   return isOwnedStore(store, currentSalespersonId())
 }
 
+function goStoreHistory() {
+  if (!selectedStore.value) return
+  uni.navigateTo({
+    url: `/pages/sales/store-history?storeId=${selectedStore.value.id}&storeName=${encodeURIComponent(selectedStore.value.name)}`,
+  })
+}
+
 function onWarehouseChange(e: any) {
   selectedWarehouse.value = vehicleWarehouses.value[Number(e.detail.value)] || null
   syncStoresBySalesperson()
   refreshStockPreview()
+  subscribeStockUpdates()
 }
 
 function syncStoresBySalesperson() {
@@ -408,6 +660,11 @@ async function loadData() {
   }
 
   await refreshStockPreview()
+
+  // 异步加载销量数据（用于按销量排序）
+  getProductSaleQty().then(map => { productSaleQtyMap.value = map }).catch(() => {})
+  // 异步获取当前位置（用于超市距离排序）
+  requestCurrentLocation().then(loc => { userLocation.value = loc }).catch(() => {})
 }
 
 async function validateStockBeforeSubmit(lines: SaleLine[]) {
@@ -431,18 +688,25 @@ async function validateStockBeforeSubmit(lines: SaleLine[]) {
 }
 
 async function submitSale() {
+  return doSubmit()
+}
+
+async function doSubmit(docType: 'sale' | 'gift' = 'sale'): Promise<{ saleDoc: SaleDoc; returnDoc: ReturnDoc | null } | null> {
   Object.keys(qtyMap.value).forEach(syncQty)
+  if (showReturnSection.value) {
+    Object.keys(returnQtyMap.value).forEach(syncReturnQty)
+  }
 
   if (!currentStoreId()) {
     uni.showToast({ title: '请选择超市', icon: 'none' })
-    return
+    return null
   }
   if (totalQty.value <= 0) {
     uni.showToast({ title: '请录入商品数量', icon: 'none' })
-    return
+    return null
   }
   if (!ensureWarehouseReady()) {
-    return
+    return null
   }
 
   const lines: SaleLine[] = selectedProducts.value
@@ -456,29 +720,203 @@ async function submitSale() {
     .filter(line => line.qty > 0)
 
   if (!(await validateStockBeforeSubmit(lines))) {
-    return
+    return null
   }
 
-  const draft = {
+  const saleDraft = {
     salespersonId: currentSalespersonId(),
     storeId: currentStoreId(),
     warehouseId: currentWarehouseId(),
     date: todayLocalDate(),
     status: 'draft',
+    docType,
     lines,
   } as SaleDoc
 
   try {
-    const saved = await saveSale(draft)
-    await postSale(saved.id)
-    uni.showToast({ title: '销单已生成', icon: 'success' })
-    setTimeout(() => {
-      uni.navigateTo({ url: `/pages/sales/detail?id=${saved.id}` })
-    }, 400)
+    const savedSale = await saveSale(saleDraft)
+    await postSale(savedSale.id)
+
+    let savedReturn: ReturnDoc | null = null
+    if (showReturnSection.value && returnTotalQty.value > 0) {
+      const returnLines: ReturnLine[] = returnSelectedProducts.value
+        .map(p => ({
+          id: genId(),
+          productId: p.id,
+          boxQty: normalizeCount(returnQtyMap.value[p.id]?.boxQty),
+          qty: normalizeCount(returnQtyMap.value[p.id]?.qty),
+          price: p.salePrice || 0,
+        }))
+        .filter(line => line.qty > 0)
+
+      const returnDraft = {
+        salespersonId: currentSalespersonId(),
+        storeId: currentStoreId(),
+        fromWarehouseId: currentWarehouseId(),
+        returnType: 'vehicle_return',
+        date: todayLocalDate(),
+        status: 'draft',
+        lines: returnLines,
+        saleDocId: savedSale.id,
+      } as ReturnDoc
+
+      savedReturn = await saveReturn(returnDraft, returnLines)
+      await postReturn(savedReturn.id)
+    }
+
+    clearDraft()
+    return { saleDoc: savedSale, returnDoc: savedReturn }
   } catch (e: any) {
     uni.showToast({ title: e.message || '生成失败', icon: 'none' })
+    return null
   }
 }
+
+async function submitAndPrint() {
+  const printer = checkPrinterConnected()
+  if (!printer) {
+    uni.showModal({
+      title: '未连接打印机',
+      content: '请先到设置中的蓝牙打印页面连接打印机。',
+      confirmText: '去连接',
+      cancelText: '只确认',
+      success: async (res) => {
+        if (res.confirm) {
+          navigateToPrinterSettings()
+        } else {
+          await submitOnly()
+        }
+      },
+    })
+    return
+  }
+
+  const result = await doSubmit()
+  if (!result) return
+
+  try {
+    const store = stores.value.find(s => s.id === result.saleDoc.storeId)
+    const spId = currentSalespersonId()
+    const spName = referenceStore.accounts.find(a => isSameSalespersonId(a.salespersonId || a.id, spId))?.displayName || '-'
+    if (result.returnDoc) {
+      await printCombinedA4(result.saleDoc, result.returnDoc, store, spName, products.value, payType.value)
+    } else {
+      await printSaleA4(result.saleDoc, store, spName, products.value, payType.value)
+    }
+    uni.showToast({ title: '已确认并打印', icon: 'success' })
+  } catch (e: any) {
+    uni.showToast({ title: `已确认，打印失败: ${e.message || ''}`, icon: 'none', duration: 3000 })
+  }
+
+  setTimeout(() => {
+    uni.navigateTo({ url: `/pages/sales/detail?id=${result.saleDoc.id}` })
+  }, 400)
+}
+
+async function submitOnly() {
+  const result = await doSubmit()
+  if (!result) return
+  uni.showToast({ title: '销单已确认', icon: 'success' })
+  setTimeout(() => {
+    uni.navigateTo({ url: `/pages/sales/detail?id=${result.saleDoc.id}` })
+  }, 400)
+}
+
+async function submitGift() {
+  uni.showModal({
+    title: '送老板试吃',
+    content: '赠送品仅扣减库存，不计入销售提成。确认继续？',
+    success: async (res) => {
+      if (!res.confirm) return
+      const result = await doSubmit('gift')
+      if (!result) return
+      uni.showToast({ title: '赠送单已确认', icon: 'success' })
+      setTimeout(() => {
+        uni.navigateTo({ url: `/pages/sales/detail?id=${result.saleDoc.id}` })
+      }, 400)
+    },
+  })
+}
+
+// --- 草稿保存/恢复 ---
+function saveDraftNow() {
+  if (!selectedStore.value && !selectedWarehouse.value && Object.keys(qtyMap.value).length === 0) return
+  const draft: SaleDraft = {
+    storeId: selectedStore.value?.id || '',
+    warehouseId: selectedWarehouse.value?.id || '',
+    qtyMap: JSON.parse(JSON.stringify(qtyMap.value)),
+    keyword: keyword.value,
+    savedAt: Date.now(),
+  }
+  uni.setStorageSync(DRAFT_KEY, JSON.stringify(draft))
+}
+
+const debouncedSaveDraft = debounce(saveDraftNow, 500)
+
+function clearDraft() {
+  uni.removeStorageSync(DRAFT_KEY)
+}
+
+function tryRestoreDraft() {
+  const raw = uni.getStorageSync(DRAFT_KEY)
+  if (!raw) return
+  try {
+    const draft: SaleDraft = JSON.parse(raw)
+    if (Date.now() - draft.savedAt > DRAFT_TTL) {
+      clearDraft()
+      return
+    }
+    uni.showModal({
+      title: '发现未完成草稿',
+      content: '是否恢复上次编辑的销单？',
+      confirmText: '恢复',
+      cancelText: '丢弃',
+      success: (res) => {
+        if (res.confirm) {
+          if (draft.storeId) {
+            selectedStore.value = stores.value.find(s => s.id === draft.storeId) || null
+          }
+          if (draft.warehouseId) {
+            selectedWarehouse.value = warehouses.value.find(w => w.id === draft.warehouseId) || null
+            refreshStockPreview()
+          }
+          if (draft.qtyMap) {
+            qtyMap.value = draft.qtyMap
+          }
+          if (draft.keyword) {
+            keyword.value = draft.keyword
+          }
+        } else {
+          clearDraft()
+        }
+      },
+    })
+  } catch {
+    clearDraft()
+  }
+}
+
+const prefillMode = ref(false)
+let unsubscribeStock: (() => void) | null = null
+
+function subscribeStockUpdates() {
+  // 取消旧订阅
+  if (unsubscribeStock) {
+    unsubscribeStock()
+    unsubscribeStock = null
+  }
+  const warehouseId = selectedWarehouse.value?.id
+  if (!warehouseId) return
+  unsubscribeStock = stockPoller.subscribe(warehouseId, (stockList) => {
+    vehicleStockMap.value = toStockQtyMap(stockList)
+  })
+}
+
+onLoad((query: any) => {
+  if (query?.prefill === 'true') {
+    prefillMode.value = true
+  }
+})
 
 onMounted(() => {
   userStore.init()
@@ -486,8 +924,52 @@ onMounted(() => {
     uni.reLaunch({ url: '/pages/login/index' })
     return
   }
-  loadData()
+  loadData().then(() => {
+    if (prefillMode.value) {
+      tryRestorePrefill()
+    } else {
+      tryRestoreDraft()
+    }
+    // 启动库存短轮询
+    subscribeStockUpdates()
+    // 启动草稿自动保存
+    watch(
+      [() => selectedStore.value?.id, () => selectedWarehouse.value?.id, qtyMap, keyword],
+      debouncedSaveDraft,
+      { deep: true },
+    )
+  })
 })
+
+onUnmounted(() => {
+  if (unsubscribeStock) {
+    unsubscribeStock()
+    unsubscribeStock = null
+  }
+})
+
+function tryRestorePrefill() {
+  const raw = uni.getStorageSync('wh_sale_prefill')
+  if (!raw) return
+  try {
+    const data = JSON.parse(raw)
+    if (data.storeId) {
+      selectedStore.value = stores.value.find(s => s.id === data.storeId) || null
+    }
+    if (data.warehouseId) {
+      selectedWarehouse.value = warehouses.value.find(w => w.id === data.warehouseId) || null
+      refreshStockPreview()
+    }
+    if (data.lines) {
+      const newQtyMap: Record<string, QtyInput> = {}
+      for (const line of data.lines) {
+        newQtyMap[line.productId] = createQtyInput(line.productId, line.qty, line.boxQty)
+      }
+      qtyMap.value = newQtyMap
+    }
+  } catch { /* ignore */ }
+  uni.removeStorageSync('wh_sale_prefill')
+}
 </script>
 
 <style lang="scss" scoped>
@@ -563,6 +1045,13 @@ onMounted(() => {
   .store-trigger-arrow {
     color: #999;
     font-size: 32rpx;
+  }
+
+  .store-history-link {
+    display: inline-block;
+    margin-top: 12rpx;
+    font-size: 24rpx;
+    color: #1890ff;
   }
 
   .scan-row {
@@ -823,7 +1312,6 @@ onMounted(() => {
 .btn-submit {
   width: 100%;
   height: 88rpx;
-  background: #1890ff;
   color: #fff;
   font-size: 32rpx;
   border-radius: 44rpx;
@@ -831,7 +1319,138 @@ onMounted(() => {
   margin-top: 10rpx;
 }
 
+.btn-primary {
+  background: #1890ff;
+}
+
+.btn-secondary {
+  background: #fff;
+  color: #1890ff;
+  border: 2rpx solid #1890ff;
+}
+
+.btn-gift {
+  background: #fff;
+  color: #fa8c16;
+  border: 2rpx solid #fa8c16;
+}
+
 .btn-submit[disabled] {
   background: #b5d4ff;
+  color: #fff;
+  border-color: #b5d4ff;
+}
+
+.btn-group {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+.pay-type-section {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 16rpx 10rpx;
+  margin-bottom: 10rpx;
+}
+
+.pay-type-label {
+  font-size: 28rpx;
+  color: #666;
+}
+
+.pay-type-options {
+  display: flex;
+  gap: 12rpx;
+}
+
+.pay-type-option {
+  padding: 10rpx 28rpx;
+  border-radius: 999rpx;
+  border: 2rpx solid #ddd;
+  font-size: 26rpx;
+  color: #666;
+}
+
+.pay-type-option.active {
+  background: #1890ff;
+  color: #fff;
+  border-color: #1890ff;
+}
+
+.seq-no {
+  color: #999;
+  font-size: 26rpx;
+  margin-right: 6rpx;
+}
+
+.variety-count {
+  color: #1890ff;
+  font-size: 26rpx;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16rpx;
+}
+
+.sort-trigger {
+  font-size: 24rpx;
+  color: #1890ff;
+  padding: 6rpx 16rpx;
+  border: 2rpx solid #1890ff;
+  border-radius: 999rpx;
+}
+
+.store-search {
+  margin-bottom: 16rpx;
+}
+
+.store-search-input {
+  width: 100%;
+  border: 2rpx solid #eee;
+  border-radius: 12rpx;
+  padding: 16rpx 20rpx;
+  font-size: 28rpx;
+  box-sizing: border-box;
+}
+
+.store-distance {
+  font-size: 22rpx;
+  color: #1890ff;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.return-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16rpx 10rpx;
+}
+
+.return-toggle-label {
+  font-size: 28rpx;
+  color: #333;
+}
+
+.return-section {
+  border: 2rpx solid #ff4d4f;
+  border-radius: 16rpx;
+}
+
+.return-summary {
+  color: #ff4d4f;
+}
+
+.net-summary {
+  text-align: right;
+  padding: 16rpx 10rpx;
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #333;
 }
 </style>

@@ -17,9 +17,15 @@
         </view>
         <view class="form-item">
           <text class="label">位置</text>
-          <view class="picker" @tap="goPickLocation">
-            <text>{{ form.lat && form.lng ? '已选择位置' : '地图选点' }}</text>
+          <view class="location-actions">
+            <view class="picker" @tap="goPickLocation">
+              <text>{{ form.lat && form.lng ? '已选择位置' : '地图选点' }}</text>
+            </view>
+            <button class="btn-locate" :loading="locating" @tap="useCurrentLocation" size="mini">
+              使用当前位置
+            </button>
           </view>
+          <text v-if="form.lat && form.lng" class="hint">坐标: {{ form.lat }}, {{ form.lng }}</text>
         </view>
         <view class="form-item">
           <text class="label">业务员</text>
@@ -42,6 +48,8 @@ import { saveStore, getStoresAll, getSessionSalespersonId, isSameSalespersonId }
 import { useReferenceStore } from '@/store/reference'
 import type { Store, Salesperson } from '@/types'
 import { getPageQueryParam } from '@/utils'
+import { requestCurrentLocation } from '@/utils/location'
+import { AMAP_WEB_KEY } from '@/utils/config'
 
 const userStore = useUserStore()
 const referenceStore = useReferenceStore()
@@ -50,7 +58,36 @@ const salespersons = ref<Salesperson[]>([])
 const selectedSalesperson = ref<Salesperson | null>(null)
 const queryId = ref('')
 const loading = ref(false)
+const locating = ref(false)
 const isEdit = computed(() => !!form.value.id || !!queryId.value)
+
+async function useCurrentLocation() {
+  locating.value = true
+  try {
+    const loc = await requestCurrentLocation()
+    form.value.lat = String(loc.latitude)
+    form.value.lng = String(loc.longitude)
+    // 调用高德逆地理编码获取地址
+    try {
+      const res = await new Promise<any>((resolve, reject) => {
+        uni.request({
+          url: `https://restapi.amap.com/v3/geocode/regeo?key=${AMAP_WEB_KEY}&location=${loc.longitude},${loc.latitude}`,
+          success: (r: any) => resolve(r.data),
+          fail: reject,
+        })
+      })
+      if (res?.regeocode?.formatted_address) {
+        form.value.address = res.regeocode.formatted_address
+      }
+    } catch { /* 逆地理编码失败不阻塞 */ }
+    uni.showToast({ title: '已定位到当前位置', icon: 'success' })
+  } catch (e: any) {
+    const msg = e?.reason === 'permission' ? '请授权定位权限' : '定位失败，请手动选择'
+    uni.showToast({ title: msg, icon: 'none' })
+  } finally {
+    locating.value = false
+  }
+}
 
 function syncSalespersons() {
   salespersons.value = [...referenceStore.allSalespersons]
@@ -224,6 +261,35 @@ onMounted(async () => {
   margin-top: 10rpx;
   font-size: 22rpx;
   color: #64748b;
+}
+
+.location-actions {
+  display: flex;
+  gap: 16rpx;
+  align-items: stretch;
+
+  .picker {
+    flex: 1;
+  }
+}
+
+.btn-locate {
+  min-width: 200rpx;
+  height: auto;
+  background: #e6f7ff;
+  color: #1890ff;
+  font-size: 26rpx;
+  border-radius: 12rpx;
+  border: 2rpx solid #91d5ff;
+  padding: 0 16rpx;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-locate::after {
+  border: none;
 }
 
 .btn {

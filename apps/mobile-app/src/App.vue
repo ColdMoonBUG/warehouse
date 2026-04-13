@@ -5,9 +5,10 @@
 </template>
 
 <script setup>
-import { onLaunch } from '@dcloudio/uni-app'
+import { onLaunch, onShow, onHide } from '@dcloudio/uni-app'
 import { getSession } from '@/api'
 import { useReferenceStore } from '@/store/reference'
+import { startBluetoothDaemon, pauseBluetoothDaemon } from '@/utils/bluetooth-printer'
 
 const referenceStore = useReferenceStore()
 
@@ -19,6 +20,14 @@ onLaunch(() => {
     return
   }
   referenceStore.warmForSession(session.role === 'admin')
+})
+
+onShow(() => {
+  startBluetoothDaemon()
+})
+
+onHide(() => {
+  pauseBluetoothDaemon()
 })
 </script>
 

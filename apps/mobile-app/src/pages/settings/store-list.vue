@@ -20,6 +20,7 @@
           </text>
         </view>
         <view class="ops">
+          <button class="btn btn-history" @tap="goHistory(s)">历史销单</button>
           <button class="btn" @tap="goEdit(s)">编辑</button>
           <button class="btn" :class="s.status === 'active' ? 'btn-warn' : 'btn-ok'" @tap="toggle(s)">
             {{ s.status === 'active' ? '停用' : '启用' }}
@@ -71,6 +72,10 @@ function goEdit(store: Store) {
   uni.navigateTo({ url: `/pages/settings/store-add?id=${store.id}` })
 }
 
+function goHistory(store: Store) {
+  uni.navigateTo({ url: `/pages/sales/store-history?storeId=${store.id}&storeName=${encodeURIComponent(store.name)}` })
+}
+
 async function toggle(store: Store) {
   await toggleStore(store.id)
   store.status = store.status === 'active' ? 'inactive' : 'active'
@@ -116,5 +121,6 @@ onShow(() => {
 .btn-warn { background:#ff4d4f; }
 .btn-ok { background:#52c41a; }
 .btn-danger { background:#722ed1; }
+.btn-history { background:#13c2c2; }
 .empty { text-align:center; padding: 40rpx 0; color:#999; }
 </style>

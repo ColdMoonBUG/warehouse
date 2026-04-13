@@ -53,12 +53,15 @@ public class SaleController {
     @GetMapping("/list")
     public Result<List<SaleDoc>> list(
             @RequestParam(defaultValue = "1") Integer page,
-            @RequestParam(defaultValue = "20") Integer limit) {
+            @RequestParam(defaultValue = "20") Integer limit,
+            @RequestParam(required = false) String storeId) {
         Page<SaleDoc> pageObj = new Page<>(page, limit);
-        IPage<SaleDoc> result = saleDocMapper.selectPage(pageObj,
-            new LambdaQueryWrapper<SaleDoc>()
-                .orderByDesc(SaleDoc::getCreatedAt)
-        );
+        LambdaQueryWrapper<SaleDoc> qw = new LambdaQueryWrapper<SaleDoc>()
+                .orderByDesc(SaleDoc::getCreatedAt);
+        if (storeId != null && !storeId.isEmpty()) {
+            qw.eq(SaleDoc::getStoreId, storeId);
+        }
+        IPage<SaleDoc> result = saleDocMapper.selectPage(pageObj, qw);
         List<SaleDoc> records = result.getRecords();
         for (SaleDoc doc : records) {
             List<SaleLine> lines = saleLineMapper.selectList(
@@ -159,20 +162,24 @@ public class SaleController {
                 applyStockDelta(fromWarehouseId, line.getProductId(), -qty);
                 insertLedger("sale", id, fromWarehouseId, line.getProductId(), -qty);
 
-                BigDecimal commissionAmount = amount.multiply(COMMISSION_RATE).setScale(2, RoundingMode.HALF_UP);
-                CommissionLedger ledger = new CommissionLedger();
-                ledger.setId(IdUtils.randomId());
-                ledger.setBizType("sale");
-                ledger.setDocId(id);
-                ledger.setSalespersonId(doc.getSalespersonId());
-                ledger.setStoreId(doc.getStoreId());
-                ledger.setProductId(line.getProductId());
-                ledger.setQty(qty);
-                ledger.setPrice(price);
-                ledger.setAmount(amount);
-                ledger.setCommissionRate(COMMISSION_RATE);
-                ledger.setCommissionAmount(commissionAmount);
-                commissionLedgerMapper.insert(ledger);
+                // 赠送单不计提成
+                boolean isGift = "gift".equals(doc.getDocType());
+                if (!isGift) {
+                    BigDecimal commissionAmount = amount.multiply(COMMISSION_RATE).setScale(2, RoundingMode.HALF_UP);
+                    CommissionLedger ledger = new CommissionLedger();
+                    ledger.setId(IdUtils.randomId());
+                    ledger.setBizType("sale");
+                    ledger.setDocId(id);
+                    ledger.setSalespersonId(doc.getSalespersonId());
+                    ledger.setStoreId(doc.getStoreId());
+                    ledger.setProductId(line.getProductId());
+                    ledger.setQty(qty);
+                    ledger.setPrice(price);
+                    ledger.setAmount(amount);
+                    ledger.setCommissionRate(COMMISSION_RATE);
+                    ledger.setCommissionAmount(commissionAmount);
+                    commissionLedgerMapper.insert(ledger);
+                }
             }
             doc.setStatus("posted");
             saleDocMapper.updateById(doc);
@@ -203,20 +210,24 @@ public class SaleController {
                 applyStockDelta(fromWarehouseId, line.getProductId(), qty);
                 insertLedger("sale", id, fromWarehouseId, line.getProductId(), qty);
 
-                BigDecimal commissionAmount = amount.multiply(COMMISSION_RATE).setScale(2, RoundingMode.HALF_UP).negate();
-                CommissionLedger ledger = new CommissionLedger();
-                ledger.setId(IdUtils.randomId());
-                ledger.setBizType("void_sale");
-                ledger.setDocId(id);
-                ledger.setSalespersonId(doc.getSalespersonId());
-                ledger.setStoreId(doc.getStoreId());
-                ledger.setProductId(line.getProductId());
-                ledger.setQty(qty);
-                ledger.setPrice(price);
-                ledger.setAmount(amount);
-                ledger.setCommissionRate(COMMISSION_RATE);
-                ledger.setCommissionAmount(commissionAmount);
-                commissionLedgerMapper.insert(ledger);
+                // 赠送单无提成，作废时也无需反冲提成
+                boolean isGift = "gift".equals(doc.getDocType());
+                if (!isGift) {
+                    BigDecimal commissionAmount = amount.multiply(COMMISSION_RATE).setScale(2, RoundingMode.HALF_UP).negate();
+                    CommissionLedger ledger = new CommissionLedger();
+                    ledger.setId(IdUtils.randomId());
+                    ledger.setBizType("void_sale");
+                    ledger.setDocId(id);
+                    ledger.setSalespersonId(doc.getSalespersonId());
+                    ledger.setStoreId(doc.getStoreId());
+                    ledger.setProductId(line.getProductId());
+                    ledger.setQty(qty);
+                    ledger.setPrice(price);
+                    ledger.setAmount(amount);
+                    ledger.setCommissionRate(COMMISSION_RATE);
+                    ledger.setCommissionAmount(commissionAmount);
+                    commissionLedgerMapper.insert(ledger);
+                }
             }
             doc.setStatus("voided");
             saleDocMapper.updateById(doc);
@@ -237,6 +248,52 @@ public class SaleController {
         return Result.ok();
     }
 
+    @GetMapping("/unsettled")
+    public Result<List<SaleDoc>> unsettled(
+            @RequestParam(defaultValue = "1") Integer page,
+            @RequestParam(defaultValue = "50") Integer limit) {
+        Page<SaleDoc> pageObj = new Page<>(page, limit);
+        IPage<SaleDoc> result = saleDocMapper.selectPage(pageObj,
+            new LambdaQueryWrapper<SaleDoc>()
+                .eq(SaleDoc::getStatus, "posted")
+                .and(w -> w.isNull(SaleDoc::getSettled).or().eq(SaleDoc::getSettled, 0))
+                .orderByDesc(SaleDoc::getCreatedAt)
+        );
+        List<SaleDoc> records = result.getRecords();
+        for (SaleDoc doc : records) {
+            List<SaleLine> lines = saleLineMapper.selectList(
+                new LambdaQueryWrapper<SaleLine>().eq(SaleLine::getDocId, doc.getId())
+            );
+            doc.setLines(lines);
+        }
+        return Result.ok(records, result.getTotal());
+    }
+
+    @PostMapping("/settle/{id}")
+    public Result<Void> settle(@PathVariable String id) {
+        SaleDoc doc = saleDocMapper.selectById(id);
+        if (doc == null || !"posted".equals(doc.getStatus())) {
+            return Result.error("单据状态异常");
+        }
+        doc.setSettled(1);
+        doc.setSettledAt(new java.util.Date());
+        saleDocMapper.updateById(doc);
+        return Result.ok();
+    }
+
+    @PostMapping("/unsettle/{id}")
+    public Result<Void> unsettle(@PathVariable String id) {
+        SaleDoc doc = saleDocMapper.selectById(id);
+        if (doc == null) {
+            return Result.error("单据不存在");
+        }
+        doc.setSettled(0);
+        doc.setSettledAt(null);
+        doc.setSettledBy(null);
+        saleDocMapper.updateById(doc);
+        return Result.ok();
+    }
+
     @GetMapping("/storeSaleQty")
     public Result<java.util.Map<String, Integer>> storeSaleQty(@RequestParam(defaultValue = "30") Integer days) {
         java.time.LocalDate start = java.time.LocalDate.now().minusDays(days);
@@ -251,6 +308,27 @@ public class SaleController {
             int sum = 0;
             for (SaleLine line : lines) sum += line.getQty() == null ? 0 : line.getQty();
             map.put(doc.getStoreId(), map.getOrDefault(doc.getStoreId(), 0) + sum);
+        }
+        return Result.ok(map);
+    }
+
+    @GetMapping("/productSaleQty")
+    public Result<java.util.Map<String, Integer>> productSaleQty(@RequestParam(defaultValue = "30") Integer days) {
+        java.time.LocalDate start = java.time.LocalDate.now().minusDays(days);
+        List<SaleDoc> docs = saleDocMapper.selectList(
+            new LambdaQueryWrapper<SaleDoc>()
+                .eq(SaleDoc::getStatus, "posted")
+                .ge(SaleDoc::getDocDate, java.sql.Date.valueOf(start))
+        );
+        java.util.Map<String, Integer> map = new java.util.HashMap<>();
+        for (SaleDoc doc : docs) {
+            List<SaleLine> lines = saleLineMapper.selectList(
+                new LambdaQueryWrapper<SaleLine>().eq(SaleLine::getDocId, doc.getId())
+            );
+            for (SaleLine line : lines) {
+                int qty = line.getQty() == null ? 0 : line.getQty();
+                map.put(line.getProductId(), map.getOrDefault(line.getProductId(), 0) + qty);
+            }
         }
         return Result.ok(map);
     }

@@ -71,6 +71,10 @@ export interface SaleDoc {
   date: string
   remark?: string
   status: DocStatus
+  docType?: 'sale' | 'gift'
+  settled?: number
+  settledAt?: string
+  settledBy?: string
   lines: SaleLine[]
   createdAt: string
 }
@@ -145,6 +149,15 @@ export interface CommissionSettlementSummary {
 export interface CommissionSettlementDetail {
   settlement: CommissionSettlementSummary
   ledgers: CommissionLedger[]
+}
+
+export interface StoreCommissionSummary {
+  storeId: string
+  storeName: string
+  saleCommission: number
+  returnCommission: number
+  netCommission: number
+  ledgerCount: number
 }
 
 export interface FinanceSessionAccount {

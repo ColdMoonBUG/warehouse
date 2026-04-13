@@ -32,6 +32,10 @@ public class SaleDoc implements Serializable {
 
     private String remark;
     private String status;
+    private String docType;
+    private Integer settled;
+    private Date settledAt;
+    private String settledBy;
     private Integer totalQty;
     private BigDecimal totalAmount;
     private Date createdAt;

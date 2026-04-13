@@ -64,6 +64,13 @@
       }
     },
     {
+      "path": "pages/sales/store-history",
+      "style": {
+        "navigationBarTitleText": "超市历史销单",
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/return/index",
       "style": {
         "navigationBarTitleText": "退货",

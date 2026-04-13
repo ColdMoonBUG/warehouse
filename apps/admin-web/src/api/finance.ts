@@ -1,5 +1,5 @@
 import request from '@/utils/request'
-import type { CommissionLedger, CommissionSettlementDetail, CommissionSettlementSummary, CommissionSummary } from '@/types'
+import type { CommissionLedger, CommissionSettlementDetail, CommissionSettlementSummary, CommissionSummary, StoreCommissionSummary } from '@/types'
 
 export async function getCommissionSummaries(): Promise<CommissionSummary[]> {
   const res = await request.get('/finance/commission/summary')
@@ -24,4 +24,14 @@ export async function getCommissionSettlements(): Promise<CommissionSettlementSu
 export async function getCommissionSettlementDetail(id: string): Promise<CommissionSettlementDetail> {
   const res = await request.get(`/finance/commission/settlement/${id}`)
   return res.data
+}
+
+export async function getStoreCommissionSummaries(): Promise<StoreCommissionSummary[]> {
+  const res = await request.get('/finance/commission/store-summaries')
+  return res.data || []
+}
+
+export async function getStoreCommissionDetail(storeId: string): Promise<CommissionLedger[]> {
+  const res = await request.get(`/finance/commission/store-detail/${storeId}`)
+  return res.data || []
 }

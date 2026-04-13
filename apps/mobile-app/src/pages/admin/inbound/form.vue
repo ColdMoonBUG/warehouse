@@ -60,9 +60,9 @@
       </view>
 
       <view class="actions">
-        <button class="btn" @tap="save">保存</button>
-        <button class="btn ghost" :disabled="!form.id || form.status!=='draft'" @tap="post">过账</button>
-        <button class="btn danger" :disabled="!form.id || form.status!=='posted'" @tap="voidDoc">作废</button>
+        <button class="btn" :disabled="saving" @tap="save">{{ saving ? '保存中...' : '保存' }}</button>
+        <button class="btn ghost" :disabled="posting || !form.id || form.status!=='draft'" @tap="post">{{ posting ? '过账中...' : '过账' }}</button>
+        <button class="btn danger" :disabled="voiding || !form.id || form.status!=='posted'" @tap="voidDoc">{{ voiding ? '作废中...' : '作废' }}</button>
       </view>
     </view>
   </view>
@@ -90,6 +90,9 @@ const warehouses = ref<Warehouse[]>([])
 const mainStockMap = ref<Record<string, number>>({})
 const stockLoading = ref(false)
 const pageLoading = ref(false)
+const saving = ref(false)
+const posting = ref(false)
+const voiding = ref(false)
 
 const supplierName = computed(() => suppliers.value.find(s => s.id === form.value.supplierId)?.name || '')
 const mainWarehouse = computed(() => warehouses.value.find(w => w.type === 'main') || null)
@@ -236,6 +239,7 @@ async function loadEdit(id: string) {
 }
 
 async function save() {
+  if (saving.value) return
   if (!form.value.supplierId) {
     uni.showToast({ title: '请选择供应商', icon: 'none' })
     return
@@ -244,26 +248,47 @@ async function save() {
     uni.showToast({ title: '请添加明细', icon: 'none' })
     return
   }
-  const submitLines = lines.value.map(toSubmitLine)
-  await saveInbound(form.value as InboundDoc, submitLines)
-  uni.showToast({ title: '保存成功', icon: 'success' })
-  setTimeout(() => uni.navigateBack(), 400)
+  saving.value = true
+  try {
+    const submitLines = lines.value.map(toSubmitLine)
+    await saveInbound(form.value as InboundDoc, submitLines)
+    uni.showToast({ title: '保存成功', icon: 'success' })
+    setTimeout(() => uni.navigateBack(), 400)
+  } catch (e: any) {
+    uni.showToast({ title: e?.message || '保存失败', icon: 'none' })
+  } finally {
+    saving.value = false
+  }
 }
 
 async function post() {
-  if (!form.value.id) return
-  await postInbound(form.value.id)
-  const doc = await getInboundDetail(form.value.id)
-  if (doc) await applyDoc(doc)
-  uni.showToast({ title: '已过账', icon: 'success' })
+  if (posting.value || !form.value.id) return
+  posting.value = true
+  try {
+    await postInbound(form.value.id)
+    const doc = await getInboundDetail(form.value.id)
+    if (doc) await applyDoc(doc)
+    uni.showToast({ title: '已过账', icon: 'success' })
+  } catch (e: any) {
+    uni.showToast({ title: e?.message || '过账失败', icon: 'none' })
+  } finally {
+    posting.value = false
+  }
 }
 
 async function voidDoc() {
-  if (!form.value.id) return
-  await voidInbound(form.value.id)
-  const doc = await getInboundDetail(form.value.id)
-  if (doc) await applyDoc(doc)
-  uni.showToast({ title: '已作废', icon: 'success' })
+  if (voiding.value || !form.value.id) return
+  voiding.value = true
+  try {
+    await voidInbound(form.value.id)
+    const doc = await getInboundDetail(form.value.id)
+    if (doc) await applyDoc(doc)
+    uni.showToast({ title: '已作废', icon: 'success' })
+  } catch (e: any) {
+    uni.showToast({ title: e?.message || '作废失败', icon: 'none' })
+  } finally {
+    voiding.value = false
+  }
 }
 
 function goBack() {
@@ -285,8 +310,8 @@ onMounted(async () => {
   pageLoading.value = true
   try {
     await Promise.all([
-      referenceStore.preloadCore(),
-      referenceStore.preloadSuppliers(),
+      referenceStore.preloadCore(true),
+      referenceStore.preloadSuppliers(true),
     ])
     suppliers.value = [...referenceStore.suppliers]
     products.value = [...referenceStore.products]

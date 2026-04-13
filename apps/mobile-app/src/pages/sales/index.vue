@@ -23,6 +23,7 @@
         <view v-for="doc in filteredSales" :key="doc.id" class="sale-card" @tap="goDetail(doc.id)">
           <view class="row">
             <text class="code">{{ doc.code }}</text>
+            <text v-if="doc.docType === 'gift'" class="gift-tag">[赠送]</text>
             <text class="status" :class="doc.status">{{ statusText(doc.status) }}</text>
           </view>
           <view class="row">
@@ -266,6 +267,12 @@ onShow(() => {
     font-size: 30rpx;
     color: #333;
     font-weight: 600;
+  }
+
+  .gift-tag {
+    font-size: 22rpx;
+    color: #fa8c16;
+    margin-left: 8rpx;
   }
 
   .status {

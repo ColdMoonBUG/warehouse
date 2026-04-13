@@ -49,3 +49,19 @@ export async function getStoreSaleQty(days = 30): Promise<Record<string, number>
   const res = await request.get('/sale/storeSaleQty', { params: { days } })
   return res.data || {}
 }
+
+export async function getUnsettledSales(page = 1, limit = 50): Promise<{ list: SaleDoc[], total: number }> {
+  const res = await request.get('/sale/unsettled', { params: { page, limit } }) as unknown as SaleListResponse
+  return {
+    list: res.data || [],
+    total: res.count || 0
+  }
+}
+
+export async function settleSale(id: string) {
+  await request.post(`/sale/settle/${id}`)
+}
+
+export async function unsettleSale(id: string) {
+  await request.post(`/sale/unsettle/${id}`)
+}

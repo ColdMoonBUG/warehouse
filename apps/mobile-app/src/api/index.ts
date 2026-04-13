@@ -842,11 +842,14 @@ export function getImageUrl(path: string) {
   return `${BASE_URL}/api/file/showImageByPath?path=${encodeURIComponent(path)}`
 }
 
-export async function getSales(): Promise<SaleDoc[]> {
+export async function getSales(storeId?: string): Promise<SaleDoc[]> {
   if (USE_MOCK) {
-    return saleDb.list().map(normalizeSaleDoc).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    let list = saleDb.list().map(normalizeSaleDoc).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    if (storeId) list = list.filter(d => d.storeId === storeId)
+    return list
   }
-  return (await request<SaleDoc[]>('/api/sale/list', 'GET')).map(normalizeSaleDoc)
+  const url = storeId ? `/api/sale/list?storeId=${encodeURIComponent(storeId)}` : '/api/sale/list'
+  return (await request<SaleDoc[]>(url, 'GET')).map(normalizeSaleDoc)
 }
 
 export async function getSaleDetail(id: string): Promise<SaleDoc | null> {
@@ -920,6 +923,21 @@ export async function getStoreSaleQty(days = 30): Promise<Record<string, number>
     return result
   }
   return request<Record<string, number>>(`/api/sale/storeSaleQty?days=${days}`, 'GET')
+}
+
+export async function getProductSaleQty(days = 30): Promise<Record<string, number>> {
+  if (USE_MOCK) {
+    const cutoff = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10)
+    const docs = saleDb.list().filter(d => d.status === 'posted' && d.date >= cutoff)
+    const result: Record<string, number> = {}
+    for (const doc of docs) {
+      for (const line of doc.lines) {
+        result[line.productId] = (result[line.productId] || 0) + line.qty
+      }
+    }
+    return result
+  }
+  return request<Record<string, number>>(`/api/sale/productSaleQty?days=${days}`, 'GET')
 }
 
 export async function getReturns(): Promise<ReturnDoc[]> {

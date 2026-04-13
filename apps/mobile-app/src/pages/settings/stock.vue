@@ -47,11 +47,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, onUnmounted } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { getProducts, getSessionSalespersonId, getStock, getWarehouses, isSameSalespersonId } from '@/api'
 import { useUserStore } from '@/store/user'
 import type { Product, StockItem, Warehouse } from '@/types'
+import { stockPoller } from '@/utils/stock-sync'
 
 const userStore = useUserStore()
 const products = ref<Product[]>([])
@@ -69,6 +70,26 @@ const mainWarehouse = computed(() => accessibleWarehouses.value.find(warehouse =
 const list = ref<StockItem[]>([])
 const mainStockMap = ref<Record<string, number>>({})
 const loading = ref(false)
+let unsubscribeStock: (() => void) | null = null
+
+function subscribeStockUpdates() {
+  if (unsubscribeStock) {
+    unsubscribeStock()
+    unsubscribeStock = null
+  }
+  const warehouseId = selectedWarehouse.value?.id
+  if (!warehouseId) return
+  unsubscribeStock = stockPoller.subscribe(warehouseId, (stockList) => {
+    list.value = stockList
+  })
+}
+
+onUnmounted(() => {
+  if (unsubscribeStock) {
+    unsubscribeStock()
+    unsubscribeStock = null
+  }
+})
 
 const items = computed(() => {
   const ids = new Set<string>()
@@ -104,6 +125,7 @@ function onWarehouseChange(e: any) {
   const idx = Number(e.detail.value)
   selectedWarehouse.value = accessibleWarehouses.value[idx] || null
   loadStock()
+  subscribeStockUpdates()
 }
 
 function goBack() {
@@ -140,6 +162,7 @@ async function load() {
       }) || accessibleWarehouses.value[0] || null
     }
     await loadStock()
+    subscribeStockUpdates()
   } finally {
     loading.value = false
   }
