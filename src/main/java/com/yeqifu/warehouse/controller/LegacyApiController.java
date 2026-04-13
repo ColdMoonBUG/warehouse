@@ -136,8 +136,9 @@ public class LegacyApiController {
     // sale
     @GetMapping("/sale/list")
     public Result<List<SaleDoc>> saleList(@RequestParam(defaultValue = "1") Integer page,
-                                          @RequestParam(defaultValue = "20") Integer limit) {
-        return saleController.list(page, limit);
+                                          @RequestParam(defaultValue = "20") Integer limit,
+                                          @RequestParam(required = false) String storeId) {
+        return saleController.list(page, limit, storeId);
     }
 
     @GetMapping("/sale/detail/{id}")
