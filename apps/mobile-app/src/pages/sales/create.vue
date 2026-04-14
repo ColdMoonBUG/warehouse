@@ -1,10 +1,10 @@
 <template>
   <view class="create-page">
     <view class="header">
-      <text class="title">创建销单</text>
+      <text class="title">{{ step === 1 ? '创建销单' : '销单预览' }}</text>
     </view>
 
-    <view class="content">
+    <view class="content" v-if="step === 1">
       <view v-if="pageLoading" class="section state-card">
         <text class="state-text">{{ stores.length || products.length || warehouses.length ? '基础资料已显示，正在后台刷新...' : '正在加载基础资料...' }}</text>
       </view>
@@ -33,9 +33,12 @@
       <view class="section">
         <view class="section-header">
           <text class="label">选择商品</text>
-          <picker mode="selector" :range="sortModeOptions" range-key="label" :value="sortModeIndex" @change="onSortModeChange">
-            <text class="sort-trigger">{{ currentSortLabel }} ▾</text>
-          </picker>
+          <view class="sort-actions">
+            <text class="sort-manage" @tap="goProductSort">管理排序</text>
+            <picker mode="selector" :range="sortModeOptions" range-key="label" :value="sortModeIndex" @change="onSortModeChange">
+              <text class="sort-trigger">{{ currentSortLabel }} ▾</text>
+            </picker>
+          </view>
         </view>
         <view class="scan-row">
           <input v-model="keyword" placeholder="输入条码或名称筛选" />
@@ -151,27 +154,9 @@
         <text>净额: ¥{{ (totalAmount - returnTotalAmount).toFixed(2) }}</text>
       </view>
 
-      <view class="pay-type-section" v-if="canSubmit">
-        <text class="pay-type-label">付款方式</text>
-        <view class="pay-type-options">
-          <view class="pay-type-option" :class="{ active: payType === 'card' }" @tap="payType = 'card'">
-            <text>单子</text>
-          </view>
-          <view class="pay-type-option" :class="{ active: payType === 'cash' }" @tap="payType = 'cash'">
-            <text>现金</text>
-          </view>
-        </view>
-      </view>
-
       <view class="btn-group">
-        <button class="btn-submit btn-primary" @tap="submitAndPrint" :disabled="!canSubmit">
-          确认并打印
-        </button>
-        <button class="btn-submit btn-secondary" @tap="submitOnly" :disabled="!canSubmit">
-          只确认
-        </button>
-        <button class="btn-submit btn-gift" @tap="submitGift" :disabled="!canSubmit">
-          送老板试吃
+        <button class="btn-submit btn-primary" @tap="goPreview" :disabled="!canSubmit">
+          生成销单
         </button>
       </view>
 
@@ -205,24 +190,114 @@
         </view>
       </view>
     </view>
+
+    <view class="content" v-if="step === 2">
+      <view class="preview-banner">
+        <text class="preview-banner-text">销单预览（尚未提交）</text>
+      </view>
+
+      <view class="card">
+        <view class="row"><text class="label">超市</text><text class="value">{{ selectedStore?.name || '-' }}</text></view>
+        <view class="row"><text class="label">车库</text><text class="value">{{ selectedWarehouse?.name || '-' }}</text></view>
+        <view class="row"><text class="label">日期</text><text class="value">{{ previewDate }}</text></view>
+        <view class="row"><text class="label">付款方式</text><text class="value">{{ payType === 'cash' ? '现金' : '单子' }}</text></view>
+      </view>
+
+      <view class="card">
+        <view class="card-title-row">
+          <text class="card-title">销售商品 ({{ selectedProducts.length }}种)</text>
+        </view>
+        <view v-for="(p, idx) in selectedProducts" :key="p.id" class="preview-line">
+          <text class="preview-seq">{{ idx + 1 }}.</text>
+          <text class="preview-name">{{ p.name }}</text>
+          <text class="preview-qty">{{ qtyMap[p.id]?.qty || 0 }}袋</text>
+          <text class="preview-price">¥{{ (normalizeCount(qtyMap[p.id]?.qty) * (p.salePrice || 0)).toFixed(2) }}</text>
+        </view>
+      </view>
+
+      <view v-if="showReturnSection && returnSelectedProducts.length > 0" class="card">
+        <view class="card-title-row">
+          <text class="card-title return-title">退货商品 ({{ returnSelectedProducts.length }}种)</text>
+        </view>
+        <view v-for="(p, idx) in returnSelectedProducts" :key="p.id" class="preview-line">
+          <text class="preview-seq">{{ idx + 1 }}.</text>
+          <text class="preview-name">{{ p.name }}</text>
+          <text class="preview-qty">{{ returnQtyMap[p.id]?.qty || 0 }}袋</text>
+          <text class="preview-price">-¥{{ (normalizeCount(returnQtyMap[p.id]?.qty) * (p.salePrice || 0)).toFixed(2) }}</text>
+        </view>
+      </view>
+
+      <view class="summary preview-summary">
+        <text>品种: {{ selectedProducts.length }}种 | 合计: {{ totalQty }}袋</text>
+        <view class="summary-amounts">
+          <text>合计金额: ¥{{ totalAmount.toFixed(2) }}</text>
+          <text v-if="showReturnSection && returnTotalQty > 0" class="return-amount-text">退货金额: -¥{{ returnTotalAmount.toFixed(2) }}</text>
+          <text v-if="showReturnSection && returnTotalQty > 0" class="net-amount-text">净额: ¥{{ (totalAmount - returnTotalAmount).toFixed(2) }}</text>
+          <text class="commission-text">预计提成: ¥{{ estimatedCommission.toFixed(2) }}</text>
+        </view>
+      </view>
+
+      <view class="pay-type-section">
+        <text class="pay-type-label">付款方式</text>
+        <view class="pay-type-options">
+          <view class="pay-type-option" :class="{ active: payType === 'card' }" @tap="payType = 'card'">
+            <text>单子</text>
+          </view>
+          <view class="pay-type-option" :class="{ active: payType === 'cash' }" @tap="payType = 'cash'">
+            <text>现金</text>
+          </view>
+        </view>
+      </view>
+
+      <view class="print-copies-section">
+        <text class="print-copies-label">打印数量</text>
+        <view class="print-copies-options">
+          <view class="print-copies-option" :class="{ active: printCopies === 1 }" @tap="printCopies = 1"><text>1张</text></view>
+          <view class="print-copies-option" :class="{ active: printCopies === 2 }" @tap="printCopies = 2"><text>2张</text></view>
+          <view class="print-copies-option" :class="{ active: printCopies === 3 }" @tap="printCopies = 3"><text>3张</text></view>
+        </view>
+      </view>
+
+      <view class="btn-group">
+        <button class="btn-submit btn-primary" @tap="submitAndPrint" :disabled="submitting">
+          {{ submitting ? '提交中...' : '确认并打印' }}
+        </button>
+        <button class="btn-submit btn-secondary" @tap="submitOnly" :disabled="submitting">
+          确认不打印
+        </button>
+        <button class="btn-submit btn-gift" @tap="submitGift" :disabled="submitting">
+          送老板试吃
+        </button>
+        <button class="btn-submit btn-back" @tap="goBackToEdit">
+          返回修改
+        </button>
+      </view>
+    </view>
+
+    <!-- 隐藏的打印画布，用于Canvas绘制打印图像 -->
+    <scroll-view scroll-x scroll-y style="width:0;height:0;overflow:hidden;">
+      <canvas :canvas-id="canvasId" :style="{ width: canvasWidthPx + 'px', height: canvasHeightPx + 'px' }" />
+    </scroll-view>
   </view>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { onLoad } from '@dcloudio/uni-app'
+import { onLoad, onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
 import { useReferenceStore } from '@/store/reference'
 import { getStock, saveSale, postSale, saveReturn, postReturn, isOwnedStore, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId, getProductSaleQty } from '@/api'
 import type { Store, Product, SaleDoc, SaleLine, ReturnDoc, ReturnLine, Warehouse, StockItem } from '@/types'
 import { genId, formatProductQuickPickLabel, formatProductPackageSummary, calcQty, deriveBagQty, normalizeCount, normalizeBoxPackQty, formatStockPreview, getProductStockQty, toStockQtyMap, COMMISSION_RATE, todayLocalDate, debounce } from '@/utils'
 import { printSaleA4, printCombinedA4, checkPrinterConnected, navigateToPrinterSettings } from '@/utils/bluetooth-printer'
+import { CANVAS_ID, PAGE_WIDTH_DOTS, estimateContentHeight } from '@/utils/canvas-print'
 import { requestCurrentLocation } from '@/utils/location'
 import { haversineDistance, formatDistance } from '@/utils/geo'
 import { stockPoller } from '@/utils/stock-sync'
 
-type SortMode = 'sales_desc' | 'stock_desc' | 'name_asc' | 'price_asc'
+type SortMode = 'custom' | 'sales_desc' | 'stock_desc' | 'name_asc' | 'price_asc'
 const sortModeOptions = [
+  { label: '自定义排序', value: 'custom' as SortMode },
   { label: '按销量(好卖优先)', value: 'sales_desc' as SortMode },
   { label: '按库存(多的优先)', value: 'stock_desc' as SortMode },
   { label: '按名称', value: 'name_asc' as SortMode },
@@ -252,14 +327,27 @@ const mainStockMap = ref<Record<string, number>>({})
 const stockLoading = ref(false)
 const pageLoading = ref(false)
 const payType = ref<'cash' | 'card'>('card')
-const sortMode = ref<SortMode>('sales_desc')
+const sortMode = ref<SortMode>('custom')
+const step = ref<1 | 2>(1)
+const submitting = ref(false)
+const previewDate = ref('')
+const printCopies = ref(1)
 const productSaleQtyMap = ref<Record<string, number>>({})
+const customSortOrder = ref<string[]>([])
 const userLocation = ref<{ lat: number; lng: number } | null>(null)
 const storeKeyword = ref('')
 const addedProductOrder = ref(new Map<string, number>())
 const showReturnSection = ref(false)
 const returnQtyMap = ref<Record<string, QtyInput>>({})
 const returnKeyword = ref('')
+
+const canvasId = CANVAS_ID
+const canvasWidthPx = PAGE_WIDTH_DOTS
+const canvasHeightPx = computed(() => {
+  const itemCount = selectedProducts.value.length + (showReturnSection.value ? returnSelectedProducts.value.length : 0)
+  // 保持足够高度以容纳所有商品行
+  return Math.max(2480, 800 + itemCount * 64)
+})
 
 const DRAFT_KEY = 'wh_sale_draft'
 const DRAFT_TTL = 24 * 60 * 60 * 1000
@@ -296,7 +384,21 @@ const sortModeIndex = computed(() => sortModeOptions.findIndex(o => o.value === 
 const currentSortLabel = computed(() => sortModeOptions.find(o => o.value === sortMode.value)?.label || '排序')
 
 function onSortModeChange(e: any) {
-  sortMode.value = sortModeOptions[Number(e.detail.value)]?.value || 'sales_desc'
+  sortMode.value = sortModeOptions[Number(e.detail.value)]?.value || 'custom'
+}
+
+function loadCustomSortOrder() {
+  const spId = getSessionSalespersonId(userStore.currentUser) || 'default'
+  try {
+    const raw = uni.getStorageSync(`wh_product_sort_${spId}`)
+    customSortOrder.value = raw ? JSON.parse(raw) : []
+  } catch {
+    customSortOrder.value = []
+  }
+}
+
+function goProductSort() {
+  uni.navigateTo({ url: '/pages/sales/product-sort' })
 }
 
 function storeDistance(store: Store): string | null {
@@ -335,6 +437,16 @@ const filteredProducts = computed(() => {
     if (sa > 0 && sb === 0) return -1
     if (sa === 0 && sb > 0) return 1
     switch (mode) {
+      case 'custom': {
+        const order = customSortOrder.value
+        const ia = order.indexOf(a.id)
+        const ib = order.indexOf(b.id)
+        // 有自定义顺序的排在前面，都有则按顺序；都没有则保持原序
+        if (ia >= 0 && ib >= 0) return ia - ib
+        if (ia >= 0) return -1
+        if (ib >= 0) return 1
+        return 0
+      }
       case 'sales_desc': {
         const qa = salesMap[a.id] || 0, qb = salesMap[b.id] || 0
         return qb - qa || sb - sa
@@ -403,7 +515,37 @@ const returnFilteredProducts = computed(() => {
       return name.includes(key) || code.includes(key)
     })
   }
-  return list
+  const sm = vehicleStockMap.value
+  const salesMap = productSaleQtyMap.value
+  const mode = sortMode.value
+  return [...list].sort((a, b) => {
+    const sa = sm[a.id] || 0, sb = sm[b.id] || 0
+    if (sa > 0 && sb === 0) return -1
+    if (sa === 0 && sb > 0) return 1
+    switch (mode) {
+      case 'custom': {
+        const order = customSortOrder.value
+        const ia = order.indexOf(a.id)
+        const ib = order.indexOf(b.id)
+        if (ia >= 0 && ib >= 0) return ia - ib
+        if (ia >= 0) return -1
+        if (ib >= 0) return 1
+        return 0
+      }
+      case 'sales_desc': {
+        const qa = salesMap[a.id] || 0, qb = salesMap[b.id] || 0
+        return qb - qa || sb - sa
+      }
+      case 'stock_desc':
+        return sb - sa
+      case 'name_asc':
+        return (a.name || '').localeCompare(b.name || '', 'zh')
+      case 'price_asc':
+        return (a.salePrice || 0) - (b.salePrice || 0)
+      default:
+        return sb - sa
+    }
+  })
 })
 
 const returnQuickPickOptions = computed(() => returnFilteredProducts.value.map(p => ({
@@ -570,8 +712,32 @@ function onQuickPickChange(e: any) {
   toggleSelect(product)
 }
 
+function goPreview() {
+  if (!canSubmit.value) return
+  // 同步所有数量
+  Object.keys(qtyMap.value).forEach(syncQty)
+  if (showReturnSection.value) {
+    Object.keys(returnQtyMap.value).forEach(syncReturnQty)
+  }
+  previewDate.value = todayLocalDate()
+  step.value = 2
+  // 滚动到顶部
+  uni.pageScrollTo({ scrollTop: 0, duration: 0 })
+}
+
+function goBackToEdit() {
+  step.value = 1
+  uni.pageScrollTo({ scrollTop: 0, duration: 0 })
+}
+
 function openStoreSelector() {
   storeSelectorVisible.value = true
+  // 如果还没有定位信息，再次尝试获取
+  if (!userLocation.value) {
+    requestCurrentLocation()
+      .then(loc => { userLocation.value = { lat: loc.latitude, lng: loc.longitude } })
+      .catch(() => {})
+  }
 }
 
 function closeStoreSelector() {
@@ -663,8 +829,10 @@ async function loadData() {
 
   // 异步加载销量数据（用于按销量排序）
   getProductSaleQty().then(map => { productSaleQtyMap.value = map }).catch(() => {})
+  // 加载自定义排序
+  loadCustomSortOrder()
   // 异步获取当前位置（用于超市距离排序）
-  requestCurrentLocation().then(loc => { userLocation.value = loc }).catch(() => {})
+  requestCurrentLocation().then(loc => { userLocation.value = { lat: loc.latitude, lng: loc.longitude } }).catch(() => {})
 }
 
 async function validateStockBeforeSubmit(lines: SaleLine[]) {
@@ -685,10 +853,6 @@ async function validateStockBeforeSubmit(lines: SaleLine[]) {
     return false
   }
   return true
-}
-
-async function submitSale() {
-  return doSubmit()
 }
 
 async function doSubmit(docType: 'sale' | 'gift' = 'sale'): Promise<{ saleDoc: SaleDoc; returnDoc: ReturnDoc | null } | null> {
@@ -762,6 +926,10 @@ async function doSubmit(docType: 'sale' | 'gift' = 'sale'): Promise<{ saleDoc: S
 
       savedReturn = await saveReturn(returnDraft, returnLines)
       await postReturn(savedReturn.id)
+
+      // 把退单ID关联到销单，方便二次打印时合并
+      savedSale.returnDocId = savedReturn.id
+      await saveSale(savedSale)
     }
 
     clearDraft()
@@ -791,48 +959,66 @@ async function submitAndPrint() {
     return
   }
 
+  submitting.value = true
   const result = await doSubmit()
-  if (!result) return
+  if (!result) {
+    submitting.value = false
+    return
+  }
 
   try {
     const store = stores.value.find(s => s.id === result.saleDoc.storeId)
     const spId = currentSalespersonId()
     const spName = referenceStore.accounts.find(a => isSameSalespersonId(a.salespersonId || a.id, spId))?.displayName || '-'
-    if (result.returnDoc) {
-      await printCombinedA4(result.saleDoc, result.returnDoc, store, spName, products.value, payType.value)
-    } else {
-      await printSaleA4(result.saleDoc, store, spName, products.value, payType.value)
+    const copies = Math.min(Math.max(printCopies.value, 1), 3)
+    for (let i = 0; i < copies; i++) {
+      if (i > 0) await new Promise(r => setTimeout(r, 1500))
+      if (result.returnDoc) {
+        await printCombinedA4(result.saleDoc, result.returnDoc, store, spName, products.value, payType.value)
+      } else {
+        await printSaleA4(result.saleDoc, store, spName, products.value, payType.value)
+      }
     }
-    uni.showToast({ title: '已确认并打印', icon: 'success' })
+    uni.showToast({ title: copies > 1 ? `已打印${copies}张` : '已确认并打印', icon: 'success' })
   } catch (e: any) {
     uni.showToast({ title: `已确认，打印失败: ${e.message || ''}`, icon: 'none', duration: 3000 })
   }
 
+  submitting.value = false
   setTimeout(() => {
-    uni.navigateTo({ url: `/pages/sales/detail?id=${result.saleDoc.id}` })
+    uni.redirectTo({ url: '/pages/sales/index' })
   }, 400)
 }
 
 async function submitOnly() {
+  submitting.value = true
   const result = await doSubmit()
+  submitting.value = false
   if (!result) return
   uni.showToast({ title: '销单已确认', icon: 'success' })
   setTimeout(() => {
-    uni.navigateTo({ url: `/pages/sales/detail?id=${result.saleDoc.id}` })
+    uni.redirectTo({ url: '/pages/sales/index' })
   }, 400)
 }
 
 async function submitGift() {
+  // 计算按进价扣除的总额
+  const giftDeduction = selectedProducts.value.reduce((sum, p) => {
+    const qty = normalizeCount(qtyMap.value[p.id]?.qty)
+    return sum + qty * (p.purchasePrice || 0)
+  }, 0)
   uni.showModal({
     title: '送老板试吃',
-    content: '赠送品仅扣减库存，不计入销售提成。确认继续？',
+    content: `赠送品按进价从工资扣除，本单将扣除 ¥${giftDeduction.toFixed(2)}。确认继续？`,
     success: async (res) => {
       if (!res.confirm) return
+      submitting.value = true
       const result = await doSubmit('gift')
+      submitting.value = false
       if (!result) return
       uni.showToast({ title: '赠送单已确认', icon: 'success' })
       setTimeout(() => {
-        uni.navigateTo({ url: `/pages/sales/detail?id=${result.saleDoc.id}` })
+        uni.redirectTo({ url: '/pages/sales/index' })
       }, 400)
     },
   })
@@ -911,6 +1097,11 @@ function subscribeStockUpdates() {
     vehicleStockMap.value = toStockQtyMap(stockList)
   })
 }
+
+onShow(() => {
+  // 从排序页面返回时重新加载自定义排序
+  loadCustomSortOrder()
+})
 
 onLoad((query: any) => {
   if (query?.prefill === 'true') {
@@ -1397,6 +1588,20 @@ function tryRestorePrefill() {
   margin-bottom: 16rpx;
 }
 
+.sort-actions {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.sort-manage {
+  font-size: 24rpx;
+  color: #fa8c16;
+  padding: 6rpx 16rpx;
+  border: 2rpx solid #fa8c16;
+  border-radius: 999rpx;
+}
+
 .sort-trigger {
   font-size: 24rpx;
   color: #1890ff;
@@ -1452,5 +1657,149 @@ function tryRestorePrefill() {
   font-size: 32rpx;
   font-weight: 600;
   color: #333;
+}
+
+.preview-banner {
+  background: #fffbe6;
+  border: 2rpx solid #ffe58f;
+  border-radius: 12rpx;
+  padding: 20rpx;
+  margin-bottom: 20rpx;
+  text-align: center;
+}
+
+.preview-banner-text {
+  font-size: 28rpx;
+  color: #d48806;
+  font-weight: 600;
+}
+
+.card {
+  background: #fff;
+  border-radius: 16rpx;
+  padding: 24rpx;
+  margin-bottom: 20rpx;
+}
+
+.card .row {
+  display: flex;
+  justify-content: space-between;
+  padding: 10rpx 0;
+}
+
+.card .label {
+  color: #666;
+  font-size: 28rpx;
+}
+
+.card .value {
+  color: #333;
+  font-size: 28rpx;
+}
+
+.card-title-row {
+  margin-bottom: 16rpx;
+}
+
+.card-title {
+  font-size: 28rpx;
+  color: #333;
+  font-weight: 600;
+}
+
+.return-title {
+  color: #ff4d4f;
+}
+
+.preview-line {
+  display: flex;
+  align-items: center;
+  padding: 12rpx 0;
+  border-bottom: 1rpx solid #f0f0f0;
+}
+
+.preview-line:last-child {
+  border-bottom: none;
+}
+
+.preview-seq {
+  width: 60rpx;
+  color: #999;
+  font-size: 26rpx;
+}
+
+.preview-name {
+  flex: 1;
+  font-size: 28rpx;
+  color: #333;
+}
+
+.preview-qty {
+  width: 120rpx;
+  text-align: right;
+  font-size: 26rpx;
+  color: #666;
+}
+
+.preview-price {
+  width: 160rpx;
+  text-align: right;
+  font-size: 26rpx;
+  color: #333;
+  font-weight: 500;
+}
+
+.preview-summary {
+  flex-direction: column;
+  gap: 8rpx;
+}
+
+.return-amount-text {
+  font-size: 26rpx;
+  color: #ff4d4f;
+}
+
+.net-amount-text {
+  font-size: 28rpx;
+  color: #333;
+  font-weight: 600;
+}
+
+.btn-back {
+  background: #f5f5f5;
+  color: #666;
+  border: none;
+}
+
+.print-copies-section {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 16rpx 10rpx;
+  margin-bottom: 10rpx;
+}
+
+.print-copies-label {
+  font-size: 28rpx;
+  color: #666;
+}
+
+.print-copies-options {
+  display: flex;
+  gap: 12rpx;
+}
+
+.print-copies-option {
+  padding: 10rpx 28rpx;
+  border-radius: 999rpx;
+  border: 2rpx solid #ddd;
+  font-size: 26rpx;
+  color: #666;
+}
+
+.print-copies-option.active {
+  background: #1890ff;
+  color: #fff;
+  border-color: #1890ff;
 }
 </style>

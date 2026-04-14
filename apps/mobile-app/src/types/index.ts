@@ -103,6 +103,7 @@ export interface SaleDoc {
   remark?: string
   status: DocStatus
   docType?: 'sale' | 'gift'
+  returnDocId?: string
   lines: SaleLine[]
   createdAt: string
 }

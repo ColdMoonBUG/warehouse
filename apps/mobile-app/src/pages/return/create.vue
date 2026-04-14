@@ -42,7 +42,15 @@
       </view>
 
       <view class="section">
-        <text class="label">选择商品</text>
+        <view class="section-header">
+          <text class="label">选择商品</text>
+          <view class="sort-actions">
+            <text class="sort-manage" @tap="goProductSort">管理排序</text>
+            <picker mode="selector" :range="sortModeOptions" range-key="label" :value="sortModeIndex" @change="onSortModeChange">
+              <text class="sort-trigger">{{ currentSortLabel }} ▾</text>
+            </picker>
+          </view>
+        </view>
         <view class="scan-row">
           <input v-model="keyword" placeholder="输入条码或名称筛选" />
         </view>
@@ -124,13 +132,23 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
 import { useReferenceStore } from '@/store/reference'
-import { getStock, saveReturn, postReturn, isOwnedStore, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId } from '@/api'
+import { getStock, saveReturn, postReturn, isOwnedStore, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId, getProductSaleQty } from '@/api'
 import type { Store, Product, Warehouse, ReturnDoc, ReturnLine, StockItem } from '@/types'
 import { genId, formatProductQuickPickLabel, formatProductPackageSummary, calcQty, deriveBagQty, normalizeCount, normalizeBoxPackQty, formatStockPreview, getProductStockQty, toStockQtyMap, todayLocalDate } from '@/utils'
 import { requestCurrentLocation } from '@/utils/location'
 import { haversineDistance, formatDistance } from '@/utils/geo'
+
+type SortMode = 'custom' | 'sales_desc' | 'stock_desc' | 'name_asc' | 'price_asc'
+const sortModeOptions = [
+  { label: '自定义排序', value: 'custom' as SortMode },
+  { label: '按销量(好卖优先)', value: 'sales_desc' as SortMode },
+  { label: '按库存(多的优先)', value: 'stock_desc' as SortMode },
+  { label: '按名称', value: 'name_asc' as SortMode },
+  { label: '按价格(低到高)', value: 'price_asc' as SortMode },
+]
 
 interface QtyInput {
   boxQty: number
@@ -157,6 +175,9 @@ const stockLoading = ref(false)
 const pageLoading = ref(false)
 const userLocation = ref<{ lat: number; lng: number } | null>(null)
 const storeKeyword = ref('')
+const sortMode = ref<SortMode>('custom')
+const customSortOrder = ref<string[]>([])
+const productSaleQtyMap = ref<Record<string, number>>({})
 
 function onTypeChange(e: any) {
   returnType.value = typeOptions[Number(e.detail.value)]?.value as any
@@ -204,6 +225,27 @@ function storeDistance(store: Store): string | null {
   return formatDistance(d)
 }
 
+const sortModeIndex = computed(() => sortModeOptions.findIndex(o => o.value === sortMode.value))
+const currentSortLabel = computed(() => sortModeOptions.find(o => o.value === sortMode.value)?.label || '排序')
+
+function onSortModeChange(e: any) {
+  sortMode.value = sortModeOptions[Number(e.detail.value)]?.value || 'custom'
+}
+
+function loadCustomSortOrder() {
+  const spId = getSessionSalespersonId(userStore.currentUser) || 'default'
+  try {
+    const raw = uni.getStorageSync(`wh_product_sort_${spId}`)
+    customSortOrder.value = raw ? JSON.parse(raw) : []
+  } catch {
+    customSortOrder.value = []
+  }
+}
+
+function goProductSort() {
+  uni.navigateTo({ url: '/pages/sales/product-sort' })
+}
+
 const sessionSalespersonId = computed(() => getSessionSalespersonId(userStore.currentUser))
 const vehicleWarehouses = computed(() => {
   const list = warehouses.value.filter(w => w.type === 'vehicle')
@@ -228,11 +270,35 @@ const filteredProducts = computed(() => {
     })
   }
   const sm = vehicleStockMap.value
+  const salesMap = productSaleQtyMap.value
+  const mode = sortMode.value
   return [...list].sort((a, b) => {
     const sa = sm[a.id] || 0, sb = sm[b.id] || 0
     if (sa > 0 && sb === 0) return -1
     if (sa === 0 && sb > 0) return 1
-    return sb - sa
+    switch (mode) {
+      case 'custom': {
+        const order = customSortOrder.value
+        const ia = order.indexOf(a.id)
+        const ib = order.indexOf(b.id)
+        if (ia >= 0 && ib >= 0) return ia - ib
+        if (ia >= 0) return -1
+        if (ib >= 0) return 1
+        return 0
+      }
+      case 'sales_desc': {
+        const qa = salesMap[a.id] || 0, qb = salesMap[b.id] || 0
+        return qb - qa || sb - sa
+      }
+      case 'stock_desc':
+        return sb - sa
+      case 'name_asc':
+        return (a.name || '').localeCompare(b.name || '', 'zh')
+      case 'price_asc':
+        return (a.salePrice || 0) - (b.salePrice || 0)
+      default:
+        return sb - sa
+    }
   })
 })
 
@@ -456,7 +522,11 @@ async function loadData() {
   await refreshStockPreview()
 
   // 异步获取当前位置（用于超市距离排序）
-  requestCurrentLocation().then(loc => { userLocation.value = loc }).catch(() => {})
+  requestCurrentLocation().then(loc => { userLocation.value = { lat: loc.latitude, lng: loc.longitude } }).catch(() => {})
+  // 异步加载销量数据（用于按销量排序）
+  getProductSaleQty().then(map => { productSaleQtyMap.value = map }).catch(() => {})
+  // 加载自定义排序
+  loadCustomSortOrder()
 }
 
 async function submit() {
@@ -512,6 +582,11 @@ async function submit() {
     uni.showToast({ title: e.message || '生成失败', icon: 'none' })
   }
 }
+
+onShow(() => {
+  // 从排序页面返回时重新加载自定义排序
+  loadCustomSortOrder()
+})
 
 onMounted(() => {
   userStore.init()
@@ -580,5 +655,9 @@ onMounted(() => {
 .store-distance { font-size:22rpx; color:#1890ff; margin-left:auto; flex-shrink:0; }
 .btn-submit { width:100%; height:88rpx; background:#1890ff; color:#fff; font-size:32rpx; border-radius:44rpx; border:none; }
 .btn-submit::after { border:none; }
+.section-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:16rpx; }
+.sort-actions { display:flex; align-items:center; gap:12rpx; }
+.sort-manage { font-size:24rpx; color:#fa8c16; padding:6rpx 16rpx; border:2rpx solid #fa8c16; border-radius:999rpx; }
+.sort-trigger { font-size:24rpx; color:#1890ff; padding:6rpx 16rpx; border:2rpx solid #1890ff; border-radius:999rpx; }
 .empty { text-align:center; padding: 20rpx 0; color:#999; }
 </style>

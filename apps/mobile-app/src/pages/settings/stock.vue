@@ -27,9 +27,12 @@
       </view>
 
       <view v-if="loading" class="empty">正在加载库存...</view>
-      <view v-else-if="items.length === 0" class="empty">暂无库存</view>
+      <view v-else-if="filteredItems.length === 0" class="empty">{{ keyword ? '无匹配商品' : '暂无库存' }}</view>
       <view v-else>
-        <view v-for="item in items" :key="item.productId" class="card">
+        <view class="search-bar">
+          <input v-model="keyword" placeholder="搜索商品名称" class="search-input" />
+        </view>
+        <view v-for="item in filteredItems" :key="item.productId" class="card">
           <text class="name">{{ item.name }}</text>
           <view class="stock-row">
             <text class="stock-label">当前仓</text>
@@ -70,7 +73,14 @@ const mainWarehouse = computed(() => accessibleWarehouses.value.find(warehouse =
 const list = ref<StockItem[]>([])
 const mainStockMap = ref<Record<string, number>>({})
 const loading = ref(false)
+const keyword = ref('')
 let unsubscribeStock: (() => void) | null = null
+
+const filteredItems = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  if (!kw) return items.value
+  return items.value.filter(item => item.name.toLowerCase().includes(kw))
+})
 
 function subscribeStockUpdates() {
   if (unsubscribeStock) {
@@ -275,5 +285,20 @@ onShow(() => {
   text-align: center;
   color: #999;
   padding: 48rpx 0;
+}
+
+.search-bar {
+  margin-bottom: 16rpx;
+}
+
+.search-input {
+  width: 100%;
+  height: 72rpx;
+  padding: 0 24rpx;
+  background: #fff;
+  border-radius: 36rpx;
+  font-size: 28rpx;
+  border: 1rpx solid #e8e8e8;
+  box-sizing: border-box;
 }
 </style>

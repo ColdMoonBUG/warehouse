@@ -53,7 +53,7 @@
               <view v-else-if="todayCommission.ledgers.length === 0" class="earnings-empty">今日暂无收益流水</view>
               <view v-for="item in todayCommission.ledgers" :key="item.id" class="ledger-item">
                 <view class="ledger-row">
-                  <text class="ledger-name">{{ item.storeName || '未关联门店' }}</text>
+                  <text class="ledger-name" :class="{ clickable: !!item.storeId }" @tap="goStoreSales(item)">{{ item.storeName || '未关联门店' }}</text>
                   <text class="ledger-amount" :class="amountClass(item.commissionAmount)">{{ signedAmountText(item.commissionAmount) }}</text>
                 </view>
                 <view class="ledger-row ledger-row-sub">
@@ -157,6 +157,8 @@ function bizTypeText(type?: string) {
   if (type === 'return') return '退货扣回'
   if (type === 'void_sale') return '销售作废冲回'
   if (type === 'void_return') return '退货作废返还'
+  if (type === 'gift') return '赠送扣款'
+  if (type === 'void_gift') return '赠送作废返还'
   return '收益流水'
 }
 
@@ -270,6 +272,13 @@ function goAccount() {
 function goSwitchAccount() {
   userStore.logout()
   uni.reLaunch({ url: '/pages/login/index' })
+}
+
+function goStoreSales(item: TodayCommissionItem) {
+  if (!item.storeId) return
+  uni.navigateTo({
+    url: `/pages/sales/store-history?storeId=${item.storeId}&storeName=${encodeURIComponent(item.storeName || '')}`,
+  })
 }
 
 onShow(async () => {
@@ -458,6 +467,11 @@ onShow(async () => {
 .ledger-amount {
   font-size: 28rpx;
   color: #1f2937;
+}
+
+.ledger-name.clickable {
+  color: #1890ff;
+  text-decoration: underline;
 }
 
 .ledger-amount {

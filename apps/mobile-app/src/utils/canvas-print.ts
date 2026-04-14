@@ -57,8 +57,8 @@ async function drawPrintContent(ctx: any, data: PrintDocData, width: number, hei
   ctx.setFillStyle('white')
   ctx.fillRect(0, 0, width, height)
 
-  const lm = 30
-  const rm = 30
+  const lm = 5
+  const rm = 5
   let y = 35
   const ll = 1
 
@@ -72,8 +72,8 @@ async function drawPrintContent(ctx: any, data: PrintDocData, width: number, hei
 
   ctx.setStrokeStyle('black')
   ctx.setLineWidth(ll)
-  ctx.moveTo(lm, y)
-  ctx.lineTo(width - rm, y)
+  ctx.moveTo(0, y)
+  ctx.lineTo(width, y)
   ctx.stroke()
   y += 14
 
@@ -86,18 +86,18 @@ async function drawPrintContent(ctx: any, data: PrintDocData, width: number, hei
   y += 54
 
   ctx.setLineWidth(ll)
-  ctx.moveTo(lm, y)
-  ctx.lineTo(width - rm, y)
+  ctx.moveTo(0, y)
+  ctx.lineTo(width, y)
   ctx.stroke()
   y += 14
 
   ctx.setFontSize(46)
   const colSeq = lm
-  const colBarcode = lm + 80
-  const colName = 560
-  const colQty = 1020
-  const colPrice = 1220
-  const colAmount = 1450
+  const colBarcode = 60
+  const colName = 520
+  const colQty = 1080
+  const colPrice = 1300
+  const colAmount = 1540
 
   ctx.fillText('序', colSeq, y + 44)
   ctx.fillText('条形码', colBarcode, y + 44)
@@ -108,8 +108,8 @@ async function drawPrintContent(ctx: any, data: PrintDocData, width: number, hei
   y += 58
 
   ctx.setLineWidth(ll)
-  ctx.moveTo(lm, y)
-  ctx.lineTo(width - rm, y)
+  ctx.moveTo(0, y)
+  ctx.lineTo(width, y)
   ctx.stroke()
   y += 12
 
@@ -133,8 +133,8 @@ async function drawPrintContent(ctx: any, data: PrintDocData, width: number, hei
 
   y += 8
   ctx.setLineWidth(ll)
-  ctx.moveTo(lm, y)
-  ctx.lineTo(width - rm, y)
+  ctx.moveTo(0, y)
+  ctx.lineTo(width, y)
   ctx.stroke()
   y += 15
 
@@ -150,8 +150,8 @@ async function drawPrintContent(ctx: any, data: PrintDocData, width: number, hei
   }
 
   ctx.setLineWidth(ll)
-  ctx.moveTo(lm, y)
-  ctx.lineTo(width - rm, y)
+  ctx.moveTo(0, y)
+  ctx.lineTo(width, y)
   ctx.stroke()
 
   await new Promise<void>((resolve) => {
@@ -207,10 +207,11 @@ function strToBytes(str: string): Uint8Array {
 }
 
 /**
- * 将 RGBA 像素数据顺时针旋转 90 度
+ * 将 RGBA 像素数据逆时针旋转 90 度（向左旋转）
  * 原始 (W x H) → 旋转后 (H x W)
+ * 内容从上到下排列，下方留白
  */
-function rotateImageData90CW(imageData: { data: any; width: number; height: number }): { data: Uint8Array; width: number; height: number } {
+function rotateImageData90CCW(imageData: { data: any; width: number; height: number }): { data: Uint8Array; width: number; height: number } {
   const { data: src, width: W, height: H } = imageData
   const newW = H
   const newH = W
@@ -219,9 +220,9 @@ function rotateImageData90CW(imageData: { data: any; width: number; height: numb
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const srcIdx = (y * W + x) * 4
-      // 顺时针90度: (x, y) → (H-1-y, x)
-      const nx = H - 1 - y
-      const ny = x
+      // 逆时针90度: (x, y) → (y, W-1-x)
+      const nx = y
+      const ny = W - 1 - x
       const dstIdx = (ny * newW + nx) * 4
       dst[dstIdx] = src[srcIdx]
       dst[dstIdx + 1] = src[srcIdx + 1]
@@ -242,8 +243,8 @@ function buildCpclCommand(imageData: any, taskId: string): { cpclBuffer: ArrayBu
   try {
     appendLog('info', `[A5打印] 开始构建CPCL指令：taskId=${taskId}，原始图片 ${imageData.width}x${imageData.height}`)
 
-    // A5纸横向放置，需要旋转90度
-    const rotated = rotateImageData90CW(imageData)
+    // A5纸，向左旋转90度打印
+    const rotated = rotateImageData90CCW(imageData)
     appendLog('info', `[A5打印] 图片旋转90°完成：${rotated.width}x${rotated.height}`)
 
     const cpclBuffer = CPCL.Builder.createArea(0, rotated.height, 1)
@@ -383,8 +384,8 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
   ctx.setFillStyle('white')
   ctx.fillRect(0, 0, width, height)
 
-  const lm = 30
-  const rm = 30
+  const lm = 5
+  const rm = 5
   let y = 35
   const ll = 1
 
@@ -398,8 +399,8 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
 
   ctx.setStrokeStyle('black')
   ctx.setLineWidth(ll)
-  ctx.moveTo(lm, y)
-  ctx.lineTo(width - rm, y)
+  ctx.moveTo(0, y)
+  ctx.lineTo(width, y)
   ctx.stroke()
   y += 14
 
@@ -412,17 +413,17 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
   y += 54
 
   ctx.setLineWidth(ll)
-  ctx.moveTo(lm, y)
-  ctx.lineTo(width - rm, y)
+  ctx.moveTo(0, y)
+  ctx.lineTo(width, y)
   ctx.stroke()
   y += 14
 
   const colSeq = lm
-  const colBarcode = lm + 80
-  const colName = 560
-  const colQty = 1020
-  const colPrice = 1220
-  const colAmount = 1450
+  const colBarcode = 60
+  const colName = 520
+  const colQty = 1080
+  const colPrice = 1300
+  const colAmount = 1540
 
   // 销单部分
   if (saleItems.length > 0) {
@@ -442,8 +443,8 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
     y += 58
 
     ctx.setLineWidth(ll)
-    ctx.moveTo(lm, y)
-    ctx.lineTo(width - rm, y)
+    ctx.moveTo(0, y)
+    ctx.lineTo(width, y)
     ctx.stroke()
     y += 12
 
@@ -461,8 +462,8 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
 
     y += 8
     ctx.setLineWidth(ll)
-    ctx.moveTo(lm, y)
-    ctx.lineTo(width - rm, y)
+    ctx.moveTo(0, y)
+    ctx.lineTo(width, y)
     ctx.stroke()
     y += 15
 
@@ -491,8 +492,8 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
     y += 58
 
     ctx.setLineWidth(ll)
-    ctx.moveTo(lm, y)
-    ctx.lineTo(width - rm, y)
+    ctx.moveTo(0, y)
+    ctx.lineTo(width, y)
     ctx.stroke()
     y += 12
 
@@ -510,8 +511,8 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
 
     y += 8
     ctx.setLineWidth(ll)
-    ctx.moveTo(lm, y)
-    ctx.lineTo(width - rm, y)
+    ctx.moveTo(0, y)
+    ctx.lineTo(width, y)
     ctx.stroke()
     y += 15
 
@@ -527,8 +528,8 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
   if (returnItems.length > 0 && saleItems.length > 0) {
     y += 10
     ctx.setLineWidth(2)
-    ctx.moveTo(lm, y)
-    ctx.lineTo(width - rm, y)
+    ctx.moveTo(0, y)
+    ctx.lineTo(width, y)
     ctx.stroke()
     y += 15
 
@@ -545,8 +546,8 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
   }
 
   ctx.setLineWidth(ll)
-  ctx.moveTo(lm, y)
-  ctx.lineTo(width - rm, y)
+  ctx.moveTo(0, y)
+  ctx.lineTo(width, y)
   ctx.stroke()
 
   await new Promise<void>((resolve) => {

@@ -33,6 +33,7 @@ public class SaleDoc implements Serializable {
     private String remark;
     private String status;
     private String docType;
+    private String returnDocId;
     private Integer settled;
     private Date settledAt;
     private String settledBy;

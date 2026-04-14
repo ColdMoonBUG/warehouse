@@ -118,10 +118,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
-import { getSaleDetail, getStores, getSalespersonAccounts, getProducts, voidSale, isSameSalespersonId } from '@/api'
-import type { SaleDoc, Store, Salesperson, Product } from '@/types'
+import { getSaleDetail, getStores, getSalespersonAccounts, getProducts, voidSale, isSameSalespersonId, getReturnDetail } from '@/api'
+import type { SaleDoc, Store, Salesperson, Product, ReturnDoc } from '@/types'
 import { getPageQueryParam, formatPackSummary, normalizeCount } from '@/utils'
-import { buildSaleReceipt, printText, printSaleA4, checkPrinterConnected, navigateToPrinterSettings, getBluetoothPrinterLogs } from '@/utils/bluetooth-printer'
+import { buildSaleReceipt, printText, printSaleA4, printCombinedA4, checkPrinterConnected, navigateToPrinterSettings, getBluetoothPrinterLogs } from '@/utils/bluetooth-printer'
 import { CANVAS_ID, estimateContentHeight, PAGE_WIDTH_DOTS } from '@/utils/canvas-print'
 
 async function voidDoc() {
@@ -269,7 +269,18 @@ async function confirmPrint() {
   if (!doc.value) return
   printing.value = true
   try {
-    await printSaleA4(doc.value, stores.value.find(s => s.id === doc.value?.storeId), salespersonName.value, products.value, payType.value)
+    const store = stores.value.find(s => s.id === doc.value?.storeId)
+    // 如果销单关联了退单，合并打印
+    if (doc.value.returnDocId) {
+      const returnDoc = await getReturnDetail(doc.value.returnDocId)
+      if (returnDoc) {
+        await printCombinedA4(doc.value, returnDoc, store, salespersonName.value, products.value, payType.value)
+      } else {
+        await printSaleA4(doc.value, store, salespersonName.value, products.value, payType.value)
+      }
+    } else {
+      await printSaleA4(doc.value, store, salespersonName.value, products.value, payType.value)
+    }
     uni.showToast({ title: '打印指令已发送', icon: 'success' })
     showPreview.value = false
   } catch (error: any) {

@@ -593,20 +593,12 @@ export async function printSaleA4(
   }
   await ensurePrinterConnected(target)
 
-  const copies = payType === 'card' ? 3 : 2
-  appendLog('info', `[A4打印] 付款方式: ${payType === 'card' ? '单子' : '现金'}, 打印 ${copies} 张`)
-
-  for (let i = 0; i < copies; i++) {
-    appendLog('info', `[A4打印] 第 ${i + 1}/${copies} 张 - 发送 JOURNAL+SETFF 配置...`)
-    await sendCpcl(journalSetup)
-    await sleep(500)
-    appendLog('info', `[A4打印] 第 ${i + 1}/${copies} 张 - 发送打印指令...`)
-    await sendCpcl(cpclBuffer)
-    if (i < copies - 1) {
-      await sleep(1000)
-    }
-  }
-  appendLog('info', `[A4打印] 完成，共打印 ${copies} 张`)
+  appendLog('info', `[A4打印] 发送 JOURNAL+SETFF 配置...`)
+  await sendCpcl(journalSetup)
+  await sleep(500)
+  appendLog('info', `[A4打印] 发送打印指令...`)
+  await sendCpcl(cpclBuffer)
+  appendLog('info', `[A4打印] 完成`)
 }
 
 export async function printReturnA4(
@@ -647,30 +639,24 @@ export async function printCombinedA4(
   }
   await ensurePrinterConnected(target)
 
-  const copies = payType === 'card' ? 3 : 2
-  appendLog('info', `[合并打印] 付款方式: ${payType === 'card' ? '单子' : '现金'}, ${pages.length} 页, 打印 ${copies} 份`)
+  appendLog('info', `[合并打印] ${pages.length} 页`)
 
-  for (let c = 0; c < copies; c++) {
-    for (let p = 0; p < pages.length; p++) {
-      const { cpclBuffer, journalSetup } = pages[p]
-      appendLog('info', `[合并打印] 第 ${c + 1}/${copies} 份, 第 ${p + 1}/${pages.length} 页 - 发送配置...`)
-      await sendCpcl(journalSetup)
-      await sleep(500)
-      appendLog('info', `[合并打印] 第 ${c + 1}/${copies} 份, 第 ${p + 1}/${pages.length} 页 - 发送打印指令...`)
-      await sendCpcl(cpclBuffer)
-      if (p < pages.length - 1) {
-        await sleep(1500)
-      }
-    }
-    if (c < copies - 1) {
-      await sleep(1000)
+  for (let p = 0; p < pages.length; p++) {
+    const { cpclBuffer, journalSetup } = pages[p]
+    appendLog('info', `[合并打印] 第 ${p + 1}/${pages.length} 页 - 发送配置...`)
+    await sendCpcl(journalSetup)
+    await sleep(500)
+    appendLog('info', `[合并打印] 第 ${p + 1}/${pages.length} 页 - 发送打印指令...`)
+    await sendCpcl(cpclBuffer)
+    if (p < pages.length - 1) {
+      await sleep(1500)
     }
   }
-  appendLog('info', `[合并打印] 完成，共打印 ${copies} 份 x ${pages.length} 页`)
+  appendLog('info', `[合并打印] 完成，共 ${pages.length} 页`)
 }
 
 export function checkPrinterConnected(): PrinterDevice | null {
-  return getSavedPrinter()
+  return getBoundPrinter()
 }
 
 export function navigateToPrinterSettings() {
@@ -714,6 +700,92 @@ export async function listNearbyPrinters(): Promise<PrinterDevice[]> {
 }
 
 const PRINTER_KEY = 'saved_printer_v2'
+const PRINTER_BIND_KEY = 'wh_printer_bindings'
+
+// ============================================================
+// 预设设备 & 账户绑定
+// ============================================================
+
+/** 预设打印机设备参数（MAC 地址在 Android 下即 deviceId） */
+export const PRESET_PRINTERS: Record<string, { name: string; mac: string }> = {
+  小车: { name: 'A4LEP-A0290A', mac: '80:F1:B2:A0:29:0A' },
+  大车: { name: '', mac: '' },  // 待配置
+  三车: { name: '', mac: '' },  // 待配置
+}
+
+/** 获取当前账户的显示名标签（用于绑定打印机） */
+function getAccountLabel(): string {
+  try {
+    const raw = uni.getStorageSync('wh_current_user')
+    if (!raw) return ''
+    const user = typeof raw === 'string' ? JSON.parse(raw) : raw
+    // 管理员不参与绑定
+    if (user.role === 'admin') return ''
+    const name = (user.displayName || '').trim()
+    if (!name) return ''
+    return name
+  } catch {
+    return ''
+  }
+}
+
+/** 获取当前账户绑定的打印机（优先级：手动绑定 > 预设） */
+export function getBoundPrinter(): PrinterDevice | null {
+  const label = getAccountLabel()
+  // 1. 查手动绑定
+  const bindings = loadBindings()
+  if (label && bindings[label]) {
+    return bindings[label]
+  }
+  // 2. 查预设
+  if (label && PRESET_PRINTERS[label]?.mac) {
+    const preset = PRESET_PRINTERS[label]
+    return { deviceId: preset.mac, name: preset.name }
+  }
+  // 3. 兜底旧的 saved_printer
+  return getSavedPrinter()
+}
+
+/** 将当前账户绑定到指定设备 */
+export function bindPrinterToAccount(device: PrinterDevice): boolean {
+  const label = getAccountLabel()
+  if (!label) return false
+  const bindings = loadBindings()
+  bindings[label] = { deviceId: device.deviceId, name: device.name }
+  saveBindings(bindings)
+  // 同时保存为 saved_printer（兼容旧逻辑）
+  savePrinter(device)
+  appendLog('info', `[绑定] ${label} 绑定打印机: ${device.name} (${device.deviceId})`)
+  return true
+}
+
+/** 解除当前账户的绑定 */
+export function unbindPrinterFromAccount() {
+  const label = getAccountLabel()
+  if (!label) return
+  const bindings = loadBindings()
+  delete bindings[label]
+  saveBindings(bindings)
+  appendLog('info', `[绑定] ${label} 已解除打印机绑定`)
+}
+
+/** 获取当前账户标签（导出给 UI 使用） */
+export function getCurrentAccountLabel(): string {
+  return getAccountLabel()
+}
+
+function loadBindings(): Record<string, PrinterDevice> {
+  try {
+    const raw = uni.getStorageSync(PRINTER_BIND_KEY)
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveBindings(bindings: Record<string, PrinterDevice>) {
+  uni.setStorageSync(PRINTER_BIND_KEY, JSON.stringify(bindings))
+}
 
 export function getSavedPrinter(): PrinterDevice | null {
   try {
@@ -779,12 +851,12 @@ async function heartbeatPing(): Promise<boolean> {
 async function attemptReconnect() {
   if (_reconnecting) return
   _reconnecting = true
-  const saved = getSavedPrinter()
+  const saved = getBoundPrinter()
   if (!saved) {
     _reconnecting = false
     return
   }
-  appendLog('info', '[心跳] 连接断开，尝试自动重连...')
+  appendLog('info', `[心跳] 连接断开，尝试自动重连 ${saved.name}(${saved.deviceId})...`)
   try {
     await connectPrinter(saved.deviceId)
     _connected = true
@@ -822,10 +894,14 @@ function stopHeartbeat() {
   }
 }
 
-/** App 进入前台时调用：启动心跳，自动重连 */
+/** App 进入前台时调用：根据账户绑定设备启动心跳，自动重连 */
 export function startBluetoothDaemon() {
-  const saved = getSavedPrinter()
-  if (!saved) return
+  const bound = getBoundPrinter()
+  if (!bound) {
+    appendLog('info', '[心跳] 当前账户未绑定打印机，跳过自动连接')
+    return
+  }
+  appendLog('info', `[心跳] 账户绑定设备: ${bound.name}(${bound.deviceId})`)
   // 如果当前无连接，尝试重连
   if (!_connected || !currentSession) {
     attemptReconnect()
@@ -842,9 +918,9 @@ export function pauseBluetoothDaemon() {
 
 /** 确保打印前连接就绪，已连接时跳过连接步骤 */
 export async function ensurePrinterConnected(device?: PrinterDevice | null): Promise<void> {
-  const target = device || getSavedPrinter()
+  const target = device || getBoundPrinter()
   if (!target) {
-    throw new Error('请先选择打印机')
+    throw new Error('请先绑定打印机')
   }
   if (_connected && currentSession && currentSession.deviceId === target.deviceId) {
     // 已连接，验证一下

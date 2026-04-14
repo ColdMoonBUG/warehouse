@@ -162,7 +162,7 @@ public class SaleController {
                 applyStockDelta(fromWarehouseId, line.getProductId(), -qty);
                 insertLedger("sale", id, fromWarehouseId, line.getProductId(), -qty);
 
-                // 赠送单不计提成
+                // 赠送单按进价扣工资
                 boolean isGift = "gift".equals(doc.getDocType());
                 if (!isGift) {
                     BigDecimal commissionAmount = amount.multiply(COMMISSION_RATE).setScale(2, RoundingMode.HALF_UP);
@@ -178,6 +178,24 @@ public class SaleController {
                     ledger.setAmount(amount);
                     ledger.setCommissionRate(COMMISSION_RATE);
                     ledger.setCommissionAmount(commissionAmount);
+                    commissionLedgerMapper.insert(ledger);
+                } else {
+                    // 赠送：按进价（purchasePrice）从工资中扣除
+                    Product product = productMapper.selectById(line.getProductId());
+                    BigDecimal purchasePrice = (product != null && product.getPurchasePrice() != null) ? product.getPurchasePrice() : BigDecimal.ZERO;
+                    BigDecimal giftDeduction = purchasePrice.multiply(new BigDecimal(qty)).negate();
+                    CommissionLedger ledger = new CommissionLedger();
+                    ledger.setId(IdUtils.randomId());
+                    ledger.setBizType("gift");
+                    ledger.setDocId(id);
+                    ledger.setSalespersonId(doc.getSalespersonId());
+                    ledger.setStoreId(doc.getStoreId());
+                    ledger.setProductId(line.getProductId());
+                    ledger.setQty(qty);
+                    ledger.setPrice(purchasePrice);
+                    ledger.setAmount(purchasePrice.multiply(new BigDecimal(qty)));
+                    ledger.setCommissionRate(BigDecimal.ZERO);
+                    ledger.setCommissionAmount(giftDeduction);
                     commissionLedgerMapper.insert(ledger);
                 }
             }
@@ -210,7 +228,7 @@ public class SaleController {
                 applyStockDelta(fromWarehouseId, line.getProductId(), qty);
                 insertLedger("sale", id, fromWarehouseId, line.getProductId(), qty);
 
-                // 赠送单无提成，作废时也无需反冲提成
+                // 赠送单作废：返还扣除的进价
                 boolean isGift = "gift".equals(doc.getDocType());
                 if (!isGift) {
                     BigDecimal commissionAmount = amount.multiply(COMMISSION_RATE).setScale(2, RoundingMode.HALF_UP).negate();
@@ -226,6 +244,24 @@ public class SaleController {
                     ledger.setAmount(amount);
                     ledger.setCommissionRate(COMMISSION_RATE);
                     ledger.setCommissionAmount(commissionAmount);
+                    commissionLedgerMapper.insert(ledger);
+                } else {
+                    // 赠送单作废：返还按进价扣除的金额（正值）
+                    Product product = productMapper.selectById(line.getProductId());
+                    BigDecimal purchasePrice = (product != null && product.getPurchasePrice() != null) ? product.getPurchasePrice() : BigDecimal.ZERO;
+                    BigDecimal giftRefund = purchasePrice.multiply(new BigDecimal(qty));
+                    CommissionLedger ledger = new CommissionLedger();
+                    ledger.setId(IdUtils.randomId());
+                    ledger.setBizType("void_gift");
+                    ledger.setDocId(id);
+                    ledger.setSalespersonId(doc.getSalespersonId());
+                    ledger.setStoreId(doc.getStoreId());
+                    ledger.setProductId(line.getProductId());
+                    ledger.setQty(qty);
+                    ledger.setPrice(purchasePrice);
+                    ledger.setAmount(purchasePrice.multiply(new BigDecimal(qty)));
+                    ledger.setCommissionRate(BigDecimal.ZERO);
+                    ledger.setCommissionAmount(giftRefund);
                     commissionLedgerMapper.insert(ledger);
                 }
             }

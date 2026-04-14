@@ -1009,3 +1009,29 @@ export async function voidReturn(id: string): Promise<void> {
   }
   await request<void>(`/api/return/void/${id}`, 'POST')
 }
+
+// --- 未收款管理 ---
+export async function getUnsettledSales(): Promise<SaleDoc[]> {
+  if (USE_MOCK) {
+    return saleDb.list()
+      .map(normalizeSaleDoc)
+      .filter(d => d.status === 'posted' && !d.settled)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  }
+  const res = await request<{ records: SaleDoc[], total: number }>('/api/sale/unsettled', 'GET')
+  return (res.records || []).map(normalizeSaleDoc)
+}
+
+export async function settleSale(id: string): Promise<void> {
+  if (USE_MOCK) {
+    const list = saleDb.list()
+    const doc = list.find(d => d.id === id)
+    if (doc) {
+      doc.settled = 1
+      doc.settledAt = new Date().toISOString()
+      saleDb.save(list)
+    }
+    return
+  }
+  await request<void>(`/api/sale/settle/${id}`, 'POST')
+}

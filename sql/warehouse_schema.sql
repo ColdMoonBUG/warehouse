@@ -98,6 +98,11 @@ CREATE TABLE `wh_sale_doc` (
   `doc_date` DATE NOT NULL COMMENT '单据日期',
   `remark` VARCHAR(500) DEFAULT NULL COMMENT '备注',
   `status` VARCHAR(10) NOT NULL DEFAULT 'draft' COMMENT '状态: draft/posted/voided',
+  `doc_type` VARCHAR(20) NOT NULL DEFAULT 'sale' COMMENT '单据类型: sale=销售 gift=赠送',
+  `return_doc_id` VARCHAR(32) DEFAULT NULL COMMENT '关联退单ID',
+  `settled` TINYINT NOT NULL DEFAULT 0 COMMENT '货款状态: 0=未收款 1=已收款',
+  `settled_at` DATETIME DEFAULT NULL COMMENT '收款确认时间',
+  `settled_by` VARCHAR(32) DEFAULT NULL COMMENT '确认收款操作人ID',
   `total_qty` INT DEFAULT 0 COMMENT '总袋数',
   `total_amount` DECIMAL(12,2) DEFAULT 0 COMMENT '总金额',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -108,7 +113,8 @@ CREATE TABLE `wh_sale_doc` (
   KEY `idx_store_id` (`store_id`),
   KEY `idx_warehouse_id` (`warehouse_id`),
   KEY `idx_doc_date` (`doc_date`),
-  KEY `idx_status` (`status`)
+  KEY `idx_status` (`status`),
+  KEY `idx_settled` (`settled`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='销售单主表';
 
 -- 8. 销售单明细表

@@ -9,9 +9,13 @@
         <button class="btn-add" @tap="goAdd">新增超市</button>
       </view>
 
-      <view v-if="stores.length === 0" class="empty">暂无超市</view>
+      <view class="search-bar">
+        <input v-model="keyword" placeholder="搜索超市名称/地址" class="search-input" />
+      </view>
 
-      <view v-for="s in stores" :key="s.id" class="store-item">
+      <view v-if="filteredStores.length === 0" class="empty">暂无超市</view>
+
+      <view v-for="s in filteredStores" :key="s.id" class="store-item">
         <view class="info">
           <text class="name">{{ s.name }}</text>
           <text class="meta">状态：{{ s.status === 'active' ? '启用' : '停用' }}</text>
@@ -33,7 +37,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { getStoresAll, toggleStore, deleteStore, getSalespersonAccounts, getSalespersonName } from '@/api'
 import type { Store, Salesperson } from '@/types'
@@ -42,6 +46,17 @@ import { useUserStore } from '@/store/user'
 const userStore = useUserStore()
 const stores = ref<Store[]>([])
 const salespersons = ref<Salesperson[]>([])
+const keyword = ref('')
+
+const filteredStores = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  if (!kw) return stores.value
+  return stores.value.filter(s => {
+    const name = (s.name || '').toLowerCase()
+    const addr = (s.address || '').toLowerCase()
+    return name.includes(kw) || addr.includes(kw)
+  })
+})
 
 async function loadData() {
   const [storeList, salespersonList] = await Promise.all([
@@ -112,6 +127,8 @@ onShow(() => {
 .content { padding: 30rpx; }
 .actions { margin-bottom: 20rpx; }
 .btn-add { width: 100%; height: 80rpx; background: #1890ff; color: #fff; font-size: 30rpx; border-radius: 40rpx; border: none; }
+.search-bar { margin-bottom: 20rpx; }
+.search-input { width: 100%; height: 72rpx; padding: 0 24rpx; background: #fff; border-radius: 36rpx; font-size: 28rpx; border: 1rpx solid #e8e8e8; box-sizing: border-box; }
 .store-item { background: #fff; padding: 24rpx; border-radius: 16rpx; margin-bottom: 20rpx; display:flex; justify-content:space-between; align-items:center; }
 .info { display:flex; flex-direction:column; }
 .name { font-size: 30rpx; color:#333; font-weight:600; }

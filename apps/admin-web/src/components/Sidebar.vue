@@ -48,6 +48,8 @@
         </template>
         <el-menu-item index="/system/account">账户管理</el-menu-item>
         <el-menu-item index="/system/finance">财务结清</el-menu-item>
+        <el-menu-item index="/system/store-finance">超市流水</el-menu-item>
+        <el-menu-item index="/system/unsettled">未收款管理</el-menu-item>
       </el-sub-menu>
     </el-menu>
   </div>

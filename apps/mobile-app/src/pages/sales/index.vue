@@ -8,6 +8,7 @@
       <view class="tabs">
         <view class="tab" :class="{active: activeTab==='sale'}" @tap="switchTab('sale')">销售</view>
         <view class="tab" :class="{active: activeTab==='return'}" @tap="switchTab('return')">退货</view>
+        <view class="tab" :class="{active: activeTab==='unsettled'}" @tap="switchTab('unsettled')">未收款</view>
       </view>
 
       <view v-if="userStore.isAdmin" class="search-bar">
@@ -37,7 +38,7 @@
         </view>
       </view>
 
-      <view v-else>
+      <view v-else-if="activeTab==='return'">
         <view class="actions">
           <button class="btn-create" @tap="goReturnCreate">创建退货单</button>
         </view>
@@ -57,6 +58,30 @@
           </view>
         </view>
       </view>
+
+      <view v-else>
+        <view v-if="unsettledLoading" class="empty">加载中...</view>
+        <view v-else-if="unsettledDocs.length === 0" class="empty">暂无未收款销单</view>
+        <view v-for="doc in unsettledDocs" :key="doc.id" class="sale-card">
+          <view class="row">
+            <text class="code">{{ doc.code }}</text>
+            <text v-if="doc.docType === 'gift'" class="gift-tag">[赠送]</text>
+            <text class="unsettled-tag">未收款</text>
+          </view>
+          <view class="row">
+            <text class="store">{{ getStoreName(doc.storeId) }}</text>
+            <text class="date">{{ doc.date }}</text>
+          </view>
+          <view class="row">
+            <text class="qty">数量: {{ totalQty(doc) }}袋</text>
+            <text class="amount">金额: ¥{{ totalAmount(doc).toFixed(2) }}</text>
+          </view>
+          <view class="row settle-row">
+            <button class="btn-settle" @tap.stop="doSettle(doc)">确认收款</button>
+            <button class="btn-detail" @tap.stop="goDetail(doc.id)">详情</button>
+          </view>
+        </view>
+      </view>
     </view>
   </view>
 </template>
@@ -65,15 +90,17 @@
 import { ref, computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
-import { getSales, getStores, getReturns, getSessionSalespersonId, isSameSalespersonId } from '@/api'
+import { getSales, getStores, getReturns, getUnsettledSales, settleSale, getSessionSalespersonId, isSameSalespersonId } from '@/api'
 import type { SaleDoc, Store, ReturnDoc } from '@/types'
 
 const userStore = useUserStore()
-const activeTab = ref<'sale'|'return'>('sale')
+const activeTab = ref<'sale'|'return'|'unsettled'>('sale')
 const sales = ref<SaleDoc[]>([])
 const returns = ref<ReturnDoc[]>([])
 const stores = ref<Store[]>([])
 const searchKeyword = ref('')
+const unsettledDocs = ref<SaleDoc[]>([])
+const unsettledLoading = ref(false)
 
 const filteredSales = computed(() => {
   const key = searchKeyword.value.trim().toLowerCase()
@@ -87,9 +114,10 @@ const filteredReturns = computed(() => {
   return returns.value.filter(d => (d.code || '').toLowerCase().includes(key))
 })
 
-function switchTab(tab: 'sale' | 'return') {
+function switchTab(tab: 'sale' | 'return' | 'unsettled') {
   activeTab.value = tab
   searchKeyword.value = ''
+  if (tab === 'unsettled') loadUnsettled()
 }
 
 function goReturnCreate() { uni.navigateTo({ url: '/pages/return/create' }) }
@@ -114,6 +142,36 @@ const loadAll = async () => {
   const storeList = await getStores()
   stores.value = storeList
   await Promise.all([listSales(), listReturns()])
+}
+
+async function loadUnsettled() {
+  unsettledLoading.value = true
+  try {
+    const docs = await getUnsettledSales()
+    const currentSalespersonId = getSessionSalespersonId(userStore.currentUser)
+    unsettledDocs.value = userStore.isAdmin ? docs : docs.filter(d => isSameSalespersonId(d.salespersonId, currentSalespersonId))
+  } catch {
+    unsettledDocs.value = []
+  } finally {
+    unsettledLoading.value = false
+  }
+}
+
+function doSettle(doc: SaleDoc) {
+  uni.showModal({
+    title: '确认收款',
+    content: `确认「${doc.code}」已收款？`,
+    success: async (res) => {
+      if (!res.confirm) return
+      try {
+        await settleSale(doc.id)
+        uni.showToast({ title: '已确认收款', icon: 'success' })
+        await loadUnsettled()
+      } catch (e: any) {
+        uni.showToast({ title: e.message || '操作失败', icon: 'none' })
+      }
+    },
+  })
 }
 
 function goCreate() {
@@ -286,6 +344,49 @@ onShow(() => {
   .store, .date, .qty, .amount {
     font-size: 24rpx;
     color: #666;
+  }
+
+  .unsettled-tag {
+    font-size: 22rpx;
+    color: #ff4d4f;
+    background: #fff1f0;
+    padding: 2rpx 12rpx;
+    border-radius: 999rpx;
+  }
+
+  .settle-row {
+    margin-top: 8rpx;
+    gap: 16rpx;
+  }
+
+  .btn-settle {
+    flex: 1;
+    height: 64rpx;
+    background: #52c41a;
+    color: #fff;
+    font-size: 26rpx;
+    border-radius: 32rpx;
+    border: none;
+    line-height: 64rpx;
+  }
+
+  .btn-settle::after {
+    border: none;
+  }
+
+  .btn-detail {
+    flex: 1;
+    height: 64rpx;
+    background: #fff;
+    color: #1890ff;
+    font-size: 26rpx;
+    border-radius: 32rpx;
+    border: 2rpx solid #1890ff;
+    line-height: 64rpx;
+  }
+
+  .btn-detail::after {
+    border: none;
   }
 }
 </style>

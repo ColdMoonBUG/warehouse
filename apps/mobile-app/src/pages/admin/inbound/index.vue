@@ -7,8 +7,16 @@
     </view>
     <view class="content">
       <view class="actions"><button class="btn" @tap="goCreate">新增入库单</button></view>
-      <view v-if="list.length===0" class="empty">暂无入库单</view>
-      <view v-for="doc in list" :key="doc.id" class="card" @tap="goEdit(doc)">
+      <view class="filter-bar">
+        <picker mode="date" :value="filterDate" @change="onDateChange">
+          <view class="date-picker">
+            <text>{{ filterDate || '选择日期筛选' }}</text>
+            <text v-if="filterDate" class="date-clear" @tap.stop="clearDate">×</text>
+          </view>
+        </picker>
+      </view>
+      <view v-if="filteredList.length===0" class="empty">{{ filterDate ? '该日期无入库单' : '暂无入库单' }}</view>
+      <view v-for="doc in filteredList" :key="doc.id" class="card" @tap="goEdit(doc)">
         <view class="row">
           <text class="code">{{ doc.code }}</text>
           <text class="status" :class="doc.status">{{ statusText(doc.status) }}</text>
@@ -26,7 +34,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
 import { useReferenceStore } from '@/store/reference'
@@ -36,6 +44,20 @@ import type { InboundDoc } from '@/types'
 const userStore = useUserStore()
 const referenceStore = useReferenceStore()
 const list = ref<InboundDoc[]>([])
+const filterDate = ref('')
+
+const filteredList = computed(() => {
+  if (!filterDate.value) return list.value
+  return list.value.filter(d => d.date === filterDate.value)
+})
+
+function onDateChange(e: any) {
+  filterDate.value = e.detail.value
+}
+
+function clearDate() {
+  filterDate.value = ''
+}
 
 function guard() {
   if (!userStore.isAdmin) {
@@ -87,4 +109,7 @@ onShow(async () => {
 .status.posted { color:#52c41a; }
 .status.voided { color:#ff4d4f; }
 .empty { text-align:center; color:#999; padding:40rpx 0; }
+.filter-bar { margin-bottom: 16rpx; }
+.date-picker { display: flex; align-items: center; justify-content: space-between; height: 72rpx; padding: 0 24rpx; background: #fff; border-radius: 36rpx; font-size: 28rpx; border: 1rpx solid #e8e8e8; }
+.date-clear { font-size: 36rpx; color: #999; padding-left: 16rpx; }
 </style>

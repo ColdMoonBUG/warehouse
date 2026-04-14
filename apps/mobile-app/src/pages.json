@@ -71,6 +71,13 @@
       }
     },
     {
+      "path": "pages/sales/product-sort",
+      "style": {
+        "navigationBarTitleText": "商品排序",
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/return/index",
       "style": {
         "navigationBarTitleText": "退货",

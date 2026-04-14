@@ -2,10 +2,29 @@
   <view class="printer-page">
     <view class="header">
       <text class="title">蓝牙打印</text>
-      <text class="subtitle">BLE 连接 · 图形打印</text>
+      <text class="subtitle">BLE 连接 · 账户绑定 · 自动重连</text>
     </view>
 
     <view class="content">
+      <!-- 账户绑定 -->
+      <view class="card">
+        <view class="card-head">
+          <text class="card-title">账户绑定</text>
+        </view>
+        <view v-if="accountLabel" class="bind-info">
+          <text class="bind-label">当前账户: {{ accountLabel }}</text>
+          <view v-if="boundPrinter" class="bind-device">
+            <text class="bind-device-name">已绑定: {{ boundPrinter.name }}</text>
+            <text class="bind-device-id">{{ boundPrinter.deviceId }}</text>
+          </view>
+          <text v-else class="bind-none">未绑定打印机（请扫描后选择设备绑定）</text>
+          <view class="row-btns" style="margin-top:12rpx">
+            <button class="btn btn-ghost" v-if="boundPrinter" @tap="handleUnbind">解除绑定</button>
+          </view>
+        </view>
+        <view v-else class="empty">管理员账户无需绑定打印机</view>
+      </view>
+
       <!-- 当前打印机 -->
       <view class="card">
         <view class="card-head">
@@ -44,10 +63,23 @@
           :key="device.deviceId"
           class="device-item"
           :class="{ active: device.deviceId === currentPrinter?.deviceId }"
-          @tap="selectDevice(device)"
         >
-          <text class="device-name">{{ device.name || '未知设备' }}</text>
-          <text class="device-id">RSSI {{ device.RSSI || '-' }}</text>
+          <view class="device-main" @tap="selectDevice(device)">
+            <text class="device-name">{{ device.name || '未知设备' }}</text>
+            <text class="device-id">RSSI {{ device.RSSI || '-' }}</text>
+          </view>
+          <button v-if="accountLabel" class="btn-bind" @tap.stop="handleBindDevice(device)">绑定</button>
+        </view>
+      </view>
+
+      <!-- 预设设备参数 -->
+      <view class="card">
+        <view class="card-head">
+          <text class="card-title">预设设备参数</text>
+        </view>
+        <view v-for="(info, label) in presetPrinters" :key="label" class="preset-item">
+          <text class="preset-label">{{ label }}</text>
+          <text class="preset-value">{{ info.name || '待配置' }} {{ info.mac || '' }}</text>
         </view>
       </view>
 
@@ -75,13 +107,17 @@ import {
   getSavedPrinter,
   savePrinter,
   clearSavedPrinter,
-  openBluetoothSettings,
   printTestPage as doPrintTest,
   testConnection,
   disconnectPrinter as _disconnectPrinter,
   getBluetoothPrinterLogs,
   clearBluetoothPrinterLogs,
   appendLog,
+  getBoundPrinter,
+  bindPrinterToAccount,
+  unbindPrinterFromAccount,
+  getCurrentAccountLabel,
+  PRESET_PRINTERS,
 } from '@/utils/bluetooth-printer'
 import type { PrinterDevice, PrinterLog } from '@/utils/bluetooth-printer'
 import { useUserStore } from '@/store/user'
@@ -95,6 +131,9 @@ const connecting = ref(false)
 const logs = ref<PrinterLog[]>(getBluetoothPrinterLogs())
 const statusText = ref('')
 const statusType = ref<'info' | 'warn' | 'error'>('info')
+const accountLabel = ref('')
+const boundPrinter = ref<PrinterDevice | null>(null)
+const presetPrinters = PRESET_PRINTERS
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
@@ -134,6 +173,58 @@ async function selectDevice(device: PrinterDevice) {
   currentPrinter.value = device
   setStatus(`已选择：${device.name}，点击"连接测试"验证连通性`)
   appendLog('info', `选择设备：${device.name} (${device.deviceId})`)
+}
+
+async function handleBindDevice(device: PrinterDevice) {
+  // 先连接测试
+  connecting.value = true
+  setStatus(`正在连接测试 ${device.name}...`)
+  try {
+    const ok = await testConnection(device.deviceId)
+    if (!ok) {
+      setStatus('连接测试失败，无法绑定', 'error')
+      connecting.value = false
+      refreshLogs()
+      return
+    }
+  } catch (e: any) {
+    setStatus(`连接失败: ${e?.message || e}`, 'error')
+    connecting.value = false
+    refreshLogs()
+    return
+  }
+  connecting.value = false
+
+  // 连接成功，执行绑定
+  const ok = bindPrinterToAccount(device)
+  if (ok) {
+    boundPrinter.value = getBoundPrinter()
+    currentPrinter.value = device
+    setStatus(`已绑定到 ${accountLabel.value}: ${device.name}`, 'info')
+    uni.showToast({ title: '绑定成功', icon: 'success' })
+  } else {
+    setStatus('绑定失败：当前账户不支持绑定', 'error')
+  }
+  refreshLogs()
+}
+
+function handleUnbind() {
+  uni.showModal({
+    title: '解除绑定',
+    content: `确认解除 ${accountLabel.value} 的打印机绑定？`,
+    success: (res) => {
+      if (!res.confirm) return
+      unbindPrinterFromAccount()
+      boundPrinter.value = getBoundPrinter()
+      setStatus('已解除绑定')
+      refreshLogs()
+    },
+  })
+}
+
+function refreshBindInfo() {
+  accountLabel.value = getCurrentAccountLabel()
+  boundPrinter.value = getBoundPrinter()
 }
 
 async function testConnect() {
@@ -220,6 +311,7 @@ onShow(async () => {
     return
   }
   currentPrinter.value = getSavedPrinter()
+  refreshBindInfo()
   refreshLogs()
 })
 </script>
@@ -350,6 +442,43 @@ onShow(async () => {
   padding: 20rpx 0;
 }
 
+.bind-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+}
+
+.bind-label {
+  font-size: 28rpx;
+  color: #333;
+  font-weight: 500;
+}
+
+.bind-device {
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+  padding: 12rpx 16rpx;
+  background: #f0f9ff;
+  border-radius: 12rpx;
+}
+
+.bind-device-name {
+  font-size: 28rpx;
+  color: #1890ff;
+  font-weight: 500;
+}
+
+.bind-device-id {
+  font-size: 22rpx;
+  color: #94a3b8;
+}
+
+.bind-none {
+  font-size: 24rpx;
+  color: #d97706;
+}
+
 .device-item {
   padding: 20rpx 0;
   border-bottom: 1rpx solid #f1f5f9;
@@ -364,6 +493,54 @@ onShow(async () => {
   &.active .device-name {
     color: #1890ff;
   }
+}
+
+.device-main {
+  flex: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-width: 0;
+}
+
+.btn-bind {
+  height: 56rpx;
+  padding: 0 24rpx;
+  background: #52c41a;
+  color: #fff;
+  font-size: 24rpx;
+  border-radius: 28rpx;
+  border: none;
+  line-height: 56rpx;
+  margin-left: 16rpx;
+  flex-shrink: 0;
+}
+
+.btn-bind::after {
+  border: none;
+}
+
+.preset-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12rpx 0;
+  border-bottom: 1rpx solid #f1f5f9;
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.preset-label {
+  font-size: 28rpx;
+  color: #333;
+  font-weight: 500;
+}
+
+.preset-value {
+  font-size: 24rpx;
+  color: #94a3b8;
 }
 
 .device-name {
