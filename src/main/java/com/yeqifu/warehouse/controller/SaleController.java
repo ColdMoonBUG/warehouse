@@ -117,13 +117,15 @@ public class SaleController {
             saleDocMapper.insert(doc);
         } else {
             saleDocMapper.updateById(doc);
-            // 删除旧明细
-            saleLineMapper.delete(
-                new LambdaQueryWrapper<SaleLine>().eq(SaleLine::getDocId, doc.getId())
-            );
+            // 仅当前端传入了明细时才更新明细，避免仅更新单头字段时意外清空明细
+            if (!lines.isEmpty()) {
+                saleLineMapper.delete(
+                    new LambdaQueryWrapper<SaleLine>().eq(SaleLine::getDocId, doc.getId())
+                );
+            }
         }
 
-        // 保存明细
+        // 保存明细（lines 为空时跳过）
         for (SaleLine line : lines) {
             int qty = line.getQty() == null ? 0 : line.getQty();
             line.setId(IdUtils.randomId());

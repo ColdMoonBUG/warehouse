@@ -105,10 +105,15 @@ export interface LedgerEntry {
 
 export interface CommissionLedger {
   id: string
-  bizType: 'sale' | 'void_sale' | 'return' | 'void_return' | string
+  bizType: 'sale' | 'void_sale' | 'return' | 'void_return' | 'gift' | 'void_gift' | string
+  docType?: 'sale' | 'return' | string
   docId: string
+  docCode?: string
+  docDate?: string | number
+  docStatus?: string
   salespersonId: string
   storeId?: string
+  storeName?: string
   productId: string
   qty: number
   price: number

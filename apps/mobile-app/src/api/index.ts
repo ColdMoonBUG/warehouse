@@ -1018,8 +1018,7 @@ export async function getUnsettledSales(): Promise<SaleDoc[]> {
       .filter(d => d.status === 'posted' && !d.settled)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   }
-  const res = await request<{ records: SaleDoc[], total: number }>('/api/sale/unsettled', 'GET')
-  return (res.records || []).map(normalizeSaleDoc)
+  return (await request<SaleDoc[]>('/api/sale/unsettled', 'GET')).map(normalizeSaleDoc)
 }
 
 export async function settleSale(id: string): Promise<void> {

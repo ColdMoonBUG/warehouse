@@ -900,6 +900,10 @@ async function doSubmit(docType: 'sale' | 'gift' = 'sale'): Promise<{ saleDoc: S
   try {
     const savedSale = await saveSale(saleDraft)
     await postSale(savedSale.id)
+    // 记录已过账状态，后续如需再次 save 不会把状态回退为 draft
+    savedSale.status = 'posted'
+    // 保留 lines（后端 save 接口不返回 lines，避免二次 save 时清空明细）
+    savedSale.lines = lines
 
     let savedReturn: ReturnDoc | null = null
     if (showReturnSection.value && returnTotalQty.value > 0) {
@@ -921,7 +925,6 @@ async function doSubmit(docType: 'sale' | 'gift' = 'sale'): Promise<{ saleDoc: S
         date: todayLocalDate(),
         status: 'draft',
         lines: returnLines,
-        saleDocId: savedSale.id,
       } as ReturnDoc
 
       savedReturn = await saveReturn(returnDraft, returnLines)
