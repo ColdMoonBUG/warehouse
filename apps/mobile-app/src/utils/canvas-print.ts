@@ -7,7 +7,7 @@ const CANVAS_ID = 'printCanvas'
 const DPI = 300
 const PAGE_WIDTH_DOTS = Math.floor(148 * DPI / 25.4)
 const PAGE_HEIGHT_DOTS = Math.floor(210 * DPI / 25.4)
-const CONTENT_WIDTH_DOTS = PAGE_WIDTH_DOTS - 60
+const CONTENT_WIDTH_DOTS = PAGE_WIDTH_DOTS - 100
 
 function mmToDots(mm: number): number {
   return Math.floor(mm * DPI / 25.4)
@@ -42,15 +42,15 @@ interface PrintDocData {
 function estimateContentHeight(data: PrintDocData): number {
   const headerH = 72
   const infoLineH = 54
-  const infoH = 2 * infoLineH + 14
-  const tableLineH = 56
-  const tableH = (1 + data.items.length) * tableLineH + 20
-  const footerLineH = 50
-  const remarkH = data.remark ? 38 : 0
-  const footerH = footerLineH + remarkH + 20
+  const infoH = 2 * infoLineH + 12
+  const tableLineH = 64
+  const tableH = (1 + data.items.length) * tableLineH + 22
+  const footerLineH = 56
+  const remarkH = data.remark ? 42 : 0
+  const footerH = footerLineH + remarkH + 22
 
   const margin = mmToDots(5)
-  return Math.min(margin + headerH + 14 + infoH + 14 + tableH + 14 + footerH + margin, PAGE_HEIGHT_DOTS)
+  return Math.min(margin + headerH + 15 + infoH + 15 + tableH + 15 + footerH + margin, PAGE_HEIGHT_DOTS)
 }
 
 async function drawPrintContent(ctx: any, data: PrintDocData, width: number, height: number): Promise<void> {
@@ -91,27 +91,27 @@ async function drawPrintContent(ctx: any, data: PrintDocData, width: number, hei
   ctx.stroke()
   y += 14
 
-  ctx.setFontSize(40)
-  const colSeq = 5
-  const colBarcode = 55
-  const colName = 380
-  const colQty = 1000
-  const colPrice = 1260
+  ctx.setFontSize(46)
+  const colSeq = lm
+  const colBarcode = 60
+  const colName = 520
+  const colQty = 1080
+  const colPrice = 1300
   const colAmount = 1540
 
-  ctx.fillText('序', colSeq, y + 42)
-  ctx.fillText('条形码', colBarcode, y + 42)
-  ctx.fillText('商品', colName, y + 42)
-  ctx.fillText('数量', colQty, y + 42)
-  ctx.fillText('进价', colPrice, y + 42)
-  ctx.fillText('总计', colAmount, y + 42)
-  y += 56
+  ctx.fillText('序', colSeq, y + 44)
+  ctx.fillText('条形码', colBarcode, y + 44)
+  ctx.fillText('商品', colName, y + 44)
+  ctx.fillText('数量', colQty, y + 44)
+  ctx.fillText('进价', colPrice, y + 44)
+  ctx.fillText('总计', colAmount, y + 44)
+  y += 58
 
   ctx.setLineWidth(ll)
   ctx.moveTo(0, y)
   ctx.lineTo(width, y)
   ctx.stroke()
-  y += 10
+  y += 12
 
   let seqNo = 0
   for (const item of data.items) {
@@ -122,13 +122,13 @@ async function drawPrintContent(ctx: any, data: PrintDocData, width: number, hei
     const priceText = moneyText(item.price)
     const amountText = moneyText(item.amount)
 
-    ctx.fillText(`${seqNo}`, colSeq, y + 42)
-    ctx.fillText(barcodeText, colBarcode, y + 42)
-    ctx.fillText(nameText, colName, y + 42)
-    ctx.fillText(qtyText, colQty, y + 42)
-    ctx.fillText(priceText, colPrice, y + 42)
-    ctx.fillText(amountText, colAmount, y + 42)
-    y += 56
+    ctx.fillText(`${seqNo}`, colSeq, y + 44)
+    ctx.fillText(barcodeText, colBarcode, y + 44)
+    ctx.fillText(nameText, colName, y + 44)
+    ctx.fillText(qtyText, colQty, y + 44)
+    ctx.fillText(priceText, colPrice, y + 44)
+    ctx.fillText(amountText, colAmount, y + 44)
+    y += 64
   }
 
   y += 8
@@ -138,15 +138,15 @@ async function drawPrintContent(ctx: any, data: PrintDocData, width: number, hei
   ctx.stroke()
   y += 15
 
-  ctx.setFontSize(40)
-  ctx.fillText(`品种:${data.items.length}种 合计:${normalizeCount(data.totalQty)}`, lm, y + 42)
-  ctx.fillText(`合计金额:${moneyText(data.totalAmount)}`, width - rm - 420, y + 42)
-  y += 50
+  ctx.setFontSize(46)
+  ctx.fillText(`品种:${data.items.length}种 合计:${normalizeCount(data.totalQty)}`, lm, y + 46)
+  ctx.fillText(`合计金额:${moneyText(data.totalAmount)}`, width - rm - 580, y + 46)
+  y += 56
 
   if (data.remark) {
     ctx.setFontSize(32)
     ctx.fillText(`备注:${data.remark}`, lm, y + 32)
-    y += 38
+    y += 42
   }
 
   ctx.setLineWidth(ll)
@@ -243,6 +243,7 @@ function buildCpclCommand(imageData: any, taskId: string): { cpclBuffer: ArrayBu
   try {
     appendLog('info', `[A5打印] 开始构建CPCL指令：taskId=${taskId}，原始图片 ${imageData.width}x${imageData.height}`)
 
+    // A5纸，向左旋转90度打印
     const rotated = rotateImageData90CCW(imageData)
     appendLog('info', `[A5打印] 图片旋转90°完成：${rotated.width}x${rotated.height}`)
 
@@ -368,12 +369,12 @@ const MAX_ITEMS_PER_PAGE = 30
 
 function estimateCombinedHeight(data: CombinedPrintData, saleItems: PrintItem[], returnItems: PrintItem[]): number {
   const headerH = 72
-  const infoH = 2 * 54 + 14
-  const tableLineH = 56
-  const saleTableH = (1 + saleItems.length) * tableLineH + 20
-  const returnTableH = returnItems.length > 0 ? (1 + returnItems.length) * tableLineH + 20 : 0
-  const sectionLabelH = returnItems.length > 0 ? 56 : 0
-  const footerH = 50 + 50 + 20
+  const infoH = 2 * 54 + 12
+  const tableLineH = 64
+  const saleTableH = (1 + saleItems.length) * tableLineH + 22
+  const returnTableH = returnItems.length > 0 ? (1 + returnItems.length) * tableLineH + 22 : 0
+  const sectionLabelH = returnItems.length > 0 ? 80 : 0
+  const footerH = 56 + 56 + 22
 
   const margin = mmToDots(5)
   return Math.min(margin + headerH + 15 + infoH + 15 + saleTableH + sectionLabelH + returnTableH + 15 + footerH + margin, PAGE_HEIGHT_DOTS)
@@ -417,46 +418,46 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
   ctx.stroke()
   y += 14
 
-  const colSeq = 5
-  const colBarcode = 55
-  const colName = 380
-  const colQty = 1000
-  const colPrice = 1260
+  const colSeq = lm
+  const colBarcode = 60
+  const colName = 520
+  const colQty = 1080
+  const colPrice = 1300
   const colAmount = 1540
 
   // 销单部分
   if (saleItems.length > 0) {
     if (returnItems.length > 0) {
-      ctx.setFontSize(36)
-      ctx.fillText('【销售】', lm, y + 36)
-      y += 46
+      ctx.setFontSize(42)
+      ctx.fillText('【销售】', lm, y + 42)
+      y += 56
     }
 
-    ctx.setFontSize(40)
-    ctx.fillText('序', colSeq, y + 42)
-    ctx.fillText('条形码', colBarcode, y + 42)
-    ctx.fillText('商品', colName, y + 42)
-    ctx.fillText('数量', colQty, y + 42)
-    ctx.fillText('进价', colPrice, y + 42)
-    ctx.fillText('总计', colAmount, y + 42)
-    y += 56
+    ctx.setFontSize(46)
+    ctx.fillText('序', colSeq, y + 44)
+    ctx.fillText('条形码', colBarcode, y + 44)
+    ctx.fillText('商品', colName, y + 44)
+    ctx.fillText('数量', colQty, y + 44)
+    ctx.fillText('进价', colPrice, y + 44)
+    ctx.fillText('总计', colAmount, y + 44)
+    y += 58
 
     ctx.setLineWidth(ll)
     ctx.moveTo(0, y)
     ctx.lineTo(width, y)
     ctx.stroke()
-    y += 10
+    y += 12
 
     let seqNo = 0
     for (const item of saleItems) {
       seqNo++
-      ctx.fillText(`${seqNo}`, colSeq, y + 42)
-      ctx.fillText((item.barcode || '-').slice(0, 13), colBarcode, y + 42)
-      ctx.fillText(item.name, colName, y + 42)
-      ctx.fillText(`${normalizeCount(item.qty)}`, colQty, y + 42)
-      ctx.fillText(moneyText(item.price), colPrice, y + 42)
-      ctx.fillText(moneyText(item.amount), colAmount, y + 42)
-      y += 56
+      ctx.fillText(`${seqNo}`, colSeq, y + 44)
+      ctx.fillText((item.barcode || '-').slice(0, 13), colBarcode, y + 44)
+      ctx.fillText(item.name, colName, y + 44)
+      ctx.fillText(`${normalizeCount(item.qty)}`, colQty, y + 44)
+      ctx.fillText(moneyText(item.price), colPrice, y + 44)
+      ctx.fillText(moneyText(item.amount), colAmount, y + 44)
+      y += 64
     }
 
     y += 8
@@ -466,46 +467,46 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
     ctx.stroke()
     y += 15
 
-    ctx.setFontSize(40)
+    ctx.setFontSize(46)
     const saleSummaryQty = saleItems.reduce((s, i) => s + normalizeCount(i.qty), 0)
     const saleSummaryAmt = saleItems.reduce((s, i) => s + i.amount, 0)
-    ctx.fillText(`品种:${saleItems.length}种 合计:${saleSummaryQty}`, lm, y + 42)
-    ctx.fillText(`金额:${moneyText(saleSummaryAmt)}`, width - rm - 420, y + 42)
-    y += 50
+    ctx.fillText(`品种:${saleItems.length}种 合计:${saleSummaryQty}`, lm, y + 46)
+    ctx.fillText(`金额:${moneyText(saleSummaryAmt)}`, width - rm - 480, y + 46)
+    y += 56
   }
 
   // 退单部分
   if (returnItems.length > 0) {
     y += 10
-    ctx.setFontSize(36)
-    ctx.fillText('【退货】', lm, y + 36)
-    y += 46
-
-    ctx.setFontSize(40)
-    ctx.fillText('序', colSeq, y + 42)
-    ctx.fillText('条形码', colBarcode, y + 42)
-    ctx.fillText('商品', colName, y + 42)
-    ctx.fillText('数量', colQty, y + 42)
-    ctx.fillText('进价', colPrice, y + 42)
-    ctx.fillText('总计', colAmount, y + 42)
+    ctx.setFontSize(42)
+    ctx.fillText('【退货】', lm, y + 42)
     y += 56
+
+    ctx.setFontSize(46)
+    ctx.fillText('序', colSeq, y + 44)
+    ctx.fillText('条形码', colBarcode, y + 44)
+    ctx.fillText('商品', colName, y + 44)
+    ctx.fillText('数量', colQty, y + 44)
+    ctx.fillText('进价', colPrice, y + 44)
+    ctx.fillText('总计', colAmount, y + 44)
+    y += 58
 
     ctx.setLineWidth(ll)
     ctx.moveTo(0, y)
     ctx.lineTo(width, y)
     ctx.stroke()
-    y += 10
+    y += 12
 
     let seqNo = 0
     for (const item of returnItems) {
       seqNo++
-      ctx.fillText(`${seqNo}`, colSeq, y + 42)
-      ctx.fillText((item.barcode || '-').slice(0, 13), colBarcode, y + 42)
-      ctx.fillText(item.name, colName, y + 42)
-      ctx.fillText(`${normalizeCount(item.qty)}`, colQty, y + 42)
-      ctx.fillText(moneyText(item.price), colPrice, y + 42)
-      ctx.fillText(moneyText(item.amount), colAmount, y + 42)
-      y += 56
+      ctx.fillText(`${seqNo}`, colSeq, y + 44)
+      ctx.fillText((item.barcode || '-').slice(0, 13), colBarcode, y + 44)
+      ctx.fillText(item.name, colName, y + 44)
+      ctx.fillText(`${normalizeCount(item.qty)}`, colQty, y + 44)
+      ctx.fillText(moneyText(item.price), colPrice, y + 44)
+      ctx.fillText(moneyText(item.amount), colAmount, y + 44)
+      y += 64
     }
 
     y += 8
@@ -515,12 +516,12 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
     ctx.stroke()
     y += 15
 
-    ctx.setFontSize(40)
+    ctx.setFontSize(46)
     const retSummaryQty = returnItems.reduce((s, i) => s + normalizeCount(i.qty), 0)
     const retSummaryAmt = returnItems.reduce((s, i) => s + i.amount, 0)
-    ctx.fillText(`品种:${returnItems.length}种 合计:${retSummaryQty}`, lm, y + 42)
-    ctx.fillText(`金额:-${moneyText(retSummaryAmt)}`, width - rm - 420, y + 42)
-    y += 50
+    ctx.fillText(`品种:${returnItems.length}种 合计:${retSummaryQty}`, lm, y + 46)
+    ctx.fillText(`金额:-${moneyText(retSummaryAmt)}`, width - rm - 480, y + 46)
+    y += 56
   }
 
   // 总计净额
@@ -532,16 +533,16 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
     ctx.stroke()
     y += 15
 
-    ctx.setFontSize(46)
+    ctx.setFontSize(50)
     const netAmount = data.saleTotalAmount - data.returnTotalAmount
-    ctx.fillText(`净额: ${moneyText(netAmount)}`, lm, y + 46)
-    y += 56
+    ctx.fillText(`净额: ${moneyText(netAmount)}`, lm, y + 50)
+    y += 60
   }
 
   if (data.remark) {
     ctx.setFontSize(32)
     ctx.fillText(`备注:${data.remark}`, lm, y + 32)
-    y += 38
+    y += 42
   }
 
   ctx.setLineWidth(ll)

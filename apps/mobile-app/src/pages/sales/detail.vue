@@ -38,6 +38,26 @@
         <text>合计金额: ¥{{ totalAmount.toFixed(2) }}</text>
       </view>
 
+      <!-- 关联退单 -->
+      <view v-if="returnDoc" class="card">
+        <view class="card-title">退货明细 ({{ returnDoc.lines.length }}种)</view>
+        <view v-for="(line, idx) in returnDoc.lines" :key="line.id" class="line">
+          <text class="name"><text class="seq-no">{{ idx + 1 }}.</text> {{ getProductName(line.productId) }}</text>
+          <text class="qty">{{ lineQtyText(line) }}</text>
+          <text class="price">¥{{ line.price }}</text>
+        </view>
+      </view>
+
+      <view v-if="returnDoc" class="summary return-summary">
+        <text>退货: {{ returnDoc.lines.length }}种 | 合计: {{ returnTotalQty }}袋</text>
+        <text>退货金额: -¥{{ returnTotalAmount.toFixed(2) }}</text>
+      </view>
+
+      <view v-if="returnDoc" class="summary net-summary">
+        <text class="net-label">净额:</text>
+        <text class="net-value">¥{{ (totalAmount - returnTotalAmount).toFixed(2) }}</text>
+      </view>
+
       <view class="pay-type-section" v-if="showPayType">
         <text class="pay-type-label">付款方式</text>
         <view class="pay-type-options">
@@ -77,6 +97,10 @@
               <text class="preview-row">业务员：{{ salespersonName }}</text>
             </view>
             <view class="preview-divider"></view>
+
+            <!-- 销单标记（有退单时显示） -->
+            <text v-if="returnDoc" class="preview-section-label">【销售】</text>
+
             <view class="preview-table-header">
               <text class="preview-col-seq">序</text>
               <text class="preview-col-name">商品</text>
@@ -96,6 +120,40 @@
             <view class="preview-section">
               <text class="preview-row">合计数量：{{ totalQty }}袋</text>
               <text class="preview-row">合计金额：¥{{ totalAmount.toFixed(2) }}</text>
+            </view>
+
+            <!-- 退单部分 -->
+            <view v-if="returnDoc && returnPreviewItems.length > 0">
+              <view class="preview-divider"></view>
+              <text class="preview-section-label">【退货】</text>
+              <view class="preview-table-header">
+                <text class="preview-col-seq">序</text>
+                <text class="preview-col-name">商品</text>
+                <text class="preview-col-barcode">条码</text>
+                <text class="preview-col-qty">数量</text>
+                <text class="preview-col-price">单价</text>
+                <text class="preview-col-amount">金额</text>
+              </view>
+              <view v-for="(item, idx) in returnPreviewItems" :key="'ret-' + item.productId" class="preview-table-row">
+                <text class="preview-col-seq">{{ idx + 1 }}</text>
+                <text class="preview-col-name">{{ item.name }}</text>
+                <text class="preview-col-barcode">{{ item.barcode || '-' }}</text>
+                <text class="preview-col-qty">{{ item.qty }}</text>
+                <text class="preview-col-price">¥{{ item.price.toFixed(2) }}</text>
+                <text class="preview-col-amount">¥{{ item.amount.toFixed(2) }}</text>
+              </view>
+              <view class="preview-divider"></view>
+              <view class="preview-section">
+                <text class="preview-row">退货合计：{{ returnTotalQty }}袋</text>
+                <text class="preview-row">退货金额：-¥{{ returnTotalAmount.toFixed(2) }}</text>
+              </view>
+              <view class="preview-divider" style="height:4rpx;background:#333;"></view>
+              <view class="preview-section">
+                <text class="preview-row" style="font-weight:600;font-size:28rpx;">净额：¥{{ (totalAmount - returnTotalAmount).toFixed(2) }}</text>
+              </view>
+            </view>
+
+            <view class="preview-section">
               <text v-if="doc?.remark" class="preview-row">备注：{{ doc.remark }}</text>
             </view>
           </view>
@@ -175,6 +233,7 @@ import { useUserStore } from '@/store/user'
 const userStore = useUserStore()
 
 const doc = ref<SaleDoc | null>(null)
+const returnDoc = ref<ReturnDoc | null>(null)
 const stores = ref<Store[]>([])
 const salespersons = ref<Salesperson[]>([])
 const products = ref<Product[]>([])
@@ -236,6 +295,31 @@ const previewItems = computed(() => {
   })
 })
 
+const returnTotalQty = computed(() => {
+  if (!returnDoc.value) return 0
+  return returnDoc.value.lines.reduce((s, l) => s + l.qty, 0)
+})
+
+const returnTotalAmount = computed(() => {
+  if (!returnDoc.value) return 0
+  return returnDoc.value.lines.reduce((s, l) => s + l.qty * l.price, 0)
+})
+
+const returnPreviewItems = computed(() => {
+  if (!returnDoc.value) return []
+  return returnDoc.value.lines.map((line) => {
+    const product = products.value.find(p => p.id === line.productId)
+    return {
+      productId: line.productId,
+      name: product?.name || '未知商品',
+      barcode: product?.barcode,
+      qty: line.qty,
+      price: line.price,
+      amount: Number(line.qty) * Number(line.price),
+    }
+  })
+})
+
 function getProductName(id: string) {
   return products.value.find(p => p.id === id)?.name || id
 }
@@ -271,13 +355,8 @@ async function confirmPrint() {
   try {
     const store = stores.value.find(s => s.id === doc.value?.storeId)
     // 如果销单关联了退单，合并打印
-    if (doc.value.returnDocId) {
-      const returnDoc = await getReturnDetail(doc.value.returnDocId)
-      if (returnDoc) {
-        await printCombinedA4(doc.value, returnDoc, store, salespersonName.value, products.value, payType.value)
-      } else {
-        await printSaleA4(doc.value, store, salespersonName.value, products.value, payType.value)
-      }
+    if (returnDoc.value) {
+      await printCombinedA4(doc.value, returnDoc.value, store, salespersonName.value, products.value, payType.value)
     } else {
       await printSaleA4(doc.value, store, salespersonName.value, products.value, payType.value)
     }
@@ -319,6 +398,12 @@ async function loadDetail() {
   stores.value = storeList
   salespersons.value = salespersonList
   products.value = productList
+  // 加载关联退单
+  if (detail?.returnDocId) {
+    returnDoc.value = await getReturnDetail(detail.returnDocId)
+  } else {
+    returnDoc.value = null
+  }
 }
 
 onLoad((query) => {
@@ -407,6 +492,36 @@ onMounted(() => {
   justify-content: space-between;
   padding: 10rpx;
   color: #333;
+}
+
+.return-summary {
+  color: #ff4d4f;
+}
+
+.net-summary {
+  background: #fff;
+  border-radius: 12rpx;
+  padding: 16rpx 20rpx;
+  margin-bottom: 20rpx;
+}
+
+.net-label {
+  font-weight: 600;
+  color: #333;
+}
+
+.net-value {
+  font-weight: 600;
+  color: #1890ff;
+  font-size: 32rpx;
+}
+
+.preview-section-label {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #333;
+  display: block;
+  padding: 8rpx 0;
 }
 
 .pay-type-section {
