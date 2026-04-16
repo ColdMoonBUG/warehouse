@@ -709,7 +709,7 @@ const PRINTER_BIND_KEY = 'wh_printer_bindings'
 /** 预设打印机设备参数（MAC 地址在 Android 下即 deviceId） */
 export const PRESET_PRINTERS: Record<string, { name: string; mac: string }> = {
   小车: { name: 'A4LEP-A0290A', mac: '80:F1:B2:A0:29:0A' },
-  大车: { name: '', mac: '' },  // 待配置
+  大车: { name: 'A4LEP-A0C4CA', mac: '80:F1:B2:A0:C4:CA' },
   三车: { name: '', mac: '' },  // 待配置
 }
 
@@ -916,18 +916,21 @@ export function pauseBluetoothDaemon() {
   appendLog('info', '[心跳] 后台暂停心跳')
 }
 
-/** 确保打印前连接就绪，已连接时跳过连接步骤 */
+/** 确保打印前连接就绪：每次打印都强制关闭旧连接并重新建立，确保可靠性 */
 export async function ensurePrinterConnected(device?: PrinterDevice | null): Promise<void> {
   const target = device || getBoundPrinter()
   if (!target) {
     throw new Error('请先绑定打印机')
   }
-  if (_connected && currentSession && currentSession.deviceId === target.deviceId) {
-    // 已连接，验证一下
-    const alive = await heartbeatPing()
-    if (alive) return
-    appendLog('warn', '[打印] 连接已失效，重新连接...')
+  // 关闭旧连接（忽略失败，可能本来就没连接）
+  if (currentSession) {
+    await closeBleConnection(currentSession.deviceId).catch(() => {})
+    currentSession = null
+    _connected = false
+    _currentDeviceId = null
   }
+  // 每次打印都全新连接，确保可靠
+  appendLog('info', `[打印] 建立连接: ${target.name}(${target.deviceId})`)
   await connectPrinter(target.deviceId)
   _connected = true
   _currentDeviceId = target.deviceId

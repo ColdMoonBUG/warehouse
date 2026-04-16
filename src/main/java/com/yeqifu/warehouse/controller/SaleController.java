@@ -276,6 +276,17 @@ public class SaleController {
         }
     }
 
+    @PostMapping("/linkReturn/{id}")
+    public Result<Void> linkReturn(@PathVariable String id, @RequestParam String returnDocId) {
+        SaleDoc doc = saleDocMapper.selectById(id);
+        if (doc == null) {
+            return Result.error("销单不存在");
+        }
+        doc.setReturnDocId(returnDocId);
+        saleDocMapper.updateById(doc);
+        return Result.ok();
+    }
+
     @PostMapping("/delete/{id}")
     @Transactional
     public Result<Void> delete(@PathVariable String id) {

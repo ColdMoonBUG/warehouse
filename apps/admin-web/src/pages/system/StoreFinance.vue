@@ -2,12 +2,28 @@
   <div class="store-finance-page">
     <el-card>
       <template #header>
-        <span>超市收益流水</span>
+        <div style="display:flex;align-items:center;gap:16px;">
+          <span>超市今日收益流水</span>
+          <el-date-picker
+            v-model="queryDate"
+            type="date"
+            value-format="YYYY-MM-DD"
+            placeholder="选择日期"
+            style="width:160px"
+            @change="loadData"
+          />
+          <el-button type="primary" size="small" @click="loadData">刷新</el-button>
+        </div>
       </template>
 
       <el-table :data="summaries" v-loading="loading" stripe border>
         <el-table-column prop="storeName" label="超市名称" min-width="160" />
-        <el-table-column label="销售提成" min-width="120" align="right">
+        <el-table-column label="今日销售额" min-width="120" align="right">
+          <template #default="{ row }">
+            <span style="font-weight:600">¥{{ Number(row.totalSaleAmount || 0).toFixed(2) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="销售提成(6%)" min-width="120" align="right">
           <template #default="{ row }">
             <span style="color: #67c23a">+¥{{ Number(row.saleCommission || 0).toFixed(2) }}</span>
           </template>
@@ -24,13 +40,19 @@
             <span style="font-weight: 600">¥{{ Number(row.netCommission || 0).toFixed(2) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="ledgerCount" label="流水笔数" width="100" align="center" />
         <el-table-column label="操作" width="100" align="center">
           <template #default="{ row }">
             <el-button type="primary" link @click="showDetail(row)">查看明细</el-button>
           </template>
         </el-table-column>
       </el-table>
+
+      <!-- 汇总行 -->
+      <div v-if="summaries.length > 0" class="total-bar">
+        <span>共 {{ summaries.length }} 家超市</span>
+        <span>今日销售合计：<b>¥{{ totalSaleAmount.toFixed(2) }}</b></span>
+        <span>净提成合计：<b style="color:#67c23a">¥{{ totalNetCommission.toFixed(2) }}</b></span>
+      </div>
     </el-card>
 
     <!-- 明细弹窗：按单据聚合 -->
@@ -72,6 +94,10 @@ import { ref, computed, onMounted } from 'vue'
 import { getStoreCommissionSummaries, getStoreCommissionDetail } from '@/api/finance'
 import type { StoreCommissionSummary, CommissionLedger } from '@/types'
 
+// 默认今日
+const today = new Date().toISOString().slice(0, 10)
+const queryDate = ref(today)
+
 const summaries = ref<StoreCommissionSummary[]>([])
 const loading = ref(false)
 const detailVisible = ref(false)
@@ -107,11 +133,18 @@ function bizTagType(type: string): any {
 
 function formatDocDate(val: any) {
   if (!val) return '-'
-  // 后端可能返回时间戳数字或字符串
   const d = typeof val === 'number' ? new Date(val) : new Date(val)
   if (isNaN(d.getTime())) return String(val)
   return d.toLocaleDateString('zh-CN')
 }
+
+// 汇总行
+const totalSaleAmount = computed(() =>
+  summaries.value.reduce((s, r) => s + Number(r.totalSaleAmount || 0), 0)
+)
+const totalNetCommission = computed(() =>
+  summaries.value.reduce((s, r) => s + Number(r.netCommission || 0), 0)
+)
 
 // 按 docId 聚合：每张单据一行
 const docSummaries = computed(() => {
@@ -158,7 +191,7 @@ const detailNetCommission = computed(() =>
 async function loadData() {
   loading.value = true
   try {
-    summaries.value = await getStoreCommissionSummaries()
+    summaries.value = await getStoreCommissionSummaries(queryDate.value)
   } finally {
     loading.value = false
   }
@@ -181,6 +214,17 @@ onMounted(loadData)
 <style scoped>
 .store-finance-page {
   padding: 20px;
+}
+
+.total-bar {
+  display: flex;
+  gap: 24px;
+  padding: 12px 16px;
+  margin-top: 12px;
+  background: var(--el-fill-color-light, #f5f7fa);
+  border-radius: 6px;
+  font-size: 14px;
+  color: var(--el-text-color-regular, #606266);
 }
 
 .detail-summary {

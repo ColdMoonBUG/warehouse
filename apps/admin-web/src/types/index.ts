@@ -159,6 +159,7 @@ export interface CommissionSettlementDetail {
 export interface StoreCommissionSummary {
   storeId: string
   storeName: string
+  totalSaleAmount: number
   saleCommission: number
   returnCommission: number
   netCommission: number

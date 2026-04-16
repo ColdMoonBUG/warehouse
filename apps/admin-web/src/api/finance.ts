@@ -26,8 +26,9 @@ export async function getCommissionSettlementDetail(id: string): Promise<Commiss
   return res.data
 }
 
-export async function getStoreCommissionSummaries(): Promise<StoreCommissionSummary[]> {
-  const res = await request.get('/finance/commission/store-summaries')
+export async function getStoreCommissionSummaries(date?: string): Promise<StoreCommissionSummary[]> {
+  const params = date ? { date } : {}
+  const res = await request.get('/finance/commission/store-summaries', { params })
   return res.data || []
 }
 

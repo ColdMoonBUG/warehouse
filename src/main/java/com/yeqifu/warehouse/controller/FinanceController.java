@@ -59,49 +59,95 @@ public class FinanceController {
     private StoreMapper storeMapper;
 
     @GetMapping("/store-summaries")
-    public Result<List<StoreCommissionSummaryVO>> storeSummaries(HttpSession session) {
+    public Result<List<StoreCommissionSummaryVO>> storeSummaries(
+            @RequestParam(required = false) String date,
+            HttpSession session) {
         Result<List<StoreCommissionSummaryVO>> auth = rejectIfNotAdmin(session);
         if (auth != null) {
             return auth;
         }
-        List<CommissionLedger> allLedgers = commissionLedgerMapper.selectList(
-            new LambdaQueryWrapper<CommissionLedger>().orderByDesc(CommissionLedger::getCreatedAt)
+
+        // 默认显示今日；若传入 date 参数则按指定日期
+        LocalDate queryDate = (date != null && !date.isEmpty())
+            ? LocalDate.parse(date)
+            : LocalDate.now(BUSINESS_ZONE);
+        java.sql.Date sqlDate = java.sql.Date.valueOf(queryDate);
+
+        // 获取该日期的销单（docDate = queryDate）
+        List<SaleDoc> saleDocs = saleDocMapper.selectList(
+            new LambdaQueryWrapper<SaleDoc>()
+                .eq(SaleDoc::getDocDate, sqlDate)
+                .eq(SaleDoc::getStatus, "posted")
         );
-        // 按 storeId 聚合
-        Map<String, List<CommissionLedger>> grouped = new LinkedHashMap<>();
-        for (CommissionLedger ledger : allLedgers) {
-            String sid = ledger.getStoreId() != null ? ledger.getStoreId() : "";
-            grouped.computeIfAbsent(sid, k -> new ArrayList<>()).add(ledger);
+        if (saleDocs.isEmpty()) {
+            return Result.ok(new ArrayList<>());
         }
-        // 加载所有门店名
-        Set<String> storeIds = grouped.keySet().stream().filter(s -> !s.isEmpty()).collect(Collectors.toSet());
+
+        // 以超市为单位聚合：每个超市一行（合并该超市当天所有销单）
+        Map<String, List<SaleDoc>> byStore = new LinkedHashMap<>();
+        for (SaleDoc doc : saleDocs) {
+            String sid = doc.getStoreId() != null ? doc.getStoreId() : "";
+            byStore.computeIfAbsent(sid, k -> new ArrayList<>()).add(doc);
+        }
+
+        // 获取涉及的退单
+        Set<String> allSaleDocIds = saleDocs.stream().map(SaleDoc::getId).collect(Collectors.toCollection(LinkedHashSet::new));
+
+        // 获取这些销单的提成流水
+        List<CommissionLedger> ledgers = commissionLedgerMapper.selectList(
+            new LambdaQueryWrapper<CommissionLedger>()
+                .in(CommissionLedger::getDocId, allSaleDocIds)
+        );
+        Map<String, List<CommissionLedger>> ledgerByDoc = new LinkedHashMap<>();
+        for (CommissionLedger l : ledgers) {
+            if (l.getDocId() != null) {
+                ledgerByDoc.computeIfAbsent(l.getDocId(), k -> new ArrayList<>()).add(l);
+            }
+        }
+
+        // 加载超市名
+        Set<String> storeIds = byStore.keySet().stream().filter(s -> !s.isEmpty()).collect(Collectors.toSet());
         Map<String, Store> storeMap = storeIds.isEmpty()
             ? new LinkedHashMap<>()
             : storeMapper.selectBatchIds(storeIds).stream()
                 .collect(Collectors.toMap(Store::getId, s -> s, (a, b) -> a, LinkedHashMap::new));
 
         List<StoreCommissionSummaryVO> result = new ArrayList<>();
-        for (Map.Entry<String, List<CommissionLedger>> entry : grouped.entrySet()) {
+        for (Map.Entry<String, List<SaleDoc>> entry : byStore.entrySet()) {
             String storeId = entry.getKey();
-            List<CommissionLedger> ledgers = entry.getValue();
-            BigDecimal saleAmount = BigDecimal.ZERO;
-            BigDecimal returnAmount = BigDecimal.ZERO;
-            for (CommissionLedger ledger : ledgers) {
-                BigDecimal amount = defaultAmount(ledger.getCommissionAmount());
-                if (isSaleCommissionBizType(ledger.getBizType())) {
-                    saleAmount = saleAmount.add(amount);
-                } else {
-                    returnAmount = returnAmount.add(amount);
+            List<SaleDoc> docs = entry.getValue();
+
+            BigDecimal totalSaleAmount = BigDecimal.ZERO;
+            BigDecimal saleCommission = BigDecimal.ZERO;
+            BigDecimal returnCommission = BigDecimal.ZERO;
+            int ledgerCount = 0;
+
+            for (SaleDoc doc : docs) {
+                // 销售金额直接从销单 totalAmount 累加
+                if (doc.getTotalAmount() != null) {
+                    totalSaleAmount = totalSaleAmount.add(doc.getTotalAmount());
+                }
+                List<CommissionLedger> docLedgers = ledgerByDoc.getOrDefault(doc.getId(), new ArrayList<>());
+                ledgerCount += docLedgers.size();
+                for (CommissionLedger l : docLedgers) {
+                    BigDecimal amt = defaultAmount(l.getCommissionAmount());
+                    if (isSaleCommissionBizType(l.getBizType())) {
+                        saleCommission = saleCommission.add(amt);
+                    } else {
+                        returnCommission = returnCommission.add(amt);
+                    }
                 }
             }
+
             StoreCommissionSummaryVO vo = new StoreCommissionSummaryVO();
             vo.setStoreId(storeId);
             Store store = storeMap.get(storeId);
             vo.setStoreName(store != null ? store.getName() : (storeId.isEmpty() ? "未知门店" : storeId));
-            vo.setSaleCommission(saleAmount);
-            vo.setReturnCommission(returnAmount);
-            vo.setNetCommission(saleAmount.add(returnAmount));
-            vo.setLedgerCount(ledgers.size());
+            vo.setTotalSaleAmount(totalSaleAmount);
+            vo.setSaleCommission(saleCommission);
+            vo.setReturnCommission(returnCommission);
+            vo.setNetCommission(saleCommission.add(returnCommission));
+            vo.setLedgerCount(ledgerCount);
             result.add(vo);
         }
         return Result.ok(result);
@@ -609,6 +655,7 @@ public class FinanceController {
     public static class StoreCommissionSummaryVO {
         private String storeId;
         private String storeName;
+        private BigDecimal totalSaleAmount;
         private BigDecimal saleCommission;
         private BigDecimal returnCommission;
         private BigDecimal netCommission;

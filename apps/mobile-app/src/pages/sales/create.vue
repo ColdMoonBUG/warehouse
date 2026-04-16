@@ -286,7 +286,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { onLoad, onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
 import { useReferenceStore } from '@/store/reference'
-import { getStock, saveSale, postSale, saveReturn, postReturn, isOwnedStore, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId, getProductSaleQty } from '@/api'
+import { getStock, saveSale, postSale, linkSaleReturn, saveReturn, postReturn, isOwnedStore, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId, getProductSaleQty } from '@/api'
 import type { Store, Product, SaleDoc, SaleLine, ReturnDoc, ReturnLine, Warehouse, StockItem } from '@/types'
 import { genId, formatProductQuickPickLabel, formatProductPackageSummary, calcQty, deriveBagQty, normalizeCount, normalizeBoxPackQty, formatStockPreview, getProductStockQty, toStockQtyMap, COMMISSION_RATE, todayLocalDate, debounce } from '@/utils'
 import { printSaleA4, printCombinedA4, checkPrinterConnected, navigateToPrinterSettings } from '@/utils/bluetooth-printer'
@@ -930,9 +930,9 @@ async function doSubmit(docType: 'sale' | 'gift' = 'sale'): Promise<{ saleDoc: S
       savedReturn = await saveReturn(returnDraft, returnLines)
       await postReturn(savedReturn.id)
 
-      // 把退单ID关联到销单，方便二次打印时合并
+      // 把退单ID写入销单（用专用接口，避免二次 saveSale 带来的明细重建问题）
       savedSale.returnDocId = savedReturn.id
-      await saveSale(savedSale)
+      await linkSaleReturn(savedSale.id, savedReturn.id)
     }
 
     clearDraft()

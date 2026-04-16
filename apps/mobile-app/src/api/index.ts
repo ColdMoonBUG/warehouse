@@ -899,6 +899,16 @@ export async function postSale(id: string): Promise<void> {
   await request<void>(`/api/sale/post/${id}`, 'POST')
 }
 
+export async function linkSaleReturn(saleId: string, returnDocId: string): Promise<void> {
+  if (USE_MOCK) {
+    const list = saleDb.list()
+    const doc = list.find(d => d.id === saleId)
+    if (doc) { doc.returnDocId = returnDocId; saleDb.save(list) }
+    return
+  }
+  await request<void>(`/api/sale/linkReturn/${saleId}?returnDocId=${encodeURIComponent(returnDocId)}`, 'POST')
+}
+
 export async function voidSale(id: string): Promise<void> {
   if (USE_MOCK) {
     const list = saleDb.list()

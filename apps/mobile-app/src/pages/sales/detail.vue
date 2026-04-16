@@ -72,7 +72,7 @@
 
       <button class="btn-print" @tap="previewPrint">预览并打印</button>
       <button class="btn-void" v-if="doc.status==='posted'" @tap="voidDoc">作废销单</button>
-      <button class="btn-void-rebuild" v-if="doc.status==='posted'" @tap="voidAndRebuild">作废并重建</button>
+      <button class="btn-void-rebuild" v-if="doc.status==='posted' || doc.status==='voided'" @tap="voidAndRebuild">根据此单重建</button>
     </view>
 
     <view v-else class="empty">加载中...</view>
@@ -176,7 +176,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
-import { getSaleDetail, getStores, getSalespersonAccounts, getProducts, voidSale, isSameSalespersonId, getReturnDetail } from '@/api'
+import { getSaleDetail, getStores, getSalespersonAccounts, getProducts, voidSale, isSameSalespersonId, getReturnDetail, voidReturn } from '@/api'
 import type { SaleDoc, Store, Salesperson, Product, ReturnDoc } from '@/types'
 import { getPageQueryParam, formatPackSummary, normalizeCount } from '@/utils'
 import { buildSaleReceipt, printText, printSaleA4, printCombinedA4, checkPrinterConnected, navigateToPrinterSettings, getBluetoothPrinterLogs } from '@/utils/bluetooth-printer'
@@ -184,28 +184,42 @@ import { CANVAS_ID, estimateContentHeight, PAGE_WIDTH_DOTS } from '@/utils/canva
 
 async function voidDoc() {
   if (!doc.value) return
+  const hasReturn = !!returnDoc.value
+  const tipExtra = hasReturn ? '\n同时关联退单也将一并作废。' : ''
   uni.showModal({
     title: '确认作废',
-    content: '作废后库存将自动回滚，是否确认？',
+    content: `作废后库存将自动回滚，是否确认？${tipExtra}`,
     success: async (res) => {
       if (!res.confirm || !doc.value) return
-      await voidSale(doc.value.id)
-      uni.showToast({ title: '已作废', icon: 'success' })
-      await loadDetail()
+      try {
+        // 先作废关联退单（如有）
+        if (hasReturn && returnDoc.value) {
+          await voidReturn(returnDoc.value.id).catch(() => {})
+        }
+        await voidSale(doc.value.id)
+        uni.showToast({ title: '已作废', icon: 'success' })
+        await loadDetail()
+      } catch (e: any) {
+        uni.showToast({ title: e?.message || '作废失败', icon: 'none' })
+      }
     },
   })
 }
 
 async function voidAndRebuild() {
   if (!doc.value) return
+  const isVoided = doc.value.status === 'voided'
+  const confirmContent = isVoided
+    ? '将以此作废单为基础跳转到创建页，保留本单商品数据。'
+    : '将作废此销单并跳转到创建页，保留本单商品数据作为新单基础。'
   uni.showModal({
-    title: '作废并重建',
-    content: '将作废此销单并跳转到创建页，保留本单商品数据作为新单基础。',
+    title: '根据此单重建',
+    content: confirmContent,
     confirmText: '确认',
     success: async (res) => {
       if (!res.confirm || !doc.value) return
       try {
-        // 先保存预填数据
+        // 保存预填数据
         const prefill = {
           storeId: doc.value.storeId,
           warehouseId: doc.value.warehouseId || '',
@@ -216,14 +230,16 @@ async function voidAndRebuild() {
           })),
         }
         uni.setStorageSync('wh_sale_prefill', JSON.stringify(prefill))
-        // 作废原单
-        await voidSale(doc.value.id)
-        uni.showToast({ title: '已作废，正在跳转...', icon: 'none' })
+        // 仅 posted 状态需要先作废
+        if (!isVoided) {
+          await voidSale(doc.value.id)
+        }
+        uni.showToast({ title: '正在跳转...', icon: 'none' })
         setTimeout(() => {
           uni.redirectTo({ url: '/pages/sales/create?prefill=true' })
         }, 400)
       } catch (e: any) {
-        uni.showToast({ title: e.message || '作废失败', icon: 'none' })
+        uni.showToast({ title: e.message || '操作失败', icon: 'none' })
       }
     },
   })

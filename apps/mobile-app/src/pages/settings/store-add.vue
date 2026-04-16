@@ -34,7 +34,7 @@
           </picker>
           <text v-if="loading && salespersons.length" class="hint">业务员已显示，正在后台刷新...</text>
         </view>
-        <button class="btn" @tap="submit">保存</button>
+        <button class="btn" :disabled="submitting" :loading="submitting" @tap="submit">保存</button>
       </view>
     </view>
   </view>
@@ -59,6 +59,7 @@ const selectedSalesperson = ref<Salesperson | null>(null)
 const queryId = ref('')
 const loading = ref(false)
 const locating = ref(false)
+const submitting = ref(false)
 const isEdit = computed(() => !!form.value.id || !!queryId.value)
 
 async function useCurrentLocation() {
@@ -140,26 +141,34 @@ async function loadEdit(id: string) {
 }
 
 async function submit() {
+  if (submitting.value) return
   if (!form.value.name.trim()) {
     uni.showToast({ title: '请输入名称', icon: 'none' })
     return
   }
   if (!ensureLocation()) return
-  await saveStore({
-    id: form.value.id || undefined,
-    name: form.value.name,
-    code: form.value.name,
-    address: form.value.address,
-    lat: form.value.lat ? Number(form.value.lat) : undefined,
-    lng: form.value.lng ? Number(form.value.lng) : undefined,
-    status: form.value.status,
-    salespersonId: form.value.salespersonId || undefined,
-  })
-  await referenceStore.preloadCore(true)
-  uni.showToast({ title: '保存成功', icon: 'success' })
-  setTimeout(() => {
-    uni.navigateBack()
-  }, 400)
+  submitting.value = true
+  try {
+    await saveStore({
+      id: form.value.id || undefined,
+      name: form.value.name,
+      code: form.value.name,
+      address: form.value.address,
+      lat: form.value.lat ? Number(form.value.lat) : undefined,
+      lng: form.value.lng ? Number(form.value.lng) : undefined,
+      status: form.value.status,
+      salespersonId: form.value.salespersonId || undefined,
+    })
+    await referenceStore.preloadCore(true)
+    uni.showToast({ title: '保存成功', icon: 'success' })
+    setTimeout(() => {
+      uni.navigateBack()
+    }, 400)
+  } catch (e: any) {
+    uni.showToast({ title: e?.message || '保存失败', icon: 'none' })
+  } finally {
+    submitting.value = false
+  }
 }
 
 onLoad((query) => {

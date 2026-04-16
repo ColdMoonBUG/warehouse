@@ -27,7 +27,7 @@ public class SaleDoc implements Serializable {
     @TableField("doc_date")
     @JsonProperty("date")
     @JsonAlias("date")
-    @JsonFormat(pattern = "yyyy-MM-dd")
+    @JsonFormat(pattern = "yyyy-MM-dd", timezone = "Asia/Shanghai")
     private Date docDate;
 
     private String remark;
