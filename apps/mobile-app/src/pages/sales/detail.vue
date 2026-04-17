@@ -219,15 +219,22 @@ async function voidAndRebuild() {
     success: async (res) => {
       if (!res.confirm || !doc.value) return
       try {
-        // 保存预填数据
+        // 保存预填数据（含关联退单）
         const prefill = {
           storeId: doc.value.storeId,
           warehouseId: doc.value.warehouseId || '',
           lines: doc.value.lines.map(l => ({
             productId: l.productId,
             qty: l.qty,
-            boxQty: l.boxQty || 0,
+            boxQty: (l as any).boxQty || 0,
           })),
+          returnLines: returnDoc.value
+            ? returnDoc.value.lines.map(l => ({
+                productId: l.productId,
+                qty: l.qty,
+                boxQty: (l as any).boxQty || 0,
+              }))
+            : [],
         }
         uni.setStorageSync('wh_sale_prefill', JSON.stringify(prefill))
         // 仅 posted 状态需要先作废

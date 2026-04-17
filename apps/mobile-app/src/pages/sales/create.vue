@@ -286,7 +286,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { onLoad, onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
 import { useReferenceStore } from '@/store/reference'
-import { getStock, saveSale, postSale, linkSaleReturn, saveReturn, postReturn, isOwnedStore, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId, getProductSaleQty } from '@/api'
+import { getStock, saveSale, postSale, linkSaleReturn, saveReturn, postReturn, isOwnedStore, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId, getProductSaleQty, settleSale, getSaleDetail } from '@/api'
 import type { Store, Product, SaleDoc, SaleLine, ReturnDoc, ReturnLine, Warehouse, StockItem } from '@/types'
 import { genId, formatProductQuickPickLabel, formatProductPackageSummary, calcQty, deriveBagQty, normalizeCount, normalizeBoxPackQty, formatStockPreview, getProductStockQty, toStockQtyMap, COMMISSION_RATE, todayLocalDate, debounce } from '@/utils'
 import { printSaleA4, printCombinedA4, checkPrinterConnected, navigateToPrinterSettings } from '@/utils/bluetooth-printer'
@@ -351,12 +351,17 @@ const canvasHeightPx = computed(() => {
 
 const DRAFT_KEY = 'wh_sale_draft'
 const DRAFT_TTL = 24 * 60 * 60 * 1000
+
+// 后端草稿单 ID（创建后复用同一条记录，避免重复生成）
+const autoDraftId = ref('')
 interface SaleDraft {
   storeId: string
   warehouseId: string
   qtyMap: Record<string, { boxQty: number; bagQty: number; qty: number }>
   keyword: string
   savedAt: number
+  showReturnSection?: boolean
+  returnQtyMap?: Record<string, { boxQty: number; bagQty: number; qty: number }>
 }
 
 const storeOptions = computed(() => {
@@ -888,6 +893,7 @@ async function doSubmit(docType: 'sale' | 'gift' = 'sale'): Promise<{ saleDoc: S
   }
 
   const saleDraft = {
+    ...(autoDraftId.value ? { id: autoDraftId.value } : {}),
     salespersonId: currentSalespersonId(),
     storeId: currentStoreId(),
     warehouseId: currentWarehouseId(),
@@ -900,6 +906,10 @@ async function doSubmit(docType: 'sale' | 'gift' = 'sale'): Promise<{ saleDoc: S
   try {
     const savedSale = await saveSale(saleDraft)
     await postSale(savedSale.id)
+    // 现金单直接标记已收款
+    if (payType.value === 'cash') {
+      await settleSale(savedSale.id)
+    }
     // 记录已过账状态，后续如需再次 save 不会把状态回退为 draft
     savedSale.status = 'posted'
     // 保留 lines（后端 save 接口不返回 lines，避免二次 save 时清空明细）
@@ -1036,14 +1046,50 @@ function saveDraftNow() {
     qtyMap: JSON.parse(JSON.stringify(qtyMap.value)),
     keyword: keyword.value,
     savedAt: Date.now(),
+    showReturnSection: showReturnSection.value,
+    returnQtyMap: showReturnSection.value ? JSON.parse(JSON.stringify(returnQtyMap.value)) : undefined,
   }
   uni.setStorageSync(DRAFT_KEY, JSON.stringify(draft))
 }
 
 const debouncedSaveDraft = debounce(saveDraftNow, 500)
 
+// 自动同步草稿到后端（超市+至少一件商品时触发）
+async function autoSaveDraftToServer() {
+  if (!selectedStore.value) return
+  const lines: SaleLine[] = selectedProducts.value
+    .map(p => ({
+      id: genId(),
+      productId: p.id,
+      boxQty: normalizeCount(qtyMap.value[p.id]?.boxQty),
+      qty: normalizeCount(qtyMap.value[p.id]?.qty),
+      price: p.salePrice || 0,
+    }))
+    .filter(line => line.qty > 0)
+  if (lines.length === 0) return
+  try {
+    const draftDoc = {
+      ...(autoDraftId.value ? { id: autoDraftId.value } : {}),
+      salespersonId: currentSalespersonId(),
+      storeId: currentStoreId(),
+      warehouseId: currentWarehouseId(),
+      date: todayLocalDate(),
+      status: 'draft',
+      docType: 'sale',
+      lines,
+    } as SaleDoc
+    const saved = await saveSale(draftDoc)
+    if (!autoDraftId.value) autoDraftId.value = saved.id
+  } catch {
+    // 草稿保存失败静默处理，不打扰用户
+  }
+}
+
+const debouncedAutoSaveDraft = debounce(autoSaveDraftToServer, 1200)
+
 function clearDraft() {
   uni.removeStorageSync(DRAFT_KEY)
+  autoDraftId.value = ''
 }
 
 function tryRestoreDraft() {
@@ -1074,6 +1120,12 @@ function tryRestoreDraft() {
           }
           if (draft.keyword) {
             keyword.value = draft.keyword
+          }
+          if (draft.showReturnSection) {
+            showReturnSection.value = true
+          }
+          if (draft.returnQtyMap && Object.keys(draft.returnQtyMap).length > 0) {
+            returnQtyMap.value = draft.returnQtyMap
           }
         } else {
           clearDraft()
@@ -1110,6 +1162,9 @@ onLoad((query: any) => {
   if (query?.prefill === 'true') {
     prefillMode.value = true
   }
+  if (query?.draftId) {
+    autoDraftId.value = query.draftId
+  }
 })
 
 onMounted(() => {
@@ -1121,6 +1176,8 @@ onMounted(() => {
   loadData().then(() => {
     if (prefillMode.value) {
       tryRestorePrefill()
+    } else if (autoDraftId.value) {
+      tryRestoreBackendDraft(autoDraftId.value)
     } else {
       tryRestoreDraft()
     }
@@ -1128,8 +1185,18 @@ onMounted(() => {
     subscribeStockUpdates()
     // 启动草稿自动保存
     watch(
-      [() => selectedStore.value?.id, () => selectedWarehouse.value?.id, qtyMap, keyword],
+      [() => selectedStore.value?.id, () => selectedWarehouse.value?.id, qtyMap, keyword, showReturnSection, returnQtyMap],
       debouncedSaveDraft,
+      { deep: true },
+    )
+    // 超市+商品都选了就同步草稿到后端（供历史记录显示）
+    watch(
+      [() => selectedStore.value?.id, qtyMap],
+      () => {
+        if (selectedStore.value && selectedProducts.value.length > 0) {
+          debouncedAutoSaveDraft()
+        }
+      },
       { deep: true },
     )
   })
@@ -1142,8 +1209,39 @@ onUnmounted(() => {
   }
 })
 
-function tryRestorePrefill() {
-  const raw = uni.getStorageSync('wh_sale_prefill')
+// 从后端草稿恢复表单（从历史记录点击草稿单进入时）
+async function tryRestoreBackendDraft(draftId: string) {
+  try {
+    const doc = await getSaleDetail(draftId)
+    if (!doc || doc.status !== 'draft') return
+    if (doc.storeId) {
+      selectedStore.value = stores.value.find(s => s.id === doc.storeId) || null
+    }
+    if (doc.warehouseId) {
+      selectedWarehouse.value = warehouses.value.find(w => w.id === doc.warehouseId) || null
+      refreshStockPreview()
+    }
+    if (doc.lines && doc.lines.length > 0) {
+      for (const line of doc.lines) {
+        const boxQty = products.value.find(p => p.id === line.productId)?.boxQty || 1
+        const boxes = boxQty > 1 ? Math.floor(line.qty / boxQty) : 0
+        const bags = boxQty > 1 ? line.qty % boxQty : line.qty
+        qtyMap.value[line.productId] = {
+          boxQty: boxes,
+          bagQty: bags,
+          qty: line.qty,
+        }
+        if (!addedProductOrder.value.has(line.productId)) {
+          addedProductOrder.value.set(line.productId, addedProductOrder.value.size)
+        }
+      }
+    }
+  } catch {
+    // 静默失败，当作新建处理
+  }
+}
+
+function tryRestorePrefill() {  const raw = uni.getStorageSync('wh_sale_prefill')
   if (!raw) return
   try {
     const data = JSON.parse(raw)
@@ -1160,6 +1258,15 @@ function tryRestorePrefill() {
         newQtyMap[line.productId] = createQtyInput(line.productId, line.qty, line.boxQty)
       }
       qtyMap.value = newQtyMap
+    }
+    // 恢复退单部分
+    if (data.returnLines && data.returnLines.length > 0) {
+      showReturnSection.value = true
+      const newReturnQtyMap: Record<string, QtyInput> = {}
+      for (const line of data.returnLines) {
+        newReturnQtyMap[line.productId] = createQtyInput(line.productId, line.qty, line.boxQty)
+      }
+      returnQtyMap.value = newReturnQtyMap
     }
   } catch { /* ignore */ }
   uni.removeStorageSync('wh_sale_prefill')

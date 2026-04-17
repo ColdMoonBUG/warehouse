@@ -729,7 +729,17 @@ function getAccountLabel(): string {
   }
 }
 
-/** 获取当前账户绑定的打印机（优先级：手动绑定 > 预设） */
+/** 自动连接专用：只读 PRESET_PRINTERS，不使用手动绑定，避免跨账户污染 */
+function getPresetPrinter(labelOverride?: string): PrinterDevice | null {
+  const label = labelOverride || getAccountLabel()
+  if (!label) return null
+  if (!(label in PRESET_PRINTERS)) return null
+  const preset = PRESET_PRINTERS[label]
+  if (!preset.mac) return null   // 有记录但 mac 为空 = 无设备
+  return { deviceId: preset.mac, name: preset.name }
+}
+
+/** 打印时获取打印机（优先级：手动绑定 > 预设 > saved_printer） */
 export function getBoundPrinter(): PrinterDevice | null {
   const label = getAccountLabel()
   // 1. 查手动绑定
@@ -737,12 +747,13 @@ export function getBoundPrinter(): PrinterDevice | null {
   if (label && bindings[label]) {
     return bindings[label]
   }
-  // 2. 查预设
-  if (label && PRESET_PRINTERS[label]?.mac) {
+  // 2. 查预设：账户在 PRESET_PRINTERS 中有记录
+  if (label && label in PRESET_PRINTERS) {
     const preset = PRESET_PRINTERS[label]
+    if (!preset.mac) return null
     return { deviceId: preset.mac, name: preset.name }
   }
-  // 3. 兜底旧的 saved_printer
+  // 3. 账户不在预设表中，兜底旧的 saved_printer（兼容管理员等账户）
   return getSavedPrinter()
 }
 
@@ -818,23 +829,31 @@ export function openBluetoothSettings() {
 }
 
 // ============================================================
-// 蓝牙前台保活 + 10秒心跳
+// 蓝牙账户强绑定 + 激进自动重连
 // ============================================================
 
 let _connected = false
+let _retryTimer: ReturnType<typeof setInterval> | null = null
 let _heartbeatTimer: ReturnType<typeof setInterval> | null = null
 let _currentDeviceId: string | null = null
 let _reconnecting = false
+let _daemonActive = false
+let _accountLabel = ''   // 登录时写入，onAccountLogout 清空
 
 export function isBluetoothConnected(): boolean {
   return _connected && !!currentSession
+}
+
+/** 停止所有定时器 */
+function stopAllTimers() {
+  if (_retryTimer) { clearInterval(_retryTimer); _retryTimer = null }
+  if (_heartbeatTimer) { clearInterval(_heartbeatTimer); _heartbeatTimer = null }
 }
 
 /** 尝试发送最小数据检测连接是否存活 */
 async function heartbeatPing(): Promise<boolean> {
   if (!currentSession) return false
   try {
-    // 发送一个空字节检测连接
     const testData = new Uint8Array([0x00]).buffer
     await writeBleCharacteristic(
       currentSession.deviceId,
@@ -848,72 +867,122 @@ async function heartbeatPing(): Promise<boolean> {
   }
 }
 
-async function attemptReconnect() {
-  if (_reconnecting) return
+/** 单次连接尝试，成功后切换到维护心跳模式 */
+async function tryConnectOnce(): Promise<boolean> {
+  if (_reconnecting) return false
   _reconnecting = true
-  const saved = getBoundPrinter()
-  if (!saved) {
-    _reconnecting = false
-    return
-  }
-  appendLog('info', `[心跳] 连接断开，尝试自动重连 ${saved.name}(${saved.deviceId})...`)
+  const target = getPresetPrinter(_accountLabel || undefined)
+  if (!target) { _reconnecting = false; return false }
   try {
-    await connectPrinter(saved.deviceId)
+    // 先清除 session 引用，异步关闭旧连接（不 await，避免断连时 uni.closeBLEConnection 挂起）
+    if (currentSession) {
+      const oldId = currentSession.deviceId
+      currentSession = null
+      closeBleConnection(oldId).catch(() => {})
+    }
+    await connectPrinter(target.deviceId)
     _connected = true
-    _currentDeviceId = saved.deviceId
-    appendLog('info', '[心跳] 自动重连成功')
+    _currentDeviceId = target.deviceId
+    appendLog('info', `[蓝牙] 连接成功: ${target.name}(${target.deviceId})`)
+    _reconnecting = false
+    return true
   } catch (e: any) {
     _connected = false
-    appendLog('warn', `[心跳] 自动重连失败: ${e?.message || e}`)
-  } finally {
+    appendLog('info', `[蓝牙] 连接尝试失败: ${e?.message || e}`)
     _reconnecting = false
+    return false
   }
 }
 
-function startHeartbeat() {
-  stopHeartbeat()
+/** 启动维护心跳（已连接，每30s确认存活，断了立刻切回激进重试） */
+function startMaintenanceHeartbeat() {
+  stopAllTimers()
   _heartbeatTimer = setInterval(async () => {
-    if (_reconnecting) return
-    if (!_connected || !currentSession) {
-      await attemptReconnect()
-      return
-    }
+    if (!_daemonActive) { stopAllTimers(); return }
     const alive = await heartbeatPing()
     if (!alive) {
       _connected = false
-      appendLog('warn', '[心跳] 连接丢失')
-      await attemptReconnect()
+      appendLog('warn', '[蓝牙] 心跳丢失，切换为激进重连模式')
+      startAggressiveRetry()
     }
-  }, 10000)
+  }, 30000)
 }
 
-function stopHeartbeat() {
-  if (_heartbeatTimer) {
-    clearInterval(_heartbeatTimer)
-    _heartbeatTimer = null
-  }
+/** 启动激进重试（每3s重试，直到连接成功后切换为维护心跳） */
+function startAggressiveRetry() {
+  stopAllTimers()
+  if (!_daemonActive) return
+  appendLog('info', '[蓝牙] 启动激进重连（每3s）...')
+  // 立即尝试一次
+  tryConnectOnce().then(ok => {
+    if (!_daemonActive) return
+    if (ok) { startMaintenanceHeartbeat(); return }
+    _retryTimer = setInterval(async () => {
+      if (!_daemonActive) { stopAllTimers(); return }
+      const ok = await tryConnectOnce()
+      if (ok) {
+        clearInterval(_retryTimer!)
+        _retryTimer = null
+        startMaintenanceHeartbeat()
+      }
+    }, 3000)
+  })
 }
 
-/** App 进入前台时调用：根据账户绑定设备启动心跳，自动重连 */
-export function startBluetoothDaemon() {
-  const bound = getBoundPrinter()
+/**
+ * 登录成功后调用：强绑定账户设备，立即启动激进自动连接。
+ * gesture.vue / password.vue 登录成功后调用此函数。
+ */
+export function onAccountLogin(displayName: string) {
+  _daemonActive = true
+  _accountLabel = displayName   // 存到模块变量，供 tryConnectOnce 使用
+  const bound = getPresetPrinter(displayName)
+  appendLog('info', `[蓝牙] 登录账户="${displayName}" 预设设备=${bound ? bound.name + '(' + bound.deviceId + ')' : 'null'}`)
   if (!bound) {
-    appendLog('info', '[心跳] 当前账户未绑定打印机，跳过自动连接')
+    appendLog('info', '[蓝牙] 当前账户无预设设备，跳过自动连接')
     return
   }
-  appendLog('info', `[心跳] 账户绑定设备: ${bound.name}(${bound.deviceId})`)
-  // 如果当前无连接，尝试重连
-  if (!_connected || !currentSession) {
-    attemptReconnect()
-  }
-  startHeartbeat()
-  appendLog('info', '[心跳] 前台保活已启动')
+  appendLog('info', `[蓝牙] 账户登录，强绑定设备: ${bound.name}(${bound.deviceId})`)
+  startAggressiveRetry()
 }
 
-/** App 进入后台时调用：暂停心跳 */
+/**
+ * 切换/退出账户时调用：立即断开蓝牙连接，停止所有自动重连。
+ * login/index.vue 选择账户时调用此函数。
+ */
+export function onAccountLogout() {
+  _daemonActive = false
+  _accountLabel = ''
+  stopAllTimers()
+  _reconnecting = false
+  if (currentSession) {
+    closeBleConnection(currentSession.deviceId).catch(() => {})
+    currentSession = null
+  }
+  _connected = false
+  _currentDeviceId = null
+  appendLog('info', '[蓝牙] 账户退出，已断开连接')
+}
+
+/** App 进入前台时调用：仅在账户已登录（_daemonActive=true）时恢复自动连接 */
+export function startBluetoothDaemon() {
+  // 只有 onAccountLogin 才能把 _daemonActive 设为 true
+  // 这里不做自动检测，避免切换账户后重连旧设备
+  if (!_daemonActive) {
+    // 冷启动时 onAccountLogin 已在 login/index.vue 中调用，此处无需处理
+    return
+  }
+  if (!_connected || !currentSession) {
+    startAggressiveRetry()
+  } else {
+    startMaintenanceHeartbeat()
+  }
+}
+
+/** App 进入后台时调用：暂停心跳（节省电量），但不断开连接 */
 export function pauseBluetoothDaemon() {
-  stopHeartbeat()
-  appendLog('info', '[心跳] 后台暂停心跳')
+  stopAllTimers()
+  appendLog('info', '[蓝牙] 后台暂停心跳')
 }
 
 /** 确保打印前连接就绪：每次打印都强制关闭旧连接并重新建立，确保可靠性 */
@@ -929,7 +998,6 @@ export async function ensurePrinterConnected(device?: PrinterDevice | null): Pro
     _connected = false
     _currentDeviceId = null
   }
-  // 每次打印都全新连接，确保可靠
   appendLog('info', `[打印] 建立连接: ${target.name}(${target.deviceId})`)
   await connectPrinter(target.deviceId)
   _connected = true

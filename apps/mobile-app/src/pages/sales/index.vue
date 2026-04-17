@@ -21,11 +21,11 @@
           <button class="btn-create" @tap="goCreate">创建销单</button>
         </view>
         <view v-if="filteredSales.length === 0" class="empty">暂无销单</view>
-        <view v-for="doc in filteredSales" :key="doc.id" class="sale-card" @tap="goDetail(doc.id)">
+        <view v-for="doc in filteredSales" :key="doc.id" class="sale-card" @tap="goDetail(doc)">
           <view class="row">
             <text class="code">{{ doc.code }}</text>
             <text v-if="doc.docType === 'gift'" class="gift-tag">[赠送]</text>
-            <text class="status" :class="doc.status">{{ statusText(doc.status) }}</text>
+            <text class="status" :class="statusClass(doc)">{{ statusText(doc) }}</text>
           </view>
           <view class="row">
             <text class="store">{{ getStoreName(doc.storeId) }}</text>
@@ -78,7 +78,7 @@
           </view>
           <view class="row settle-row">
             <button class="btn-settle" @tap.stop="doSettle(doc)">确认收款</button>
-            <button class="btn-detail" @tap.stop="goDetail(doc.id)">详情</button>
+            <button class="btn-detail" @tap.stop="goDetail(doc)">详情</button>
           </view>
         </view>
       </view>
@@ -178,14 +178,26 @@ function goCreate() {
   uni.navigateTo({ url: '/pages/sales/create' })
 }
 
-function goDetail(id: string) {
-  uni.navigateTo({ url: `/pages/sales/detail?id=${id}` })
+function goDetail(doc: SaleDoc) {
+  if (doc.status === 'draft') {
+    uni.navigateTo({ url: `/pages/sales/create?draftId=${doc.id}` })
+  } else {
+    uni.navigateTo({ url: `/pages/sales/detail?id=${doc.id}` })
+  }
 }
 
-function statusText(status: string) {
-  if (status === 'posted') return '已过账'
-  if (status === 'voided') return '已作废'
-  return '草稿'
+function statusText(doc: SaleDoc) {
+  if (doc.status === 'voided') return '已作废'
+  if (doc.status === 'draft') return '草稿'
+  if (doc.status === 'posted') return (doc.settled ?? 0) === 0 ? '未结清' : '已过账'
+  return doc.status
+}
+
+function statusClass(doc: SaleDoc) {
+  if (doc.status === 'voided') return 'voided'
+  if (doc.status === 'draft') return 'draft'
+  if (doc.status === 'posted') return (doc.settled ?? 0) === 0 ? 'unsettled' : 'posted'
+  return ''
 }
 
 function totalQty(doc: SaleDoc) {
@@ -340,6 +352,8 @@ onShow(() => {
 
   .status.posted { color: #52c41a; }
   .status.voided { color: #ff4d4f; }
+  .status.unsettled { color: #fa8c16; }
+  .status.draft { color: #999; }
 
   .store, .date, .qty, .amount {
     font-size: 24rpx;

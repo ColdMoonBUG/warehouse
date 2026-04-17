@@ -24,15 +24,15 @@
           <view class="summary-grid">
             <view class="summary-item summary-total">
               <text class="summary-label">净收益</text>
-              <text class="summary-value">¥{{ amountText(todayCommission.totalAmount) }}</text>
+              <text class="summary-value">¥{{ amountText(todayNetCommission) }}</text>
             </view>
             <view class="summary-item">
-              <text class="summary-label">销售</text>
-              <text class="summary-value positive">¥{{ amountText(todayCommission.saleAmount) }}</text>
+              <text class="summary-label">销售额</text>
+              <text class="summary-value positive">¥{{ amountText(todaySaleAmount) }}</text>
             </view>
             <view class="summary-item">
-              <text class="summary-label">退货</text>
-              <text class="summary-value negative">¥{{ amountText(todayCommission.returnAmount) }}</text>
+              <text class="summary-label">退货扣提成</text>
+              <text class="summary-value negative">-¥{{ amountText(Math.abs(todayCommission.returnAmount)) }}</text>
             </view>
             <view class="summary-item">
               <text class="summary-label">流水</text>
@@ -44,21 +44,24 @@
             <view class="ledger-head" @tap="ledgerExpanded = !ledgerExpanded">
               <text class="ledger-title">收益流水</text>
               <view class="ledger-head-right">
-                <text class="ledger-count">{{ todayCommission.ledgerCount }}笔</text>
+                <text class="ledger-count">{{ storeGroups.length }}家超市 · {{ docCount }}笔</text>
                 <text class="ledger-arrow" :class="{ expanded: ledgerExpanded }">›</text>
               </view>
             </view>
             <view v-if="ledgerExpanded">
               <view v-if="earningsError" class="earnings-empty">{{ earningsError }}</view>
-              <view v-else-if="todayCommission.ledgers.length === 0" class="earnings-empty">今日暂无收益流水</view>
-              <view v-for="item in todayCommission.ledgers" :key="item.id" class="ledger-item">
+              <view v-else-if="storeGroups.length === 0" class="earnings-empty">今日暂无收益流水</view>
+              <view v-for="sg in storeGroups" :key="sg.storeId" class="ledger-item">
                 <view class="ledger-row">
-                  <text class="ledger-name" :class="{ clickable: !!item.storeId }" @tap="goStoreSales(item)">{{ item.storeName || '未关联门店' }}</text>
-                  <text class="ledger-amount" :class="amountClass(item.commissionAmount)">{{ signedAmountText(item.commissionAmount) }}</text>
+                  <text class="ledger-name" :class="{ clickable: !!sg.storeId }" @tap="goStoreGroup(sg)">
+                    {{ sg.storeName }}
+                  </text>
+                  <text class="ledger-amount" :class="sg.commissionAmount >= 0 ? 'positive' : 'negative'">
+                    {{ sg.commissionAmount >= 0 ? '+' : '' }}¥{{ Math.abs(sg.commissionAmount).toFixed(2) }}
+                  </text>
                 </view>
                 <view class="ledger-row ledger-row-sub">
-                  <text class="ledger-meta">{{ secondaryText(item) }}</text>
-                  <text class="ledger-time">{{ timeText(item.createdAt) }}</text>
+                  <text class="ledger-meta">{{ sg.docCount }}笔订单</text>
                 </view>
               </view>
             </view>
@@ -123,6 +126,45 @@ const earningsLoading = ref(false)
 const earningsError = ref('')
 const ledgerExpanded = ref(false)
 const todayCommission = ref<TodayCommissionSummary>(createEmptyCommissionSummary())
+
+// 今日实际销售额（从流水中累加 bizType=sale 的 amount）
+const todaySaleAmount = computed(() =>
+  todayCommission.value.ledgers
+    .filter(l => l.bizType === 'sale')
+    .reduce((sum, l) => sum + Number(l.amount || 0), 0)
+)
+
+// 净收益 = 销售额 × 6% - 退货扣提成
+const todayNetCommission = computed(() =>
+  todaySaleAmount.value * 0.06 - Math.abs(Number(todayCommission.value.returnAmount || 0))
+)
+
+// 按 storeId 聚合：每家超市一行
+const storeGroups = computed(() => {
+  const groups = new Map<string, { storeId: string; storeName: string; commissionAmount: number; docCount: number; docIds: Set<string> }>()
+  for (const item of todayCommission.value.ledgers) {
+    const key = item.storeId || 'unknown'
+    if (!groups.has(key)) {
+      groups.set(key, { storeId: key, storeName: item.storeName || '未关联门店', commissionAmount: 0, docCount: 0, docIds: new Set() })
+    }
+    const g = groups.get(key)!
+    g.commissionAmount += Number(item.commissionAmount || 0)
+    if (item.docId) g.docIds.add(item.docId)
+    g.docCount = g.docIds.size
+  }
+  return Array.from(groups.values())
+})
+
+// 今日所有超市的总单据数（去重 docId）
+const docCount = computed(() => {
+  const allDocIds = new Set(todayCommission.value.ledgers.map(l => l.docId).filter(Boolean))
+  return allDocIds.size
+})
+
+function goStoreGroup(sg: { storeId: string; storeName: string }) {
+  if (!sg.storeId || sg.storeId === 'unknown') return
+  uni.navigateTo({ url: `/pages/sales/store-history?storeId=${sg.storeId}&storeName=${encodeURIComponent(sg.storeName)}` })
+}
 
 function createEmptyCommissionSummary(): TodayCommissionSummary {
   return {

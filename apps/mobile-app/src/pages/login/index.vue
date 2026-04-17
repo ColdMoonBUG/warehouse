@@ -54,6 +54,7 @@ import { useUserStore } from '@/store/user'
 import { getSession } from '@/api'
 import { useReferenceStore } from '@/store/reference'
 import { applyRoleTabBar, switchToRoleHome } from '@/utils/tabbar'
+import { onAccountLogin, onAccountLogout } from '@/utils/bluetooth-printer'
 import type { Account } from '@/types'
 
 const userStore = useUserStore()
@@ -71,6 +72,7 @@ onMounted(async () => {
   const session = getSession()
   if (session) {
     userStore.setSession(session)
+    onAccountLogin(session.displayName)   // 冷启动已有 session，触发自动连接
     applyRoleTabBar()
     setTimeout(() => {
       switchToRoleHome()
@@ -103,6 +105,8 @@ onShow(() => {
 })
 
 function selectAccount(account: Account) {
+  // 切换账户前断开当前蓝牙连接
+  onAccountLogout()
   const gestureFlag = account.gestureHash ? '1' : '0'
   const base = `username=${account.username}&name=${encodeURIComponent(account.displayName)}&id=${account.id}&hasGesture=${gestureFlag}`
   if (account.gestureHash) {

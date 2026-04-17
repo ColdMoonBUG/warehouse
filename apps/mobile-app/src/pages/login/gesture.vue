@@ -49,6 +49,7 @@ import { useUserStore } from '@/store/user'
 import { loginByGesture } from '@/api'
 import { useReferenceStore } from '@/store/reference'
 import { applyRoleTabBar, switchToRoleHome } from '@/utils/tabbar'
+import { onAccountLogin } from '@/utils/bluetooth-printer'
 
 const userStore = useUserStore()
 const referenceStore = useReferenceStore()
@@ -189,6 +190,7 @@ async function onTouchEnd() {
       void referenceStore.preloadAllAccounts(true).catch(() => {})
       void referenceStore.preloadSuppliers(true).catch(() => {})
     }
+    onAccountLogin(session.displayName)
     uni.showToast({ title: '解锁成功', icon: 'success' })
     applyRoleTabBar()
     setTimeout(() => {

@@ -36,11 +36,11 @@
           <text class="name">{{ item.name }}</text>
           <view class="stock-row">
             <text class="stock-label">当前仓</text>
-            <text class="stock-value">{{ item.qty }}袋</text>
+            <text class="stock-value" :class="{ 'low-stock': item.qty < 10 }">{{ formatQty(item.qty, item.boxQty) }}</text>
           </view>
           <view class="stock-row">
             <text class="stock-label">总仓</text>
-            <text class="stock-value">{{ item.mainQty }}袋</text>
+            <text class="stock-value">{{ formatQty(item.mainQty, item.boxQty) }}</text>
           </view>
           <text v-if="compareText(item)" class="compare-text">{{ compareText(item) }}</text>
         </view>
@@ -116,6 +116,7 @@ const items = computed(() => {
   return orderedIds.map(productId => ({
     productId,
     name: products.value.find(product => product.id === productId)?.name || productId,
+    boxQty: products.value.find(product => product.id === productId)?.boxQty || 1,
     qty: list.value.find(item => item.productId === productId)?.qty || 0,
     mainQty: mainStockMap.value[productId] || 0,
   }))
@@ -126,9 +127,19 @@ function warehouseLabel(warehouse?: Warehouse | null) {
   return warehouse.type === 'main' ? `${warehouse.name}（总仓）` : warehouse.name
 }
 
-function compareText(item: { productId: string; qty: number; mainQty: number }) {
+// 袋数转 X箱Y袋
+function formatQty(qty: number, boxQty: number): string {
+  if (!boxQty || boxQty <= 1) return `${qty}袋`
+  const boxes = Math.floor(qty / boxQty)
+  const bags = qty % boxQty
+  if (boxes > 0 && bags > 0) return `${boxes}箱${bags}袋`
+  if (boxes > 0) return `${boxes}箱`
+  return `${bags}袋`
+}
+
+function compareText(item: { productId: string; qty: number; mainQty: number; boxQty: number }) {
   if (!selectedWarehouse.value || selectedWarehouse.value.type === 'main') return ''
-  return `当前仓${item.qty}袋｜主仓${item.mainQty}袋`
+  return `当前仓${formatQty(item.qty, item.boxQty)}｜主仓${formatQty(item.mainQty, item.boxQty)}`
 }
 
 function onWarehouseChange(e: any) {
@@ -300,5 +311,10 @@ onShow(() => {
   font-size: 28rpx;
   border: 1rpx solid #e8e8e8;
   box-sizing: border-box;
+}
+
+.low-stock {
+  color: #dc2626;
+  font-weight: 600;
 }
 </style>
