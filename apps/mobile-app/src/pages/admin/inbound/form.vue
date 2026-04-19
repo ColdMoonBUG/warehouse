@@ -35,8 +35,8 @@
           </view>
           <view class="field">
             <text class="field-label">商品</text>
-            <picker mode="selector" :range="filteredProducts" range-key="name" @change="(e)=>onProductChange(e,i)">
-              <view class="field-box picker-box"><text>{{ productName(l.productId) || '请选择商品' }}</text></view>
+            <picker mode="selector" :range="filteredProductsDisplay" range-key="displayName" @change="(e)=>onProductChange(e,i)">
+              <view class="field-box picker-box"><text>{{ productDisplayName(l.productId) || '请选择商品' }}</text></view>
             </picker>
           </view>
           <view class="field-grid field-grid-triple">
@@ -99,6 +99,12 @@ const mainWarehouse = computed(() => warehouses.value.find(w => w.type === 'main
 const filteredProducts = computed(() => {
   if (!form.value.supplierId) return products.value
   return products.value.filter(p => p.supplierId === form.value.supplierId)
+})
+const filteredProductsDisplay = computed(() => {
+  return filteredProducts.value.map(p => ({
+    ...p,
+    displayName: p.barcode ? `${p.name} (${p.barcode})` : p.name,
+  }))
 })
 const stockHint = computed(() => {
   if (stockLoading.value) return '库存加载中'
@@ -230,6 +236,12 @@ function onProductChange(e: any, i: number) {
 
 function productName(id: string) {
   return productById(id)?.name || ''
+}
+
+function productDisplayName(id: string) {
+  const p = productById(id)
+  if (!p) return ''
+  return p.barcode ? `${p.name} (${p.barcode})` : p.name
 }
 
 async function loadEdit(id: string) {

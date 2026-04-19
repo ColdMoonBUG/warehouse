@@ -41,8 +41,8 @@
           </view>
           <view class="field">
             <text class="field-label">商品</text>
-            <picker mode="selector" :range="products" range-key="name" @change="(e)=>onProductChange(e,i)">
-              <view class="field-box picker-box"><text>{{ productName(l.productId) || '请选择商品' }}</text></view>
+            <picker mode="selector" :range="productsDisplay" range-key="displayName" @change="(e)=>onProductChange(e,i)">
+              <view class="field-box picker-box"><text>{{ productDisplayName(l.productId) || '请选择商品' }}</text></view>
             </picker>
           </view>
           <view class="field-grid">
@@ -92,6 +92,13 @@ const fromStockMap = ref<Record<string, number>>({})
 const toStockMap = ref<Record<string, number>>({})
 const stockLoading = ref(false)
 const pageLoading = ref(false)
+
+const productsDisplay = computed(() => {
+  return products.value.map(p => ({
+    ...p,
+    displayName: p.barcode ? `${p.name} (${p.barcode})` : p.name,
+  }))
+})
 
 const fromWarehouseName = computed(() => warehouses.value.find(w => w.id === form.value.fromWarehouseId)?.name || '')
 const toWarehouseName = computed(() => warehouses.value.find(w => w.id === form.value.toWarehouseId)?.name || '')
@@ -228,6 +235,12 @@ function onProductChange(e: any, i: number) {
 
 function productName(id: string) {
   return productById(id)?.name || ''
+}
+
+function productDisplayName(id: string) {
+  const p = productById(id)
+  if (!p) return ''
+  return p.barcode ? `${p.name} (${p.barcode})` : p.name
 }
 
 async function loadEdit(id: string) {

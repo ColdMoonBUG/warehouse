@@ -7,6 +7,7 @@
     </view>
     <view class="content">
       <view class="section"><text class="label">名称</text><input v-model="form.name" placeholder="供应商名称" /></view>
+      <view class="section"><text class="label">编码</text><input v-model="form.code" placeholder="不填则自动生成" /></view>
       <view class="section"><text class="label">联系人</text><input v-model="form.contact" placeholder="联系人" /></view>
       <view class="section"><text class="label">电话</text><input v-model="form.phone" placeholder="电话" /></view>
       <view class="section"><text class="label">地址</text><input v-model="form.address" placeholder="地址" /></view>
@@ -46,8 +47,8 @@ async function loadEdit(id: string) {
 }
 
 async function submit() {
-  if (!form.value.code || !form.value.name) {
-    uni.showToast({ title: '请填写编码和名称', icon: 'none' })
+  if (!form.value.name) {
+    uni.showToast({ title: '请填写名称', icon: 'none' })
     return
   }
   await saveSupplier(form.value as any)

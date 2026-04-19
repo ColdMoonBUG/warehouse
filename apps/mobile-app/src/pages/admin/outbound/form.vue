@@ -102,12 +102,14 @@ const sortedProducts = computed(() => {
 
 const productsWithStock = computed(() => {
   if (!fromWarehouse.value) {
-    return sortedProducts.value.map(p => ({ ...p, displayName: p.name }))
+    return sortedProducts.value.map(p => ({ ...p, displayName: p.barcode ? `${p.name} (${p.barcode})` : p.name }))
   }
   const sm = sourceStockMap.value
   return sortedProducts.value.map(p => {
     const stock = sm[p.id] || 0
-    const displayName = stock > 0 ? `${p.name} (库存: ${stock}袋)` : `${p.name} (无库存)`
+    const stockText = stock > 0 ? `库存: ${stock}袋` : '无库存'
+    const barcodeText = p.barcode ? ` ${p.barcode}` : ''
+    const displayName = `${p.name}${barcodeText} (${stockText})`
     return { ...p, displayName }
   })
 })

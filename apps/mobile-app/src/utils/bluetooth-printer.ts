@@ -4,6 +4,7 @@
  */
 import type { Product, ReturnDoc, SaleDoc, Store } from '@/types'
 import { formatDate, normalizeCount } from '@/utils'
+import { PRINTER_PRESETS } from '@/config/printer-presets'
 
 export interface PrinterDevice {
   deviceId: string
@@ -567,14 +568,10 @@ export function buildReturnReceipt(doc: ReturnDoc, storeName: string, salesperso
 // ============================================================
 
 export async function printTestPage(device?: PrinterDevice | null) {
-  const target = device || getSavedPrinter()
-  if (!target) {
-    throw new Error('请先选择打印机')
-  }
-
-  await ensurePrinterConnected(target)
+  await ensurePrinterConnected(device || null)
   const cpcl = buildTestPageCpcl()
   await sendCpcl(cpcl)
+  resumeDaemonAfterPrint()
 }
 
 export async function printSaleA4(
@@ -587,11 +584,7 @@ export async function printSaleA4(
 ) {
   const { buildSalePrintData } = await import('./canvas-print')
   const { cpclBuffer, journalSetup } = await buildSalePrintData(doc, store, salespersonName, products, payType)
-  const target = device || getSavedPrinter()
-  if (!target) {
-    throw new Error('请先选择打印机')
-  }
-  await ensurePrinterConnected(target)
+  await ensurePrinterConnected(device || null)
 
   appendLog('info', `[A4打印] 发送 JOURNAL+SETFF 配置...`)
   await sendCpcl(journalSetup)
@@ -599,6 +592,7 @@ export async function printSaleA4(
   appendLog('info', `[A4打印] 发送打印指令...`)
   await sendCpcl(cpclBuffer)
   appendLog('info', `[A4打印] 完成`)
+  resumeDaemonAfterPrint()
 }
 
 export async function printReturnA4(
@@ -610,16 +604,13 @@ export async function printReturnA4(
 ) {
   const { buildReturnPrintData } = await import('./canvas-print')
   const { cpclBuffer, journalSetup } = await buildReturnPrintData(doc, store, salespersonName, products)
-  const target = device || getSavedPrinter()
-  if (!target) {
-    throw new Error('请先选择打印机')
-  }
-  await ensurePrinterConnected(target)
+  await ensurePrinterConnected(device || null)
   appendLog('info', '[A4打印] 发送 JOURNAL+SETFF 配置...')
   await sendCpcl(journalSetup)
   await sleep(500)
   appendLog('info', '[A4打印] 发送打印指令...')
   await sendCpcl(cpclBuffer)
+  resumeDaemonAfterPrint()
 }
 
 export async function printCombinedA4(
@@ -633,11 +624,7 @@ export async function printCombinedA4(
 ) {
   const { buildCombinedPrintData } = await import('./canvas-print')
   const { pages } = await buildCombinedPrintData(saleDoc, returnDoc, store, salespersonName, products, payType)
-  const target = device || getSavedPrinter()
-  if (!target) {
-    throw new Error('请先选择打印机')
-  }
-  await ensurePrinterConnected(target)
+  await ensurePrinterConnected(device || null)
 
   appendLog('info', `[合并打印] ${pages.length} 页`)
 
@@ -653,10 +640,12 @@ export async function printCombinedA4(
     }
   }
   appendLog('info', `[合并打印] 完成，共 ${pages.length} 页`)
+  resumeDaemonAfterPrint()
 }
 
 export function checkPrinterConnected(): PrinterDevice | null {
-  return getBoundPrinter()
+  // 优先检查账户预设设备
+  return getPresetPrinter(_accountLabel || undefined) || getBoundPrinter()
 }
 
 export function navigateToPrinterSettings() {
@@ -706,12 +695,8 @@ const PRINTER_BIND_KEY = 'wh_printer_bindings'
 // 预设设备 & 账户绑定
 // ============================================================
 
-/** 预设打印机设备参数（MAC 地址在 Android 下即 deviceId） */
-export const PRESET_PRINTERS: Record<string, { name: string; mac: string }> = {
-  小车: { name: 'A4LEP-A0290A', mac: '80:F1:B2:A0:29:0A' },
-  大车: { name: 'A4LEP-A0C4CA', mac: '80:F1:B2:A0:C4:CA' },
-  三车: { name: '', mac: '' },  // 待配置
-}
+/** 预设打印机设备参数 —— 换设备只需改 config/printer-presets.ts */
+export { PRINTER_PRESETS as PRESET_PRINTERS }
 
 /** 获取当前账户的显示名标签（用于绑定打印机） */
 function getAccountLabel(): string {
@@ -729,12 +714,12 @@ function getAccountLabel(): string {
   }
 }
 
-/** 自动连接专用：只读 PRESET_PRINTERS，不使用手动绑定，避免跨账户污染 */
+/** 自动连接专用：只读 PRINTER_PRESETS，不使用手动绑定，避免跨账户污染 */
 function getPresetPrinter(labelOverride?: string): PrinterDevice | null {
   const label = labelOverride || getAccountLabel()
   if (!label) return null
-  if (!(label in PRESET_PRINTERS)) return null
-  const preset = PRESET_PRINTERS[label]
+  if (!(label in PRINTER_PRESETS)) return null
+  const preset = PRINTER_PRESETS[label]
   if (!preset.mac) return null   // 有记录但 mac 为空 = 无设备
   return { deviceId: preset.mac, name: preset.name }
 }
@@ -747,9 +732,9 @@ export function getBoundPrinter(): PrinterDevice | null {
   if (label && bindings[label]) {
     return bindings[label]
   }
-  // 2. 查预设：账户在 PRESET_PRINTERS 中有记录
-  if (label && label in PRESET_PRINTERS) {
-    const preset = PRESET_PRINTERS[label]
+  // 2. 查预设：账户在 PRINTER_PRESETS 中有记录
+  if (label && label in PRINTER_PRESETS) {
+    const preset = PRINTER_PRESETS[label]
     if (!preset.mac) return null
     return { deviceId: preset.mac, name: preset.name }
   }
@@ -985,21 +970,45 @@ export function pauseBluetoothDaemon() {
   appendLog('info', '[蓝牙] 后台暂停心跳')
 }
 
-/** 确保打印前连接就绪：每次打印都强制关闭旧连接并重新建立，确保可靠性 */
-export async function ensurePrinterConnected(device?: PrinterDevice | null): Promise<void> {
-  const target = device || getBoundPrinter()
+/** 确保打印前连接就绪：复用当前连接或重建，打印期间暂停 daemon 心跳 */
+export async function ensurePrinterConnected(deviceOverride?: PrinterDevice | null): Promise<void> {
+  // 打印设备优先级：账户预设（与 daemon 完全一致） > 外部传入覆盖 > 手动绑定兜底
+  const target = getPresetPrinter(_accountLabel || undefined) || deviceOverride || getBoundPrinter()
   if (!target) {
     throw new Error('请先绑定打印机')
   }
-  // 关闭旧连接（忽略失败，可能本来就没连接）
+
+  // 打印期间停掉 daemon 定时器，防止 heartbeat/retry 并发写入干扰打印数据流
+  stopAllTimers()
+
+  // 已连接到正确设备 → 直接复用，不发 ping（0x00 会干扰打印机）
+  if (_connected && currentSession && currentSession.deviceId === target.deviceId) {
+    appendLog('info', `[打印] 复用连接 ${target.name}(${target.deviceId})`)
+    return
+  }
+
+  // 连的是别的设备或未连接 → 先断后连
   if (currentSession) {
-    await closeBleConnection(currentSession.deviceId).catch(() => {})
+    appendLog('info', `[打印] 断开旧设备 ${currentSession.deviceId}，切换到 ${target.deviceId}`)
+    const oldId = currentSession.deviceId
     currentSession = null
     _connected = false
-    _currentDeviceId = null
+    closeBleConnection(oldId).catch(() => {})
+    await sleep(300)
   }
+
   appendLog('info', `[打印] 建立连接: ${target.name}(${target.deviceId})`)
   await connectPrinter(target.deviceId)
   _connected = true
   _currentDeviceId = target.deviceId
+}
+
+/** 打印结束后恢复 daemon 定时器 */
+function resumeDaemonAfterPrint() {
+  if (!_daemonActive) return
+  if (_connected && currentSession) {
+    startMaintenanceHeartbeat()
+  } else {
+    startAggressiveRetry()
+  }
 }

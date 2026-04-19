@@ -330,6 +330,9 @@ const payType = ref<'cash' | 'card'>('card')
 const sortMode = ref<SortMode>('custom')
 const step = ref<1 | 2>(1)
 const submitting = ref(false)
+const submittedResult = ref<{ saleDoc: SaleDoc; returnDoc: ReturnDoc | null } | null>(null)
+// 同步锁，防止 APP 层 tap 事件在响应式更新前多次触发
+let _submitLock = false
 const previewDate = ref('')
 const printCopies = ref(1)
 const productSaleQtyMap = ref<Record<string, number>>({})
@@ -351,6 +354,7 @@ const canvasHeightPx = computed(() => {
 
 const DRAFT_KEY = 'wh_sale_draft'
 const DRAFT_TTL = 24 * 60 * 60 * 1000
+const SORT_MODE_KEY = 'wh_sale_sort_mode'
 
 // 后端草稿单 ID（创建后复用同一条记录，避免重复生成）
 const autoDraftId = ref('')
@@ -390,6 +394,17 @@ const currentSortLabel = computed(() => sortModeOptions.find(o => o.value === so
 
 function onSortModeChange(e: any) {
   sortMode.value = sortModeOptions[Number(e.detail.value)]?.value || 'custom'
+  try { uni.setStorageSync(SORT_MODE_KEY, sortMode.value) } catch { /* ignore */ }
+}
+
+// 排序模式持久化：读取上次选择
+function loadSortMode() {
+  try {
+    const saved = uni.getStorageSync(SORT_MODE_KEY) as SortMode
+    if (saved && sortModeOptions.some(o => o.value === saved)) {
+      sortMode.value = saved
+    }
+  } catch { /* ignore */ }
 }
 
 function loadCustomSortOrder() {
@@ -834,8 +849,9 @@ async function loadData() {
 
   // 异步加载销量数据（用于按销量排序）
   getProductSaleQty().then(map => { productSaleQtyMap.value = map }).catch(() => {})
-  // 加载自定义排序
+  // 加载自定义排序和排序模式
   loadCustomSortOrder()
+  loadSortMode()
   // 异步获取当前位置（用于超市距离排序）
   requestCurrentLocation().then(loc => { userLocation.value = { lat: loc.latitude, lng: loc.longitude } }).catch(() => {})
 }
@@ -972,12 +988,39 @@ async function submitAndPrint() {
     return
   }
 
+  // 已提交过：只打印，不重复创建销单
+  if (submittedResult.value) {
+    const result = submittedResult.value
+    try {
+      const store = stores.value.find(s => s.id === result.saleDoc.storeId)
+      const spId = currentSalespersonId()
+      const spName = referenceStore.accounts.find(a => isSameSalespersonId(a.salespersonId || a.id, spId))?.displayName || '-'
+      const copies = Math.min(Math.max(printCopies.value, 1), 3)
+      for (let i = 0; i < copies; i++) {
+        if (i > 0) await new Promise(r => setTimeout(r, 1500))
+        if (result.returnDoc) {
+          await printCombinedA4(result.saleDoc, result.returnDoc, store, spName, products.value, payType.value)
+        } else {
+          await printSaleA4(result.saleDoc, store, spName, products.value, payType.value)
+        }
+      }
+      uni.showToast({ title: '重新打印成功', icon: 'success' })
+    } catch (e: any) {
+      uni.showToast({ title: `打印失败: ${e.message || ''}`, icon: 'none', duration: 3000 })
+    }
+    return
+  }
+
+  if (_submitLock) return
+  _submitLock = true
   submitting.value = true
   const result = await doSubmit()
   if (!result) {
     submitting.value = false
+    _submitLock = false
     return
   }
+  submittedResult.value = result
 
   try {
     const store = stores.value.find(s => s.id === result.saleDoc.storeId)
@@ -998,16 +1041,27 @@ async function submitAndPrint() {
   }
 
   submitting.value = false
+  _submitLock = false
   setTimeout(() => {
     uni.redirectTo({ url: '/pages/sales/index' })
   }, 400)
 }
 
 async function submitOnly() {
+  if (_submitLock || submittedResult.value) {
+    if (submittedResult.value) {
+      uni.showToast({ title: '该销单已提交', icon: 'none' })
+      setTimeout(() => { uni.redirectTo({ url: '/pages/sales/index' }) }, 400)
+    }
+    return
+  }
+  _submitLock = true
   submitting.value = true
   const result = await doSubmit()
   submitting.value = false
+  _submitLock = false
   if (!result) return
+  submittedResult.value = result
   uni.showToast({ title: '销单已确认', icon: 'success' })
   setTimeout(() => {
     uni.redirectTo({ url: '/pages/sales/index' })

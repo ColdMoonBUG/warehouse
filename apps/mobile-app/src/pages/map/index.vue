@@ -102,6 +102,38 @@ const selectedStore = ref<StoreWithSale | null>(null)
 const locationLoading = ref(false)
 const locationReady = ref(false)
 const locationErrorMessage = ref('')
+const currentLat = ref(0)
+const currentLng = ref(0)
+const CURRENT_LOCATION_MARKER_ID = 9999
+
+const COLOR_ICON_MAP: Record<string, string> = {
+  '#22c55e': '/static/marker-green.png',
+  '#eab308': '/static/marker-yellow.png',
+  '#f97316': '/static/marker-orange.png',
+  '#ef4444': '/static/marker-red.png',
+  '#1890ff': '/static/marker-blue.png',
+}
+
+function markerIconPath(color: string): string {
+  return COLOR_ICON_MAP[color] || '/static/marker-blue.png'
+}
+
+function updateLocationMarker() {
+  if (!currentLat.value || !currentLng.value) return
+  markers.value = [
+    ...markers.value.filter(m => m.id !== CURRENT_LOCATION_MARKER_ID),
+    {
+      id: CURRENT_LOCATION_MARKER_ID,
+      latitude: currentLat.value,
+      longitude: currentLng.value,
+      iconPath: '/static/location-dot.png',
+      width: 100,
+      height: 100,
+      anchor: { x: 0.5, y: 0.5 },
+      zIndex: 999,
+    },
+  ]
+}
 
 const locationMessage = computed(() => {
   if (locationLoading.value) return '正在获取当前位置…'
@@ -128,12 +160,8 @@ function ownershipColor(isOwn: boolean): string {
   return isOwn ? '#ef4444' : '#1890ff'
 }
 
-function createMarkerIcon(color: string): string {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30">
-    <circle cx="15" cy="15" r="12" fill="${color}" fill-opacity="0.9" stroke="#fff" stroke-width="2"/>
-    <text x="15" y="20" text-anchor="middle" font-size="12" fill="#fff" font-weight="bold">店</text>
-  </svg>`
-  return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg)
+function createMarkerIcon(color: string, name: string): string {
+  return markerIconPath(color)
 }
 
 async function locateCurrentPosition(showToastOnFail = false) {
@@ -143,7 +171,10 @@ async function locateCurrentPosition(showToastOnFail = false) {
   try {
     const loc = await requestCurrentLocation()
     mapCenter.value = { latitude: loc.latitude, longitude: loc.longitude }
+    currentLat.value = loc.latitude
+    currentLng.value = loc.longitude
     locationReady.value = true
+    updateLocationMarker()
     return true
   } catch (e: any) {
     locationReady.value = false
@@ -184,10 +215,20 @@ function updateMarkers(storeList: Store[], saleQty: Record<string, number>) {
     latitude: s.lat!,
     longitude: s.lng!,
     title: s.name,
-    iconPath: createMarkerIcon(s.color),
-    width: 30,
-    height: 30,
+    iconPath: markerIconPath(s.color),
+    width: 28,
+    height: 28,
     anchor: { x: 0.5, y: 0.5 },
+    label: {
+      content: s.name.length > 7 ? s.name.slice(0, 7) + '…' : s.name,
+      color: '#999999',
+      fontSize: 4,
+      anchorX: 20,
+      anchorY: 0,
+      bgColor: '#ffffffaa',
+      padding: 2,
+      borderRadius: 3,
+    },
     callout: {
       content: s.name,
       color: '#333',
@@ -197,6 +238,7 @@ function updateMarkers(storeList: Store[], saleQty: Record<string, number>) {
       display: 'BYCLICK',
     },
   }))
+  updateLocationMarker()
 }
 
 function isOwnedStoreItem(store?: Store | null) {
@@ -214,20 +256,43 @@ async function loadBusinessData() {
 }
 
 function onMarkerTap(e: any) {
-  const markerId = e.markerId
-  if (markerId !== undefined && stores.value[markerId]) {
+  const markerId = e.detail?.markerId ?? e.markerId
+  if (markerId !== undefined && markerId !== CURRENT_LOCATION_MARKER_ID && stores.value[markerId]) {
     selectedStore.value = stores.value[markerId]
   }
 }
 
 function navigateToStore() {
   if (!selectedStore.value) return
-  uni.openLocation({
-    latitude: selectedStore.value.lat!,
-    longitude: selectedStore.value.lng!,
-    name: selectedStore.value.name,
-    address: selectedStore.value.address || '',
-    scale: 18,
+  const { lat, lng, name } = selectedStore.value
+  const n = encodeURIComponent(name)
+  uni.showActionSheet({
+    itemList: ['高德地图', '百度地图', '腾讯地图'],
+    success: (res) => {
+      switch (res.tapIndex) {
+        case 0:
+          // #ifdef APP-PLUS
+          plus.runtime.openURL(`amapuri://route/plan/?dlat=${lat}&dlon=${lng}&dname=${n}&dev=0&t=0`, () => {
+            plus.runtime.openURL(`https://uri.amap.com/navigation?to=${lng},${lat},${n}&mode=car`)
+          })
+          // #endif
+          break
+        case 1:
+          // #ifdef APP-PLUS
+          plus.runtime.openURL(`baidumap://map/direction?destination=latlng:${lat},${lng}|name:${n}&coord_type=gcj02&mode=driving`, () => {
+            plus.runtime.openURL(`https://api.map.baidu.com/direction?destination=latlng:${lat},${lng}|name:${n}&coord_type=gcj02&mode=driving&output=html`)
+          })
+          // #endif
+          break
+        case 2:
+          // #ifdef APP-PLUS
+          plus.runtime.openURL(`qqmap://map/routeplan?type=drive&to=${n}&tocoord=${lat},${lng}&coord_type=1&referer=warehouse`, () => {
+            plus.runtime.openURL(`https://apis.map.qq.com/uri/v1/routeplan?type=drive&to=${n}&tocoord=${lat},${lng}&referer=warehouse`)
+          })
+          // #endif
+          break
+      }
+    },
   })
 }
 
