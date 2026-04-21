@@ -331,8 +331,6 @@ const sortMode = ref<SortMode>('custom')
 const step = ref<1 | 2>(1)
 const submitting = ref(false)
 const submittedResult = ref<{ saleDoc: SaleDoc; returnDoc: ReturnDoc | null } | null>(null)
-// 同步锁，防止 APP 层 tap 事件在响应式更新前多次触发
-let _submitLock = false
 const previewDate = ref('')
 const printCopies = ref(1)
 const productSaleQtyMap = ref<Record<string, number>>({})
@@ -1011,13 +1009,10 @@ async function submitAndPrint() {
     return
   }
 
-  if (_submitLock) return
-  _submitLock = true
   submitting.value = true
   const result = await doSubmit()
   if (!result) {
     submitting.value = false
-    _submitLock = false
     return
   }
   submittedResult.value = result
@@ -1041,25 +1036,20 @@ async function submitAndPrint() {
   }
 
   submitting.value = false
-  _submitLock = false
   setTimeout(() => {
     uni.redirectTo({ url: '/pages/sales/index' })
   }, 400)
 }
 
 async function submitOnly() {
-  if (_submitLock || submittedResult.value) {
-    if (submittedResult.value) {
-      uni.showToast({ title: '该销单已提交', icon: 'none' })
-      setTimeout(() => { uni.redirectTo({ url: '/pages/sales/index' }) }, 400)
-    }
+  if (submittedResult.value) {
+    uni.showToast({ title: '该销单已提交', icon: 'none' })
+    setTimeout(() => { uni.redirectTo({ url: '/pages/sales/index' }) }, 400)
     return
   }
-  _submitLock = true
   submitting.value = true
   const result = await doSubmit()
   submitting.value = false
-  _submitLock = false
   if (!result) return
   submittedResult.value = result
   uni.showToast({ title: '销单已确认', icon: 'success' })
