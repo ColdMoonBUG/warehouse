@@ -239,26 +239,12 @@ function buildJournalSetup(): ArrayBuffer {
   return strToBytes(setup).buffer
 }
 
-/** 临时调试：禁用 CCW 旋转（存储在 localStorage，明天删除） */
-export function setRotationDisabled(disabled: boolean) {
-  uni.setStorageSync('wh_print_no_rotate', disabled ? '1' : '0')
-}
-export function isRotationDisabled(): boolean {
-  return uni.getStorageSync('wh_print_no_rotate') === '1'
-}
-
 function buildCpclCommand(imageData: any, taskId: string): { cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer } {
   try {
     appendLog('info', `[A5打印] 开始构建CPCL指令：taskId=${taskId}，原始图片 ${imageData.width}x${imageData.height}`)
 
-    // A5纸，默认向左旋转90度打印；可通过开关临时禁用旋转
-    const skipRotate = isRotationDisabled()
-    const printData = skipRotate ? imageData : rotateImageData90CCW(imageData)
-    if (skipRotate) {
-      appendLog('info', '[A5打印] 旋转已禁用（调试模式）')
-    } else {
-      appendLog('info', `[A5打印] 图片旋转90°完成：${printData.width}x${printData.height}`)
-    }
+    const printData = rotateImageData90CCW(imageData)
+    appendLog('info', `[A5打印] 图片旋转90°完成：${printData.width}x${printData.height}`)
 
     const cpclBuffer = CPCL.Builder.createArea(0, printData.height, 1)
       .taskId(taskId || '1')
@@ -300,7 +286,7 @@ export async function buildSalePrintData(
 
   const data: PrintDocData = {
     type: 'sale',
-    code: doc.code,
+    code: doc.code || doc.id?.slice(-8) || '未知',
     date: doc.date,
     storeName: store?.name || '-',
     salespersonName,
@@ -344,7 +330,7 @@ export async function buildReturnPrintData(
 
   const data: PrintDocData = {
     type: 'return',
-    code: doc.code,
+    code: doc.code || doc.id?.slice(-8) || '未知',
     date: doc.date,
     storeName: store?.name || '-',
     salespersonName,
@@ -614,7 +600,7 @@ export async function buildCombinedPrintData(
   const returnTotalAmount = returnItems.reduce((s, i) => s + i.amount, 0)
 
   const combinedData: CombinedPrintData = {
-    code: saleDoc.code,
+    code: saleDoc.code || saleDoc.id?.slice(-8) || '未知',
     date: saleDoc.date,
     storeName: store?.name || '-',
     salespersonName,

@@ -269,18 +269,15 @@ const canvasId = CANVAS_ID
 
 const canvasHeightPx = computed(() => {
   if (!doc.value) return 2480
-  return estimateContentHeight({
-    type: 'sale',
-    code: doc.value.code,
-    date: doc.value.date,
-    storeName: '',
-    salespersonName: '',
-    items: doc.value.lines,
-    totalQty: 0,
-    totalAmount: 0,
-    payType: 'card',
-    remark: doc.value.remark,
-  })
+  const saleItemCount = doc.value.lines.length
+  const returnItemCount = returnDoc.value ? returnDoc.value.lines.length : 0
+  const totalItems = saleItemCount + returnItemCount
+  // 合并打印时需要更多高度：标题+信息+表格+退货区+净额
+  const hasReturn = returnItemCount > 0
+  const baseHeight = hasReturn ? 900 : 800
+  const returnLabel = hasReturn ? 56 : 0
+  const netAmount = hasReturn ? 75 : 0
+  return Math.max(2480, baseHeight + totalItems * 64 + returnLabel + netAmount)
 })
 
 const storeName = computed(() => {

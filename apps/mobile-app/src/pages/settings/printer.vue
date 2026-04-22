@@ -72,18 +72,6 @@
         </view>
       </view>
 
-      <!-- 打印设置（临时调试） -->
-      <view class="card">
-        <view class="card-head">
-          <text class="card-title">打印设置</text>
-        </view>
-        <view class="setting-row">
-          <text class="setting-label">禁用旋转（调试用）</text>
-          <switch :checked="noRotate" @change="toggleRotate" color="#1890ff" />
-        </view>
-        <text class="hint">开启后打印不旋转纸张方向，关闭则正常旋转</text>
-      </view>
-
       <!-- 预设设备参数 -->
       <view class="card">
         <view class="card-head">
@@ -131,7 +119,6 @@ import {
   getCurrentAccountLabel,
   PRESET_PRINTERS,
 } from '@/utils/bluetooth-printer'
-import { setRotationDisabled, isRotationDisabled } from '@/utils/canvas-print'
 import type { PrinterDevice, PrinterLog } from '@/utils/bluetooth-printer'
 import { useUserStore } from '@/store/user'
 
@@ -147,12 +134,6 @@ const statusType = ref<'info' | 'warn' | 'error'>('info')
 const accountLabel = ref('')
 const boundPrinter = ref<PrinterDevice | null>(null)
 const presetPrinters = PRESET_PRINTERS
-const noRotate = ref(isRotationDisabled())
-
-function toggleRotate(e: any) {
-  noRotate.value = !!e.detail.value
-  setRotationDisabled(noRotate.value)
-}
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 

@@ -4,7 +4,7 @@
  */
 import type { Product, ReturnDoc, SaleDoc, Store } from '@/types'
 import { formatDate, normalizeCount } from '@/utils'
-import { PRINTER_PRESETS } from '@/config/printer-presets'
+import { PRINTER_PRESETS, type PrinterPreset } from '@/config/printer-presets'
 
 export interface PrinterDevice {
   deviceId: string
@@ -586,12 +586,16 @@ export async function printSaleA4(
   const { cpclBuffer, journalSetup } = await buildSalePrintData(doc, store, salespersonName, products, payType)
   await ensurePrinterConnected(device || null)
 
-  appendLog('info', `[A4打印] 发送 JOURNAL+SETFF 配置...`)
-  await sendCpcl(journalSetup)
-  await sleep(500)
-  appendLog('info', `[A4打印] 发送打印指令...`)
+  if (isJournalMode()) {
+    appendLog('info', `[A4打印] 发送 JOURNAL+SETFF 配置...`)
+    await sendCpcl(journalSetup)
+    await sleep(500)
+  } else {
+    appendLog('info', '[A4打印] 当前打印机不需要 JOURNAL 模式，跳过')
+  }
+  appendLog('info', '[A4打印] 发送打印指令...')
   await sendCpcl(cpclBuffer)
-  appendLog('info', `[A4打印] 完成`)
+  appendLog('info', '[A4打印] 完成')
   resumeDaemonAfterPrint()
 }
 
@@ -605,9 +609,14 @@ export async function printReturnA4(
   const { buildReturnPrintData } = await import('./canvas-print')
   const { cpclBuffer, journalSetup } = await buildReturnPrintData(doc, store, salespersonName, products)
   await ensurePrinterConnected(device || null)
-  appendLog('info', '[A4打印] 发送 JOURNAL+SETFF 配置...')
-  await sendCpcl(journalSetup)
-  await sleep(500)
+
+  if (isJournalMode()) {
+    appendLog('info', '[A4打印] 发送 JOURNAL+SETFF 配置...')
+    await sendCpcl(journalSetup)
+    await sleep(500)
+  } else {
+    appendLog('info', '[A4打印] 当前打印机不需要 JOURNAL 模式，跳过')
+  }
   appendLog('info', '[A4打印] 发送打印指令...')
   await sendCpcl(cpclBuffer)
   resumeDaemonAfterPrint()
@@ -626,13 +635,16 @@ export async function printCombinedA4(
   const { pages } = await buildCombinedPrintData(saleDoc, returnDoc, store, salespersonName, products, payType)
   await ensurePrinterConnected(device || null)
 
-  appendLog('info', `[合并打印] ${pages.length} 页`)
+  const useJournal = isJournalMode()
+  appendLog('info', `[合并打印] ${pages.length} 页${useJournal ? '' : '（无JOURNAL模式）'}`)
 
   for (let p = 0; p < pages.length; p++) {
     const { cpclBuffer, journalSetup } = pages[p]
-    appendLog('info', `[合并打印] 第 ${p + 1}/${pages.length} 页 - 发送配置...`)
-    await sendCpcl(journalSetup)
-    await sleep(500)
+    if (useJournal) {
+      appendLog('info', `[合并打印] 第 ${p + 1}/${pages.length} 页 - 发送配置...`)
+      await sendCpcl(journalSetup)
+      await sleep(500)
+    }
     appendLog('info', `[合并打印] 第 ${p + 1}/${pages.length} 页 - 发送打印指令...`)
     await sendCpcl(cpclBuffer)
     if (p < pages.length - 1) {
@@ -722,6 +734,16 @@ function getPresetPrinter(labelOverride?: string): PrinterDevice | null {
   const preset = PRINTER_PRESETS[label]
   if (!preset.mac) return null   // 有记录但 mac 为空 = 无设备
   return { deviceId: preset.mac, name: preset.name }
+}
+
+/** 当前打印机是否需要 JOURNAL+SETFF 走纸配置（A4LEP 需要，A4mini 不需要） */
+export function isJournalMode(): boolean {
+  const label = getAccountLabel()
+  if (label && label in PRINTER_PRESETS) {
+    return PRINTER_PRESETS[label].journalMode ?? true
+  }
+  // 未知打印机默认使用 JOURNAL 模式
+  return true
 }
 
 /** 打印时获取打印机（优先级：手动绑定 > 预设 > saved_printer） */

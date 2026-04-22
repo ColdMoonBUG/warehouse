@@ -342,6 +342,9 @@ const showReturnSection = ref(false)
 const returnQtyMap = ref<Record<string, QtyInput>>({})
 const returnKeyword = ref('')
 
+// 非响应式提交锁，防止快速连点导致的重复提交
+let _submitLock = false
+
 const canvasId = CANVAS_ID
 const canvasWidthPx = PAGE_WIDTH_DOTS
 const canvasHeightPx = computed(() => {
@@ -928,6 +931,9 @@ async function doSubmit(docType: 'sale' | 'gift' = 'sale'): Promise<{ saleDoc: S
     savedSale.status = 'posted'
     // 保留 lines（后端 save 接口不返回 lines，避免二次 save 时清空明细）
     savedSale.lines = lines
+    // 后端可能返回 UTC 时间戳格式的 date（如 2025-04-19T16:00:00.000Z），
+    // 导致本地日期偏移一天，强制使用本地日期
+    savedSale.date = todayLocalDate()
 
     let savedReturn: ReturnDoc | null = null
     if (showReturnSection.value && returnTotalQty.value > 0) {
@@ -953,6 +959,8 @@ async function doSubmit(docType: 'sale' | 'gift' = 'sale'): Promise<{ saleDoc: S
 
       savedReturn = await saveReturn(returnDraft, returnLines)
       await postReturn(savedReturn.id)
+      // 后端可能返回 UTC 时间戳格式的 date，强制使用本地日期避免偏移
+      savedReturn.date = todayLocalDate()
 
       // 把退单ID写入销单（用专用接口，避免二次 saveSale 带来的明细重建问题）
       savedSale.returnDocId = savedReturn.id
@@ -968,6 +976,7 @@ async function doSubmit(docType: 'sale' | 'gift' = 'sale'): Promise<{ saleDoc: S
 }
 
 async function submitAndPrint() {
+  if (_submitLock) return
   const printer = checkPrinterConnected()
   if (!printer) {
     uni.showModal({
@@ -1009,10 +1018,12 @@ async function submitAndPrint() {
     return
   }
 
+  _submitLock = true
   submitting.value = true
   const result = await doSubmit()
   if (!result) {
     submitting.value = false
+    _submitLock = false
     return
   }
   submittedResult.value = result
@@ -1042,14 +1053,17 @@ async function submitAndPrint() {
 }
 
 async function submitOnly() {
+  if (_submitLock) return
   if (submittedResult.value) {
     uni.showToast({ title: '该销单已提交', icon: 'none' })
     setTimeout(() => { uni.redirectTo({ url: '/pages/sales/index' }) }, 400)
     return
   }
+  _submitLock = true
   submitting.value = true
   const result = await doSubmit()
   submitting.value = false
+  _submitLock = false
   if (!result) return
   submittedResult.value = result
   uni.showToast({ title: '销单已确认', icon: 'success' })
@@ -1059,6 +1073,7 @@ async function submitOnly() {
 }
 
 async function submitGift() {
+  if (_submitLock) return
   // 计算按进价扣除的总额
   const giftDeduction = selectedProducts.value.reduce((sum, p) => {
     const qty = normalizeCount(qtyMap.value[p.id]?.qty)
@@ -1069,9 +1084,11 @@ async function submitGift() {
     content: `赠送品按进价从工资扣除，本单将扣除 ¥${giftDeduction.toFixed(2)}。确认继续？`,
     success: async (res) => {
       if (!res.confirm) return
+      _submitLock = true
       submitting.value = true
       const result = await doSubmit('gift')
       submitting.value = false
+      _submitLock = false
       if (!result) return
       uni.showToast({ title: '赠送单已确认', icon: 'success' })
       setTimeout(() => {
