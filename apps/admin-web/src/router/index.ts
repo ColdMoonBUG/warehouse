@@ -50,7 +50,8 @@ const router = createRouter({
             { path: 'account', component: () => import('@/pages/system/Account.vue'), meta: { title: '账户管理', adminOnly: true } },
             { path: 'finance', component: () => import('@/pages/system/Finance.vue'), meta: { title: '财务结清', adminOnly: true } },
             { path: 'store-finance', component: () => import('@/pages/system/StoreFinance.vue'), meta: { title: '超市流水', adminOnly: true } },
-            { path: 'unsettled', component: () => import('@/pages/system/UnsettledDocs.vue'), meta: { title: '未收款管理', adminOnly: true } }
+            { path: 'unsettled', component: () => import('@/pages/system/UnsettledDocs.vue'), meta: { title: '未收款管理', adminOnly: true } },
+            { path: 'maintenance', component: () => import('@/pages/system/Maintenance.vue'), meta: { title: '系统维护', adminOnly: true } }
           ]
         }
       ]

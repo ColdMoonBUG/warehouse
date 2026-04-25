@@ -286,7 +286,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { onLoad, onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
 import { useReferenceStore } from '@/store/reference'
-import { getStock, saveSale, postSale, linkSaleReturn, saveReturn, postReturn, isOwnedStore, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId, getProductSaleQty, settleSale, getSaleDetail } from '@/api'
+import { getStock, saveSale, postSale, linkSaleReturn, saveReturn, postReturn, isOwnedStore, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId, getProductSaleQty, settleSale, getSaleDetail, getSalespersonDisplayName, getReturnDetail } from '@/api'
 import type { Store, Product, SaleDoc, SaleLine, ReturnDoc, ReturnLine, Warehouse, StockItem } from '@/types'
 import { genId, formatProductQuickPickLabel, formatProductPackageSummary, calcQty, deriveBagQty, normalizeCount, normalizeBoxPackQty, formatStockPreview, getProductStockQty, toStockQtyMap, COMMISSION_RATE, todayLocalDate, debounce } from '@/utils'
 import { printSaleA4, printCombinedA4, checkPrinterConnected, navigateToPrinterSettings } from '@/utils/bluetooth-printer'
@@ -927,15 +927,13 @@ async function doSubmit(docType: 'sale' | 'gift' = 'sale'): Promise<{ saleDoc: S
     if (payType.value === 'cash') {
       await settleSale(savedSale.id)
     }
-    // 记录已过账状态，后续如需再次 save 不会把状态回退为 draft
-    savedSale.status = 'posted'
-    // 保留 lines（后端 save 接口不返回 lines，避免二次 save 时清空明细）
-    savedSale.lines = lines
-    // 后端可能返回 UTC 时间戳格式的 date（如 2025-04-19T16:00:00.000Z），
-    // 导致本地日期偏移一天，强制使用本地日期
-    savedSale.date = todayLocalDate()
+
+    const postedSale = await getSaleDetail(savedSale.id)
+    if (!postedSale) throw new Error('销单保存后读取失败')
+    postedSale.lines = lines
 
     let savedReturn: ReturnDoc | null = null
+    let postedReturn: ReturnDoc | null = null
     if (showReturnSection.value && returnTotalQty.value > 0) {
       const returnLines: ReturnLine[] = returnSelectedProducts.value
         .map(p => ({
@@ -959,16 +957,17 @@ async function doSubmit(docType: 'sale' | 'gift' = 'sale'): Promise<{ saleDoc: S
 
       savedReturn = await saveReturn(returnDraft, returnLines)
       await postReturn(savedReturn.id)
-      // 后端可能返回 UTC 时间戳格式的 date，强制使用本地日期避免偏移
-      savedReturn.date = todayLocalDate()
+      postedReturn = await getReturnDetail(savedReturn.id)
+      if (!postedReturn) throw new Error('退单保存后读取失败')
+      postedReturn.lines = returnLines
 
       // 把退单ID写入销单（用专用接口，避免二次 saveSale 带来的明细重建问题）
-      savedSale.returnDocId = savedReturn.id
+      postedSale.returnDocId = savedReturn.id
       await linkSaleReturn(savedSale.id, savedReturn.id)
     }
 
     clearDraft()
-    return { saleDoc: savedSale, returnDoc: savedReturn }
+    return { saleDoc: postedSale, returnDoc: postedReturn }
   } catch (e: any) {
     uni.showToast({ title: e.message || '生成失败', icon: 'none' })
     return null
@@ -1001,7 +1000,7 @@ async function submitAndPrint() {
     try {
       const store = stores.value.find(s => s.id === result.saleDoc.storeId)
       const spId = currentSalespersonId()
-      const spName = referenceStore.accounts.find(a => isSameSalespersonId(a.salespersonId || a.id, spId))?.displayName || '-'
+      const spName = getSalespersonDisplayName(referenceStore.accounts, spId)
       const copies = Math.min(Math.max(printCopies.value, 1), 3)
       for (let i = 0; i < copies; i++) {
         if (i > 0) await new Promise(r => setTimeout(r, 1500))
@@ -1214,9 +1213,30 @@ function subscribeStockUpdates() {
   })
 }
 
+// 首次挂载由 onMounted 的 loadData 负责；后续每次回到本页都主动刷新一次
+// 基础资料（店铺/商品/仓库），避免管理员新增商品后业务员看不到
+let hasFirstLoaded = false
+
+async function refreshReferenceOnShow() {
+  try {
+    await referenceStore.preloadCore(true)
+    stores.value = [...referenceStore.stores]
+    allStores.value = [...referenceStore.stores]
+    products.value = [...referenceStore.products]
+    warehouses.value = [...referenceStore.warehouses]
+    syncStoresBySalesperson()
+  } catch {
+    // 网络失败时保留旧数据，不打扰业务员当前正在录单的流程
+  }
+}
+
 onShow(() => {
   // 从排序页面返回时重新加载自定义排序
   loadCustomSortOrder()
+  // 从其他页面返回时拉取最新商品/店铺/仓库
+  if (hasFirstLoaded) {
+    refreshReferenceOnShow()
+  }
 })
 
 onLoad((query: any) => {
@@ -1235,6 +1255,7 @@ onMounted(() => {
     return
   }
   loadData().then(() => {
+    hasFirstLoaded = true
     if (prefillMode.value) {
       tryRestorePrefill()
     } else if (autoDraftId.value) {

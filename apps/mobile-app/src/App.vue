@@ -4,13 +4,49 @@
   </view>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { onLaunch, onShow, onHide } from '@dcloudio/uni-app'
-import { getSession } from '@/api'
+import { getSession, getSessionSalespersonId, uploadSalespersonLocation } from '@/api'
 import { useReferenceStore } from '@/store/reference'
 import { startBluetoothDaemon, pauseBluetoothDaemon } from '@/utils/bluetooth-printer'
+import { requestCurrentLocation } from '@/utils/location'
 
 const referenceStore = useReferenceStore()
+const LOCATION_UPLOAD_INTERVAL = 60 * 1000
+let locationTimer: ReturnType<typeof setInterval> | null = null
+let locationUploading = false
+
+function clearLocationUploadTimer() {
+  if (!locationTimer) return
+  clearInterval(locationTimer)
+  locationTimer = null
+}
+
+async function uploadCurrentLocation() {
+  const session = getSession()
+  if (!session || session.role !== 'salesperson') return
+  if (!getSessionSalespersonId(session)) return
+  if (locationUploading) return
+  locationUploading = true
+  try {
+    const loc = await requestCurrentLocation()
+    await uploadSalespersonLocation(loc.latitude, loc.longitude)
+  } catch (error) {
+    console.warn('[定位上传] 失败', error)
+  } finally {
+    locationUploading = false
+  }
+}
+
+function startLocationUploadTimer() {
+  const session = getSession()
+  if (!session || session.role !== 'salesperson') return
+  clearLocationUploadTimer()
+  uploadCurrentLocation()
+  locationTimer = setInterval(() => {
+    uploadCurrentLocation()
+  }, LOCATION_UPLOAD_INTERVAL)
+}
 
 onLaunch(() => {
   referenceStore.hydrate()
@@ -24,10 +60,12 @@ onLaunch(() => {
 
 onShow(() => {
   startBluetoothDaemon()
+  startLocationUploadTimer()
 })
 
 onHide(() => {
   pauseBluetoothDaemon()
+  clearLocationUploadTimer()
 })
 </script>
 

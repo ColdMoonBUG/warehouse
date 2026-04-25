@@ -5,9 +5,30 @@ import { getSavedPrinter, appendLog } from './bluetooth-printer'
 
 const CANVAS_ID = 'printCanvas'
 const DPI = 300
-const PAGE_WIDTH_DOTS = Math.floor(148 * DPI / 25.4)
-const PAGE_HEIGHT_DOTS = Math.floor(210 * DPI / 25.4)
-const CONTENT_WIDTH_DOTS = PAGE_WIDTH_DOTS - 100
+const PAGE_WIDTH_DOTS = Math.floor(210 * DPI / 25.4)
+const PAGE_HEIGHT_DOTS = Math.floor(297 * DPI / 25.4)
+const PAGE_MARGIN_DOTS = mmToDots(8)
+const SIGNATURE_AREA_GAP_DOTS = mmToDots(8)
+const SIGNATURE_AREA_WIDTH_DOTS = mmToDots(38)
+const CONTENT_LEFT_DOTS = PAGE_MARGIN_DOTS
+const CONTENT_RIGHT_DOTS = PAGE_WIDTH_DOTS - PAGE_MARGIN_DOTS - SIGNATURE_AREA_GAP_DOTS - SIGNATURE_AREA_WIDTH_DOTS
+const CONTENT_WIDTH_DOTS = CONTENT_RIGHT_DOTS - CONTENT_LEFT_DOTS
+const SIGNATURE_LEFT_DOTS = CONTENT_RIGHT_DOTS + SIGNATURE_AREA_GAP_DOTS
+const SIGNATURE_RIGHT_DOTS = PAGE_WIDTH_DOTS - PAGE_MARGIN_DOTS
+const CUT_BOTTOM_BLANK_DOTS = mmToDots(10)
+
+interface PrintBuildOptions {
+  fillFullPage?: boolean
+  rotateImage?: boolean
+  autoCut?: boolean
+}
+
+// 业务员电话映射（按显示名匹配）
+const SALESPERSON_PHONES: Record<string, string> = {
+  小车: '18625667559',
+  大车: '18625667519',
+  三车: '18625667511',
+}
 
 function mmToDots(mm: number): number {
   return Math.floor(mm * DPI / 25.4)
@@ -15,6 +36,57 @@ function mmToDots(mm: number): number {
 
 function moneyText(value?: number): string {
   return `¥${Number(value || 0).toFixed(2)}`
+}
+
+function resolveDocCode(value?: string, fallbackId?: string): string {
+  const code = (value || '').trim()
+  if (code) return code
+  const fallback = (fallbackId || '').trim()
+  return fallback ? `ID:${fallback}` : '未知'
+}
+
+function formatSalesperson(name: string): string {
+  const trimmed = (name || '').trim()
+  if (!trimmed) return '-'
+  const phone = SALESPERSON_PHONES[trimmed]
+  return phone ? `${trimmed} ${phone}` : trimmed
+}
+
+function formatPrintDate(date: string, createdAt?: string): string {
+  const source = (createdAt || '').trim() || (date || '').trim()
+  if (!source) return '-'
+  if (/^\d{4}-\d{2}-\d{2}$/.test(source)) return source
+  return formatDate(source, 'YYYY-MM-DD HH:mm')
+}
+
+function resolvePrintDate(doc: { date?: string; createdAt?: string }): string {
+  return formatPrintDate(doc.date || '', doc.createdAt)
+}
+
+function drawSignatureNoteArea(ctx: any, height: number) {
+  const signatureTop = PAGE_MARGIN_DOTS + 160
+  const signatureBottom = Math.max(height - CUT_BOTTOM_BLANK_DOTS - mmToDots(18), signatureTop + mmToDots(70))
+  const titleBottom = signatureTop + 20
+  const noticeY = signatureBottom - mmToDots(6)
+
+  ctx.setFontSize(40)
+  ctx.fillText('签字备注区', SIGNATURE_LEFT_DOTS, signatureTop)
+  ctx.setLineWidth(1)
+  ctx.moveTo(SIGNATURE_LEFT_DOTS, titleBottom)
+  ctx.lineTo(SIGNATURE_RIGHT_DOTS, titleBottom)
+  ctx.stroke()
+  ctx.moveTo(SIGNATURE_LEFT_DOTS, signatureBottom)
+  ctx.lineTo(SIGNATURE_RIGHT_DOTS, signatureBottom)
+  ctx.stroke()
+  ctx.moveTo(SIGNATURE_LEFT_DOTS, titleBottom)
+  ctx.lineTo(SIGNATURE_LEFT_DOTS, signatureBottom)
+  ctx.stroke()
+  ctx.moveTo(SIGNATURE_RIGHT_DOTS, titleBottom)
+  ctx.lineTo(SIGNATURE_RIGHT_DOTS, signatureBottom)
+  ctx.stroke()
+
+  ctx.setFontSize(24)
+  ctx.fillText('本单据为有效对账凭证', SIGNATURE_LEFT_DOTS, noticeY)
 }
 
 interface PrintItem {
@@ -39,7 +111,8 @@ interface PrintDocData {
   remark?: string
 }
 
-function estimateContentHeight(data: PrintDocData): number {
+function estimateContentHeight(data: PrintDocData, fillFullPage: boolean = false): number {
+  if (fillFullPage) return PAGE_HEIGHT_DOTS
   const headerH = 72
   const infoLineH = 54
   const infoH = 2 * infoLineH + 12
@@ -49,56 +122,58 @@ function estimateContentHeight(data: PrintDocData): number {
   const remarkH = data.remark ? 42 : 0
   const footerH = footerLineH + remarkH + 22
 
-  const margin = mmToDots(5)
-  return Math.min(margin + headerH + 15 + infoH + 15 + tableH + 15 + footerH + margin, PAGE_HEIGHT_DOTS)
+  const margin = PAGE_MARGIN_DOTS
+  return Math.min(margin + headerH + 15 + infoH + 15 + tableH + 15 + footerH + margin + CUT_BOTTOM_BLANK_DOTS, PAGE_HEIGHT_DOTS)
 }
 
 async function drawPrintContent(ctx: any, data: PrintDocData, width: number, height: number): Promise<void> {
   ctx.setFillStyle('white')
   ctx.fillRect(0, 0, width, height)
 
-  const lm = 5
-  const rm = 5
-  let y = 35
+  const left = CONTENT_LEFT_DOTS
+  const right = CONTENT_RIGHT_DOTS
+  const contentWidth = CONTENT_WIDTH_DOTS
+  const mid = left + Math.floor(contentWidth / 2)
+  let y = PAGE_MARGIN_DOTS
   const ll = 1
+
+  const colSeq = left
+  const colBarcode = left + Math.floor(contentWidth * 0.06)
+  const colName = left + Math.floor(contentWidth * 0.26)
+  const colQty = left + Math.floor(contentWidth * 0.66)
+  const colPrice = left + Math.floor(contentWidth * 0.79)
+  const colAmount = left + Math.floor(contentWidth * 0.89)
 
   ctx.setFillStyle('black')
 
   ctx.setFontSize(56)
   const titleText = data.type === 'sale' ? '艳萍麻花销单' : '艳萍麻花退单'
   const payTag = data.payType === 'cash' ? '[现金]' : '[单子]'
-  ctx.fillText(`${titleText} ${payTag}`, lm, y + 56)
+  ctx.fillText(`${titleText} ${payTag}`, left, y + 56)
   y += 72
 
   ctx.setStrokeStyle('black')
   ctx.setLineWidth(ll)
-  ctx.moveTo(0, y)
-  ctx.lineTo(width, y)
+  ctx.moveTo(left, y)
+  ctx.lineTo(right, y)
   ctx.stroke()
   y += 14
 
   ctx.setFontSize(40)
-  ctx.fillText(`单号:${data.code}`, lm, y + 40)
-  ctx.fillText(`日期:${data.date}`, width / 2, y + 40)
+  ctx.fillText(`单号:${data.code}`, left, y + 40)
+  ctx.fillText(`日期:${formatPrintDate(data.date)}`, mid, y + 40)
   y += 54
-  ctx.fillText(`店铺:${data.storeName}`, lm, y + 40)
-  ctx.fillText(`业务员:${data.salespersonName}`, width / 2, y + 40)
+  ctx.fillText(`店铺:${data.storeName}`, left, y + 40)
+  ctx.fillText(`业务员:${formatSalesperson(data.salespersonName)}`, mid, y + 40)
   y += 54
 
   ctx.setLineWidth(ll)
-  ctx.moveTo(0, y)
-  ctx.lineTo(width, y)
+  ctx.moveTo(left, y)
+  ctx.lineTo(right, y)
   ctx.stroke()
   y += 14
 
   ctx.setFontSize(46)
-  const colSeq = lm
-  const colBarcode = 60
-  const colName = 520
-  const colQty = 1080
-  const colPrice = 1300
-  const colAmount = 1540
-
   ctx.fillText('序', colSeq, y + 44)
   ctx.fillText('条形码', colBarcode, y + 44)
   ctx.fillText('商品', colName, y + 44)
@@ -108,8 +183,8 @@ async function drawPrintContent(ctx: any, data: PrintDocData, width: number, hei
   y += 58
 
   ctx.setLineWidth(ll)
-  ctx.moveTo(0, y)
-  ctx.lineTo(width, y)
+  ctx.moveTo(left, y)
+  ctx.lineTo(right, y)
   ctx.stroke()
   y += 12
 
@@ -133,26 +208,28 @@ async function drawPrintContent(ctx: any, data: PrintDocData, width: number, hei
 
   y += 8
   ctx.setLineWidth(ll)
-  ctx.moveTo(0, y)
-  ctx.lineTo(width, y)
+  ctx.moveTo(left, y)
+  ctx.lineTo(right, y)
   ctx.stroke()
   y += 15
 
   ctx.setFontSize(46)
-  ctx.fillText(`品种:${data.items.length}种 合计:${normalizeCount(data.totalQty)}`, lm, y + 46)
-  ctx.fillText(`合计金额:${moneyText(data.totalAmount)}`, width - rm - 580, y + 46)
+  ctx.fillText(`品种:${data.items.length}种 合计:${normalizeCount(data.totalQty)}`, left, y + 46)
+  ctx.fillText(`合计金额:${moneyText(data.totalAmount)}`, right - mmToDots(42), y + 46)
   y += 56
 
   if (data.remark) {
     ctx.setFontSize(32)
-    ctx.fillText(`备注:${data.remark}`, lm, y + 32)
+    ctx.fillText(`备注:${data.remark}`, left, y + 32)
     y += 42
   }
 
   ctx.setLineWidth(ll)
-  ctx.moveTo(0, y)
-  ctx.lineTo(width, y)
+  ctx.moveTo(left, y)
+  ctx.lineTo(right, y)
   ctx.stroke()
+
+  drawSignatureNoteArea(ctx, height)
 
   await new Promise<void>((resolve) => {
     let resolved = false
@@ -180,24 +257,24 @@ async function getCanvasImageData(width: number, height: number): Promise<any> {
   })
 }
 
-async function generatePrintImageData(data: PrintDocData): Promise<any> {
+async function generatePrintImageData(data: PrintDocData, fillFullPage: boolean = false): Promise<any> {
   try {
-    const height = estimateContentHeight(data)
+    const height = estimateContentHeight(data, fillFullPage)
     const width = PAGE_WIDTH_DOTS
-    appendLog('info', `[A5打印] 开始Canvas绘制：${width}x${height}，${data.items.length} 项商品`)
+    appendLog('info', `[A4打印] 开始Canvas绘制：${width}x${height}，${data.items.length} 项商品${fillFullPage ? '（铺满整页）' : `（底部留白${CUT_BOTTOM_BLANK_DOTS}点，右侧预留签字区）`}`)
 
     const ctx = uni.createCanvasContext(CANVAS_ID)
-    appendLog('info', '[A5打印] Canvas上下文创建成功')
+    appendLog('info', '[A4打印] Canvas上下文创建成功')
 
     await drawPrintContent(ctx, data, width, height)
-    appendLog('info', '[A5打印] Canvas绘制完成，开始获取图片数据')
+    appendLog('info', '[A4打印] Canvas绘制完成，开始获取图片数据')
 
     const imageData = await getCanvasImageData(width, height)
-    appendLog('info', `[A5打印] 图片数据获取成功：${imageData.width}x${imageData.height}，数据长度 ${imageData.data?.length || 0}`)
+    appendLog('info', `[A4打印] 图片数据获取成功：${imageData.width}x${imageData.height}，数据长度 ${imageData.data?.length || 0}`)
 
     return imageData
   } catch (error: any) {
-    appendLog('error', `[A5打印] Canvas绘制失败：${error?.message || error}`)
+    appendLog('error', `[A4打印] Canvas绘制失败：${error?.message || error}`)
     throw error
   }
 }
@@ -239,19 +316,28 @@ function buildJournalSetup(): ArrayBuffer {
   return strToBytes(setup).buffer
 }
 
-function buildCpclCommand(imageData: any, taskId: string): { cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer } {
+function buildCpclCommand(imageData: any, taskId: string, options: PrintBuildOptions = {}): { cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer } {
   try {
     appendLog('info', `[A5打印] 开始构建CPCL指令：taskId=${taskId}，原始图片 ${imageData.width}x${imageData.height}`)
 
-    const printData = rotateImageData90CCW(imageData)
-    appendLog('info', `[A5打印] 图片旋转90°完成：${printData.width}x${printData.height}`)
+    const shouldRotate = options.rotateImage ?? true
+    const printData = shouldRotate ? rotateImageData90CCW(imageData) : imageData
+    appendLog('info', shouldRotate
+      ? `[A5打印] 图片旋转90°完成：${printData.width}x${printData.height}`
+      : `[A5打印] 按原始方向打印：${printData.width}x${printData.height}`)
 
-    const cpclBuffer = CPCL.Builder.createArea(0, printData.height, 1)
+    const builder = CPCL.Builder.createArea(0, printData.height, 1)
       .taskId(taskId || '1')
       .pageWidth(printData.width)
       .imageGG(printData, 0, 0)
       .formPrint()
-      .build()
+
+    if (options.autoCut) {
+      builder.append('CUT 0\n')
+      appendLog('info', '[A5打印] 已追加自动切纸指令 CUT 0')
+    }
+
+    const cpclBuffer = builder.build()
 
     const journalSetup = buildJournalSetup()
     appendLog('info', `[A5打印] CPCL指令构建成功：${cpclBuffer.byteLength} 字节，JOURNAL配置 ${journalSetup.byteLength} 字节`)
@@ -267,7 +353,8 @@ export async function buildSalePrintData(
   store: Store | undefined,
   salespersonName: string,
   products: Product[],
-  payType: 'cash' | 'card' = 'card'
+  payType: 'cash' | 'card' = 'card',
+  options: PrintBuildOptions = {}
 ): Promise<{ imageData: any; cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer; data: PrintDocData }> {
   const items: PrintItem[] = doc.lines.map((line) => {
     const product = products.find((p) => p.id === line.productId)
@@ -286,8 +373,8 @@ export async function buildSalePrintData(
 
   const data: PrintDocData = {
     type: 'sale',
-    code: doc.code || doc.id?.slice(-8) || '未知',
-    date: doc.date,
+    code: resolveDocCode(doc.code, doc.id),
+    date: resolvePrintDate(doc),
     storeName: store?.name || '-',
     salespersonName,
     items,
@@ -298,8 +385,8 @@ export async function buildSalePrintData(
   }
 
   appendLog('info', `[A5打印] 开始生成销单图片：${doc.code}，${items.length} 项商品`)
-  const imageData = await generatePrintImageData(data)
-  const { cpclBuffer, journalSetup } = buildCpclCommand(imageData, doc.id || doc.code)
+  const imageData = await generatePrintImageData(data, options.fillFullPage)
+  const { cpclBuffer, journalSetup } = buildCpclCommand(imageData, doc.id || doc.code, options)
   appendLog('info', `[A5打印] 销单 CPCL 指令生成完成：${cpclBuffer.byteLength} 字节，图片 ${imageData.width}x${imageData.height}`)
 
   return { imageData, cpclBuffer, journalSetup, data }
@@ -309,7 +396,8 @@ export async function buildReturnPrintData(
   doc: ReturnDoc,
   store: Store | undefined,
   salespersonName: string,
-  products: Product[]
+  products: Product[],
+  options: PrintBuildOptions = {}
 ): Promise<{ imageData: any; cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer; data: PrintDocData }> {
   const items: PrintItem[] = doc.lines.map((line) => {
     const product = products.find((p) => p.id === line.productId)
@@ -330,8 +418,8 @@ export async function buildReturnPrintData(
 
   const data: PrintDocData = {
     type: 'return',
-    code: doc.code || doc.id?.slice(-8) || '未知',
-    date: doc.date,
+    code: resolveDocCode(doc.code, doc.id),
+    date: resolvePrintDate(doc),
     storeName: store?.name || '-',
     salespersonName,
     items,
@@ -342,8 +430,8 @@ export async function buildReturnPrintData(
   }
 
   appendLog('info', `[A5打印] 开始生成退货单图片：${doc.code}，${items.length} 项商品`)
-  const imageData = await generatePrintImageData(data)
-  const { cpclBuffer, journalSetup } = buildCpclCommand(imageData, doc.id || doc.code)
+  const imageData = await generatePrintImageData(data, options.fillFullPage)
+  const { cpclBuffer, journalSetup } = buildCpclCommand(imageData, doc.id || doc.code, options)
   appendLog('info', `[A5打印] 退货单 CPCL 指令生成完成：${cpclBuffer.byteLength} 字节，图片 ${imageData.width}x${imageData.height}`)
 
   return { imageData, cpclBuffer, journalSetup, data }
@@ -366,7 +454,8 @@ interface CombinedPrintData {
 
 const MAX_ITEMS_PER_PAGE = 30
 
-function estimateCombinedHeight(data: CombinedPrintData, saleItems: PrintItem[], returnItems: PrintItem[]): number {
+function estimateCombinedHeight(data: CombinedPrintData, saleItems: PrintItem[], returnItems: PrintItem[], fillFullPage: boolean = false): number {
+  if (fillFullPage) return PAGE_HEIGHT_DOTS
   const headerH = 72
   const infoH = 2 * 54 + 12
   const tableLineH = 64
@@ -375,60 +464,61 @@ function estimateCombinedHeight(data: CombinedPrintData, saleItems: PrintItem[],
   const sectionLabelH = returnItems.length > 0 ? 80 : 0
   const footerH = 56 + 56 + 22
 
-  const margin = mmToDots(5)
-  return Math.min(margin + headerH + 15 + infoH + 15 + saleTableH + sectionLabelH + returnTableH + 15 + footerH + margin, PAGE_HEIGHT_DOTS)
+  const margin = PAGE_MARGIN_DOTS
+  return Math.min(margin + headerH + 15 + infoH + 15 + saleTableH + sectionLabelH + returnTableH + 15 + footerH + margin + CUT_BOTTOM_BLANK_DOTS, PAGE_HEIGHT_DOTS)
 }
 
 async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems: PrintItem[], returnItems: PrintItem[], width: number, height: number, pageNo: number, totalPages: number): Promise<void> {
   ctx.setFillStyle('white')
   ctx.fillRect(0, 0, width, height)
 
-  const lm = 5
-  const rm = 5
-  let y = 35
+  const left = CONTENT_LEFT_DOTS
+  const right = CONTENT_RIGHT_DOTS
+  const contentWidth = CONTENT_WIDTH_DOTS
+  const mid = left + Math.floor(contentWidth / 2)
+  let y = PAGE_MARGIN_DOTS
   const ll = 1
+
+  const colSeq = left
+  const colBarcode = left + Math.floor(contentWidth * 0.06)
+  const colName = left + Math.floor(contentWidth * 0.26)
+  const colQty = left + Math.floor(contentWidth * 0.66)
+  const colPrice = left + Math.floor(contentWidth * 0.79)
+  const colAmount = left + Math.floor(contentWidth * 0.89)
 
   ctx.setFillStyle('black')
 
   ctx.setFontSize(56)
   const payTag = data.payType === 'cash' ? '[现金]' : '[单子]'
   const pageTag = totalPages > 1 ? ` (${pageNo}/${totalPages})` : ''
-  ctx.fillText(`艳萍麻花销单 ${payTag}${pageTag}`, lm, y + 56)
+  ctx.fillText(`艳萍麻花销单 ${payTag}${pageTag}`, left, y + 56)
   y += 72
 
   ctx.setStrokeStyle('black')
   ctx.setLineWidth(ll)
-  ctx.moveTo(0, y)
-  ctx.lineTo(width, y)
+  ctx.moveTo(left, y)
+  ctx.lineTo(right, y)
   ctx.stroke()
   y += 14
 
   ctx.setFontSize(40)
-  ctx.fillText(`单号:${data.code}`, lm, y + 40)
-  ctx.fillText(`日期:${data.date}`, width / 2, y + 40)
+  ctx.fillText(`单号:${data.code}`, left, y + 40)
+  ctx.fillText(`日期:${formatPrintDate(data.date)}`, mid, y + 40)
   y += 54
-  ctx.fillText(`店铺:${data.storeName}`, lm, y + 40)
-  ctx.fillText(`业务员:${data.salespersonName}`, width / 2, y + 40)
+  ctx.fillText(`店铺:${data.storeName}`, left, y + 40)
+  ctx.fillText(`业务员:${formatSalesperson(data.salespersonName)}`, mid, y + 40)
   y += 54
 
   ctx.setLineWidth(ll)
-  ctx.moveTo(0, y)
-  ctx.lineTo(width, y)
+  ctx.moveTo(left, y)
+  ctx.lineTo(right, y)
   ctx.stroke()
   y += 14
 
-  const colSeq = lm
-  const colBarcode = 60
-  const colName = 520
-  const colQty = 1080
-  const colPrice = 1300
-  const colAmount = 1540
-
-  // 销单部分
   if (saleItems.length > 0) {
     if (returnItems.length > 0) {
       ctx.setFontSize(42)
-      ctx.fillText('【销售】', lm, y + 42)
+      ctx.fillText('【销售】', left, y + 42)
       y += 56
     }
 
@@ -442,8 +532,8 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
     y += 58
 
     ctx.setLineWidth(ll)
-    ctx.moveTo(0, y)
-    ctx.lineTo(width, y)
+    ctx.moveTo(left, y)
+    ctx.lineTo(right, y)
     ctx.stroke()
     y += 12
 
@@ -461,24 +551,23 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
 
     y += 8
     ctx.setLineWidth(ll)
-    ctx.moveTo(0, y)
-    ctx.lineTo(width, y)
+    ctx.moveTo(left, y)
+    ctx.lineTo(right, y)
     ctx.stroke()
     y += 15
 
     ctx.setFontSize(46)
     const saleSummaryQty = saleItems.reduce((s, i) => s + normalizeCount(i.qty), 0)
     const saleSummaryAmt = saleItems.reduce((s, i) => s + i.amount, 0)
-    ctx.fillText(`品种:${saleItems.length}种 合计:${saleSummaryQty}`, lm, y + 46)
-    ctx.fillText(`金额:${moneyText(saleSummaryAmt)}`, width - rm - 480, y + 46)
+    ctx.fillText(`品种:${saleItems.length}种 合计:${saleSummaryQty}`, left, y + 46)
+    ctx.fillText(`金额:${moneyText(saleSummaryAmt)}`, right - mmToDots(36), y + 46)
     y += 56
   }
 
-  // 退单部分
   if (returnItems.length > 0) {
     y += 10
     ctx.setFontSize(42)
-    ctx.fillText('【退货】', lm, y + 42)
+    ctx.fillText('【退货】', left, y + 42)
     y += 56
 
     ctx.setFontSize(46)
@@ -491,8 +580,8 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
     y += 58
 
     ctx.setLineWidth(ll)
-    ctx.moveTo(0, y)
-    ctx.lineTo(width, y)
+    ctx.moveTo(left, y)
+    ctx.lineTo(right, y)
     ctx.stroke()
     y += 12
 
@@ -510,44 +599,45 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
 
     y += 8
     ctx.setLineWidth(ll)
-    ctx.moveTo(0, y)
-    ctx.lineTo(width, y)
+    ctx.moveTo(left, y)
+    ctx.lineTo(right, y)
     ctx.stroke()
     y += 15
 
     ctx.setFontSize(46)
     const retSummaryQty = returnItems.reduce((s, i) => s + normalizeCount(i.qty), 0)
     const retSummaryAmt = returnItems.reduce((s, i) => s + i.amount, 0)
-    ctx.fillText(`品种:${returnItems.length}种 合计:${retSummaryQty}`, lm, y + 46)
-    ctx.fillText(`金额:-${moneyText(retSummaryAmt)}`, width - rm - 480, y + 46)
+    ctx.fillText(`品种:${returnItems.length}种 合计:${retSummaryQty}`, left, y + 46)
+    ctx.fillText(`金额:-${moneyText(retSummaryAmt)}`, right - mmToDots(36), y + 46)
     y += 56
   }
 
-  // 总计净额
   if (returnItems.length > 0 && saleItems.length > 0) {
     y += 10
     ctx.setLineWidth(2)
-    ctx.moveTo(0, y)
-    ctx.lineTo(width, y)
+    ctx.moveTo(left, y)
+    ctx.lineTo(right, y)
     ctx.stroke()
     y += 15
 
     ctx.setFontSize(50)
     const netAmount = data.saleTotalAmount - data.returnTotalAmount
-    ctx.fillText(`净额: ${moneyText(netAmount)}`, lm, y + 50)
+    ctx.fillText(`净额: ${moneyText(netAmount)}`, left, y + 50)
     y += 60
   }
 
   if (data.remark) {
     ctx.setFontSize(32)
-    ctx.fillText(`备注:${data.remark}`, lm, y + 32)
+    ctx.fillText(`备注:${data.remark}`, left, y + 32)
     y += 42
   }
 
   ctx.setLineWidth(ll)
-  ctx.moveTo(0, y)
-  ctx.lineTo(width, y)
+  ctx.moveTo(left, y)
+  ctx.lineTo(right, y)
   ctx.stroke()
+
+  drawSignatureNoteArea(ctx, height)
 
   await new Promise<void>((resolve) => {
     let resolved = false
@@ -567,7 +657,8 @@ export async function buildCombinedPrintData(
   store: Store | undefined,
   salespersonName: string,
   products: Product[],
-  payType: 'cash' | 'card' = 'card'
+  payType: 'cash' | 'card' = 'card',
+  options: PrintBuildOptions = {}
 ): Promise<{ pages: Array<{ cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer }> }> {
   const saleItems: PrintItem[] = saleDoc.lines.map((line) => {
     const product = products.find((p) => p.id === line.productId)
@@ -600,7 +691,7 @@ export async function buildCombinedPrintData(
   const returnTotalAmount = returnItems.reduce((s, i) => s + i.amount, 0)
 
   const combinedData: CombinedPrintData = {
-    code: saleDoc.code || saleDoc.id?.slice(-8) || '未知',
+    code: resolveDocCode(saleDoc.code, saleDoc.id),
     date: saleDoc.date,
     storeName: store?.name || '-',
     salespersonName,
@@ -619,11 +710,11 @@ export async function buildCombinedPrintData(
 
   if (totalVarieties <= MAX_ITEMS_PER_PAGE) {
     // 单页
-    const height = estimateCombinedHeight(combinedData, saleItems, returnItems)
+    const height = estimateCombinedHeight(combinedData, saleItems, returnItems, options.fillFullPage)
     const ctx = uni.createCanvasContext(CANVAS_ID)
     await drawCombinedContent(ctx, combinedData, saleItems, returnItems, PAGE_WIDTH_DOTS, height, 1, 1)
     const imageData = await getCanvasImageData(PAGE_WIDTH_DOTS, height)
-    pages.push(buildCpclCommand(imageData, saleDoc.id || saleDoc.code))
+    pages.push(buildCpclCommand(imageData, saleDoc.id || saleDoc.code, options))
   } else {
     // 多页：先放销单，再放退单，按 MAX_ITEMS_PER_PAGE 拆
     const allPageItems: Array<{ sale: PrintItem[]; ret: PrintItem[] }> = []
@@ -649,11 +740,11 @@ export async function buildCombinedPrintData(
     const totalPages = allPageItems.length
     for (let i = 0; i < totalPages; i++) {
       const { sale: pageSaleItems, ret: pageReturnItems } = allPageItems[i]
-      const height = estimateCombinedHeight(combinedData, pageSaleItems, pageReturnItems)
+      const height = estimateCombinedHeight(combinedData, pageSaleItems, pageReturnItems, options.fillFullPage)
       const ctx = uni.createCanvasContext(CANVAS_ID)
       await drawCombinedContent(ctx, combinedData, pageSaleItems, pageReturnItems, PAGE_WIDTH_DOTS, height, i + 1, totalPages)
       const imageData = await getCanvasImageData(PAGE_WIDTH_DOTS, height)
-      pages.push(buildCpclCommand(imageData, `${saleDoc.id || saleDoc.code}_p${i + 1}`))
+      pages.push(buildCpclCommand(imageData, `${saleDoc.id || saleDoc.code}_p${i + 1}`, options))
     }
   }
 

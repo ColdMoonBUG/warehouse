@@ -94,7 +94,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
-import { getReturnDetail, getStores, getSalespersonAccounts, getProducts, voidReturn, isSameSalespersonId } from '@/api'
+import { getReturnDetail, getStores, getSalespersonAccounts, getProducts, voidReturn, isSameSalespersonId, getSalespersonDisplayName } from '@/api'
 import type { ReturnDoc, Store, Salesperson, Product } from '@/types'
 import { getPageQueryParam, formatPackSummary, normalizeCount } from '@/utils'
 import { buildReturnReceipt, printText, printReturnA4, checkPrinterConnected, navigateToPrinterSettings, getBluetoothPrinterLogs } from '@/utils/bluetooth-printer'
@@ -120,7 +120,8 @@ const canvasId = CANVAS_ID
 
 const canvasHeightPx = computed(() => {
   if (!doc.value) return 2480
-  return estimateContentHeight({
+  // canvas 元素需至少容纳完整 A5 页面（A4mini 模式会铺满整页）
+  return Math.max(2480, estimateContentHeight({
     type: 'return',
     code: doc.value.code,
     date: doc.value.date,
@@ -131,11 +132,11 @@ const canvasHeightPx = computed(() => {
     totalAmount: 0,
     payType: 'card',
     remark: doc.value.remark,
-  })
+  }))
 })
 
 const storeName = computed(() => stores.value.find(i => i.id === doc.value?.storeId)?.name || '-')
-const salespersonName = computed(() => salespersons.value.find(i => isSameSalespersonId(i.salespersonId || i.id, doc.value?.salespersonId))?.displayName || '-')
+const salespersonName = computed(() => getSalespersonDisplayName(salespersons.value, doc.value?.salespersonId))
 const typeText = computed(() => doc.value?.returnType === 'warehouse_return' ? '回仓' : '车库退货')
 const totalQty = computed(() => doc.value ? doc.value.lines.reduce((s, l) => s + l.qty, 0) : 0)
 const totalAmount = computed(() => doc.value ? doc.value.lines.reduce((s, l) => s + l.qty * l.price, 0) : 0)

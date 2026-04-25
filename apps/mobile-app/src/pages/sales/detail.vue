@@ -176,7 +176,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
-import { getSaleDetail, getStores, getSalespersonAccounts, getProducts, voidSale, isSameSalespersonId, getReturnDetail, voidReturn } from '@/api'
+import { getSaleDetail, getStores, getSalespersonAccounts, getProducts, voidSale, isSameSalespersonId, getReturnDetail, voidReturn, getSalespersonDisplayName } from '@/api'
 import type { SaleDoc, Store, Salesperson, Product, ReturnDoc } from '@/types'
 import { getPageQueryParam, formatPackSummary, normalizeCount } from '@/utils'
 import { buildSaleReceipt, printText, printSaleA4, printCombinedA4, checkPrinterConnected, navigateToPrinterSettings, getBluetoothPrinterLogs } from '@/utils/bluetooth-printer'
@@ -286,8 +286,7 @@ const storeName = computed(() => {
 })
 
 const salespersonName = computed(() => {
-  const e = salespersons.value.find(i => isSameSalespersonId(i.salespersonId || i.id, doc.value?.salespersonId))
-  return e?.displayName || '-'
+  return getSalespersonDisplayName(salespersons.value, doc.value?.salespersonId)
 })
 
 const totalQty = computed(() => {

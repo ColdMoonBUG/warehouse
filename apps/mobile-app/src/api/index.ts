@@ -1,6 +1,6 @@
-import type { Account, Session, Store, SaleDoc, Salesperson, Product, ReturnDoc, Warehouse, Supplier, StockItem, InboundDoc, InboundLine, TransferDoc, TransferLine, OutboundDoc, OutboundLine, TodayCommissionSummary } from '@/types'
+import type { Account, Session, Store, SaleDoc, Salesperson, SalespersonLocation, Product, ReturnDoc, Warehouse, Supplier, StockItem, InboundDoc, InboundLine, TransferDoc, TransferLine, OutboundDoc, OutboundLine, TodayCommissionSummary } from '@/types'
 import { SESSION_KEY, SESSION_DAYS, BASE_URL, USE_MOCK } from '@/utils/config'
-import { simpleHash } from '@/utils'
+import { simpleHash, formatDate, todayLocalDate } from '@/utils'
 import { accountDb, storeDb, saleDb, warehouseDb, productDb, supplierDb, genId, now } from '@/mock/storage'
 const RETURN_STORAGE_KEY = 'wh_return'
 const JSESSIONID_KEY = 'wh_jsessionid'
@@ -124,6 +124,18 @@ const MOBILE_ACCOUNT_LABELS: Record<string, string> = {
   三车: '三车',
 }
 
+const MOBILE_SALESPERSON_PHONES: Record<string, string> = {
+  大车: '18625667519',
+  小车: '18625667559',
+  三车: '18625667511',
+}
+
+const SALE_CODE_VEHICLE_NO: Record<string, string> = {
+  大车: '1',
+  小车: '2',
+  三车: '3',
+}
+
 const MOBILE_ACCOUNT_ORDER = ['管理员', '大车', '小车', '三车']
 
 function normalizeMobileAccountToken(value?: string): string {
@@ -156,6 +168,30 @@ function normalizeAccountLink(account: Account): Account {
 
 function getSalespersonKey(value?: string): string {
   return getKnownMobileAccountLabel(value) || normalizeMobileAccountToken(value)
+}
+
+function needsGeneratedSaleCode(code?: string): boolean {
+  const trimmed = (code || '').trim()
+  return !trimmed || /^XS\d+$/.test(trimmed)
+}
+
+function resolveSaleCodeDate(value?: string): string {
+  const trimmed = (value || '').trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed
+  if (trimmed) return formatDate(trimmed, 'YYYY-MM-DD')
+  return todayLocalDate()
+}
+
+function resolveSaleVehicleNo(salespersonId?: string): string {
+  const label = getKnownMobileAccountLabel(salespersonId)
+  return SALE_CODE_VEHICLE_NO[label] || '0'
+}
+
+function buildSaleCodeFromList(list: SaleDoc[], doc: Partial<SaleDoc>): string {
+  const codeDate = resolveSaleCodeDate(doc.date)
+  const vehicleNo = resolveSaleVehicleNo(doc.salespersonId)
+  const serial = list.filter(item => item.id !== doc.id && resolveSaleCodeDate(item.date) === codeDate && resolveSaleVehicleNo(item.salespersonId) === vehicleNo).length + 1
+  return `XS${codeDate}-${vehicleNo}-${serial}`
 }
 
 export function isSameSalespersonId(left?: string, right?: string): boolean {
@@ -214,6 +250,20 @@ export function normalizeSalespersonAccounts(accounts: Account[]): Salesperson[]
 export function getSalespersonName(accounts: Array<{ salespersonId?: string; id?: string; displayName: string }>, value?: string): string {
   if (!value) return '-'
   return accounts.find(account => isSameSalespersonId(account.salespersonId || account.id, value))?.displayName || '-'
+}
+
+export function formatSalespersonDisplayName(value?: string): string {
+  const label = getKnownMobileAccountLabel(value) || (value || '').trim()
+  if (!label) return '-'
+  const phone = MOBILE_SALESPERSON_PHONES[label]
+  return phone ? `${label}（手机号${phone}）` : label
+}
+
+export function getSalespersonDisplayName(
+  accounts: Array<{ salespersonId?: string; id?: string; displayName: string }>,
+  value?: string
+): string {
+  return formatSalespersonDisplayName(getSalespersonName(accounts, value))
 }
 
 
@@ -768,6 +818,38 @@ export function clearReferenceDataCache() {
   referenceCache.clear()
 }
 
+export async function uploadSalespersonLocation(latitude: number, longitude: number): Promise<void> {
+  const session = getSession()
+  const salespersonId = getSessionSalespersonId(session)
+  if (!salespersonId) return
+
+  if (USE_MOCK) {
+    const key = 'wh_salesperson_location'
+    let list: SalespersonLocation[] = []
+    try {
+      list = JSON.parse(localStorage.getItem(key) || '[]')
+    } catch {
+      list = []
+    }
+    const label = session?.displayName || salespersonId
+    const current: SalespersonLocation = {
+      id: salespersonId,
+      salespersonId,
+      salespersonName: label,
+      lat: latitude,
+      lng: longitude,
+      updatedAt: now(),
+    }
+    const index = list.findIndex(item => isSameSalespersonId(item.salespersonId, salespersonId))
+    if (index >= 0) list[index] = current
+    else list.push(current)
+    localStorage.setItem(key, JSON.stringify(list))
+    return
+  }
+
+  await request<void>('/api/salesperson/location', 'POST', { latitude, longitude })
+}
+
 export async function uploadFile(filePath: string) {
   return new Promise<UploadResult>((resolve, reject) => {
     const headers: Record<string, string> = {}
@@ -846,13 +928,13 @@ export async function saveSale(doc: SaleDoc): Promise<SaleDoc> {
     if (!nextDoc.id) {
       nextDoc.id = genId()
     }
-    if (!nextDoc.code) {
-      nextDoc.code = `XS${Date.now()}`
-    }
     if (!nextDoc.createdAt) {
       nextDoc.createdAt = now()
     }
     const list = saleDb.list()
+    if (needsGeneratedSaleCode(nextDoc.code)) {
+      nextDoc.code = buildSaleCodeFromList(list, nextDoc)
+    }
     const idx = list.findIndex(d => d.id === nextDoc.id)
     if (idx >= 0) {
       list[idx] = nextDoc

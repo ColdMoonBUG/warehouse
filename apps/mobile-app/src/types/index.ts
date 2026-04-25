@@ -26,6 +26,15 @@ export interface Salesperson {
   createdAt: string
 }
 
+export interface SalespersonLocation {
+  id: string
+  salespersonId: string
+  salespersonName: string
+  lat: number
+  lng: number
+  updatedAt: string
+}
+
 export interface Supplier {
   id: string
   code: string

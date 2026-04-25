@@ -583,15 +583,17 @@ export async function printSaleA4(
   device?: PrinterDevice | null
 ) {
   const { buildSalePrintData } = await import('./canvas-print')
-  const { cpclBuffer, journalSetup } = await buildSalePrintData(doc, store, salespersonName, products, payType)
+  const useJournal = isJournalMode()
+  const printOptions = getPrinterPrintOptions()
+  const { cpclBuffer, journalSetup } = await buildSalePrintData(doc, store, salespersonName, products, payType, printOptions)
   await ensurePrinterConnected(device || null)
 
-  if (isJournalMode()) {
+  if (useJournal) {
     appendLog('info', `[A4打印] 发送 JOURNAL+SETFF 配置...`)
     await sendCpcl(journalSetup)
     await sleep(500)
   } else {
-    appendLog('info', '[A4打印] 当前打印机不需要 JOURNAL 模式，跳过')
+    appendLog('info', `[A4打印] 当前打印机不需要 JOURNAL 模式，跳过（${printOptions.fillFullPage ? '内容铺满整页' : '按内容高度打印'}）`)
   }
   appendLog('info', '[A4打印] 发送打印指令...')
   await sendCpcl(cpclBuffer)
@@ -607,15 +609,17 @@ export async function printReturnA4(
   device?: PrinterDevice | null
 ) {
   const { buildReturnPrintData } = await import('./canvas-print')
-  const { cpclBuffer, journalSetup } = await buildReturnPrintData(doc, store, salespersonName, products)
+  const useJournal = isJournalMode()
+  const printOptions = getPrinterPrintOptions()
+  const { cpclBuffer, journalSetup } = await buildReturnPrintData(doc, store, salespersonName, products, printOptions)
   await ensurePrinterConnected(device || null)
 
-  if (isJournalMode()) {
+  if (useJournal) {
     appendLog('info', '[A4打印] 发送 JOURNAL+SETFF 配置...')
     await sendCpcl(journalSetup)
     await sleep(500)
   } else {
-    appendLog('info', '[A4打印] 当前打印机不需要 JOURNAL 模式，跳过')
+    appendLog('info', `[A4打印] 当前打印机不需要 JOURNAL 模式，跳过（${printOptions.fillFullPage ? '内容铺满整页' : '按内容高度打印'}）`)
   }
   appendLog('info', '[A4打印] 发送打印指令...')
   await sendCpcl(cpclBuffer)
@@ -632,11 +636,12 @@ export async function printCombinedA4(
   device?: PrinterDevice | null
 ) {
   const { buildCombinedPrintData } = await import('./canvas-print')
-  const { pages } = await buildCombinedPrintData(saleDoc, returnDoc, store, salespersonName, products, payType)
+  const useJournal = isJournalMode()
+  const printOptions = getPrinterPrintOptions()
+  const { pages } = await buildCombinedPrintData(saleDoc, returnDoc, store, salespersonName, products, payType, printOptions)
   await ensurePrinterConnected(device || null)
 
-  const useJournal = isJournalMode()
-  appendLog('info', `[合并打印] ${pages.length} 页${useJournal ? '' : '（无JOURNAL模式）'}`)
+  appendLog('info', `[合并打印] ${pages.length} 页${useJournal ? '' : `（无JOURNAL模式，${printOptions.fillFullPage ? '铺满整页' : '按内容高度打印'}）`}`)
 
   for (let p = 0; p < pages.length; p++) {
     const { cpclBuffer, journalSetup } = pages[p]
@@ -738,12 +743,35 @@ function getPresetPrinter(labelOverride?: string): PrinterDevice | null {
 
 /** 当前打印机是否需要 JOURNAL+SETFF 走纸配置（A4LEP 需要，A4mini 不需要） */
 export function isJournalMode(): boolean {
+  return getCurrentPrinterPreset()?.journalMode ?? DEFAULT_JOURNAL_MODE
+}
+
+interface PrinterPrintOptions {
+  fillFullPage: boolean
+  rotateImage: boolean
+  autoCut: boolean
+}
+
+const DEFAULT_JOURNAL_MODE = false
+const DEFAULT_PRINTER_PRINT_OPTIONS: PrinterPrintOptions = {
+  fillFullPage: false,
+  rotateImage: false,
+  autoCut: true,
+}
+
+function getCurrentPrinterPreset() {
   const label = getAccountLabel()
-  if (label && label in PRINTER_PRESETS) {
-    return PRINTER_PRESETS[label].journalMode ?? true
+  return label && label in PRINTER_PRESETS ? PRINTER_PRESETS[label] : undefined
+}
+
+function getPrinterPrintOptions(): PrinterPrintOptions {
+  const preset = getCurrentPrinterPreset()
+
+  return {
+    fillFullPage: preset?.fillFullPage ?? DEFAULT_PRINTER_PRINT_OPTIONS.fillFullPage,
+    rotateImage: preset?.rotateImage ?? DEFAULT_PRINTER_PRINT_OPTIONS.rotateImage,
+    autoCut: preset?.autoCut ?? DEFAULT_PRINTER_PRINT_OPTIONS.autoCut,
   }
-  // 未知打印机默认使用 JOURNAL 模式
-  return true
 }
 
 /** 打印时获取打印机（优先级：手动绑定 > 预设 > saved_printer） */

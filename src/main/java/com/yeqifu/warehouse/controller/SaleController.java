@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.yeqifu.warehouse.common.IdUtils;
 import com.yeqifu.warehouse.common.Result;
+import com.yeqifu.warehouse.common.RuntimeModeManager;
 import com.yeqifu.warehouse.entity.SaleDoc;
 import com.yeqifu.warehouse.entity.SaleLine;
 import com.yeqifu.warehouse.entity.Ledger;
@@ -15,15 +16,19 @@ import com.yeqifu.warehouse.mapper.ProductMapper;
 import com.yeqifu.warehouse.mapper.SaleDocMapper;
 import com.yeqifu.warehouse.mapper.SaleLineMapper;
 import com.yeqifu.warehouse.mapper.StockMapper;
+import com.yeqifu.warehouse.mapper.AccountMapper;
+import com.yeqifu.warehouse.entity.Account;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.interceptor.TransactionAspectSupport;
 import org.springframework.web.bind.annotation.*;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.List;
 import com.yeqifu.warehouse.entity.CommissionLedger;
 import com.yeqifu.warehouse.mapper.CommissionLedgerMapper;
-import java.math.RoundingMode;
 
 @RestController
 @RequestMapping("/api/sale")
@@ -47,6 +52,11 @@ public class SaleController {
     private LedgerMapper ledgerMapper;
     @Autowired
     private CommissionLedgerMapper commissionLedgerMapper;
+    @Autowired
+    private AccountMapper accountMapper;
+
+    @Autowired
+    private RuntimeModeManager runtimeModeManager;
 
     private static final java.math.BigDecimal COMMISSION_RATE = new java.math.BigDecimal("0.06");
 
@@ -113,9 +123,15 @@ public class SaleController {
 
         if (doc.getId() == null || doc.getId().isEmpty()) {
             doc.setId(IdUtils.randomId());
-            doc.setCode(IdUtils.genCode("XS"));
+            doc.setCode(generateSaleCode(doc));
             saleDocMapper.insert(doc);
         } else {
+            SaleDoc existingDoc = saleDocMapper.selectById(doc.getId());
+            if ((doc.getCode() == null || doc.getCode().isEmpty()) && existingDoc != null) {
+                doc.setCode(existingDoc.getCode() == null || existingDoc.getCode().isEmpty() ? generateSaleCode(doc) : existingDoc.getCode());
+            } else if (doc.getCode() == null || doc.getCode().isEmpty()) {
+                doc.setCode(generateSaleCode(doc));
+            }
             saleDocMapper.updateById(doc);
             // 仅当前端传入了明细时才更新明细，避免仅更新单头字段时意外清空明细
             if (!lines.isEmpty()) {
@@ -138,6 +154,40 @@ public class SaleController {
         }
 
         return Result.ok(doc);
+    }
+
+    private String generateSaleCode(SaleDoc doc) {
+        Date docDate = doc.getDocDate() == null ? new Date() : doc.getDocDate();
+        String datePart = new SimpleDateFormat("yyyy-MM-dd").format(docDate);
+        String vehicleNo = resolveVehicleNo(doc.getSalespersonId());
+        LambdaQueryWrapper<SaleDoc> query = new LambdaQueryWrapper<SaleDoc>()
+                .eq(SaleDoc::getSalespersonId, doc.getSalespersonId())
+                .eq(SaleDoc::getDocDate, docDate);
+        if (doc.getId() != null && !doc.getId().isEmpty()) {
+            query.ne(SaleDoc::getId, doc.getId());
+        }
+        long count = saleDocMapper.selectCount(query);
+        return "XS" + datePart + "-" + vehicleNo + "-" + (count + 1);
+    }
+
+    private String resolveVehicleNo(String salespersonId) {
+        if (salespersonId == null || salespersonId.isEmpty()) {
+            return "0";
+        }
+        Account account = accountMapper.selectById(salespersonId);
+        if (account == null || account.getDisplayName() == null) {
+            return "0";
+        }
+        switch (account.getDisplayName()) {
+            case "大车":
+                return "1";
+            case "小车":
+                return "2";
+            case "三车":
+                return "3";
+            default:
+                return "0";
+        }
     }
 
     @PostMapping("/post/{id}")
@@ -394,6 +444,9 @@ public class SaleController {
     }
 
     private String validateSaleStock(String warehouseId, List<SaleLine> lines) {
+        if (runtimeModeManager.useUnlimitedInventory(warehouseId)) {
+            return null;
+        }
         java.util.Map<String, Integer> requiredQtyMap = new java.util.HashMap<>();
         for (SaleLine line : lines) {
             if (line.getProductId() == null || line.getProductId().isEmpty()) {
@@ -423,6 +476,9 @@ public class SaleController {
     }
 
     private void applyStockDelta(String warehouseId, String productId, Integer delta) {
+        if (runtimeModeManager.useUnlimitedInventory(warehouseId)) {
+            return;
+        }
         LambdaQueryWrapper<Stock> qw = new LambdaQueryWrapper<Stock>()
             .eq(Stock::getWarehouseId, warehouseId)
             .eq(Stock::getProductId, productId);

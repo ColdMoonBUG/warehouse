@@ -99,19 +99,38 @@ async function loadEdit(id: string) {
 }
 
 async function takePhoto() {
+  // 1. 先选图（用户取消不算错误，直接静默返回）
+  let chosen: any
   try {
-    const res = await uni.chooseImage({ count: 1, sourceType: ['camera'] })
-    const path = res.tempFilePaths?.[0]
-    if (!path) return
-    previewUrl.value = path
-    uploading.value = true
-    uni.showLoading({ title: '上传中', mask: true })
+    chosen = await uni.chooseImage({
+      count: 1,
+      sourceType: ['camera'],
+      sizeType: ['compressed'], // 走系统压缩，避免原图几 MB 超后端 multipart 限制
+    })
+  } catch (e: any) {
+    const msg = String(e?.errMsg || '')
+    if (msg.includes('cancel')) return // 用户主动取消，不弹错
+    uni.showToast({ title: msg || '拍照失败', icon: 'none' })
+    return
+  }
+  const path = chosen?.tempFilePaths?.[0]
+  if (!path) return
+
+  // 2. 走上传
+  const prevUrl = previewUrl.value
+  previewUrl.value = path
+  uploading.value = true
+  uni.showLoading({ title: '上传中', mask: true })
+  try {
     const uploaded = await uploadFile(path)
     form.value.imageUrl = uploaded.path
     previewUrl.value = getImageUrl(uploaded.path)
     uni.showToast({ title: '上传成功', icon: 'success' })
   } catch (e: any) {
-    uni.showToast({ title: e?.message || '上传失败', icon: 'none' })
+    previewUrl.value = prevUrl // 回滚预览，避免误以为已上传
+    const detail = e?.message || '上传失败'
+    console.error('[商品图片上传失败]', e)
+    uni.showToast({ title: detail, icon: 'none', duration: 3000 })
   } finally {
     uploading.value = false
     uni.hideLoading()

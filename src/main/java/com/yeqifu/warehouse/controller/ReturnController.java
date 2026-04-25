@@ -3,6 +3,7 @@ package com.yeqifu.warehouse.controller;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.yeqifu.warehouse.common.IdUtils;
 import com.yeqifu.warehouse.common.Result;
+import com.yeqifu.warehouse.common.RuntimeModeManager;
 import com.yeqifu.warehouse.entity.*;
 import com.yeqifu.warehouse.mapper.*;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,6 +35,9 @@ public class ReturnController {
     private LedgerMapper ledgerMapper;
     @Autowired
     private CommissionLedgerMapper commissionLedgerMapper;
+
+    @Autowired
+    private RuntimeModeManager runtimeModeManager;
 
     private static final java.math.BigDecimal COMMISSION_RATE = new java.math.BigDecimal("0.06");
 
@@ -225,6 +229,9 @@ public class ReturnController {
     }
 
     private void applyStockDelta(String warehouseId, String productId, Integer delta) {
+        if (runtimeModeManager.useUnlimitedInventory(warehouseId)) {
+            return;
+        }
         LambdaQueryWrapper<Stock> qw = new LambdaQueryWrapper<Stock>()
             .eq(Stock::getWarehouseId, warehouseId)
             .eq(Stock::getProductId, productId);
