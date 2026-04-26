@@ -82,9 +82,26 @@ follow_backend_log() {
   echo "[log] 可使用: tail -f $BACKEND_LOG"
 }
 
+# 控制日志文件总量不超过 1G
+rotate_backend_log_if_needed() {
+  local limit_bytes=$((1024 * 1024 * 1024))
+  if [ -f "$BACKEND_LOG" ]; then
+    local size
+    size=$(stat -c%s "$BACKEND_LOG" 2>/dev/null || echo 0)
+    if [ "$size" -ge "$limit_bytes" ]; then
+      local backup="$BACKEND_LOG.$(date +%Y%m%d_%H%M%S).bak"
+      mv "$BACKEND_LOG" "$backup"
+      : >"$BACKEND_LOG"
+      echo "[log] backend.log 超过 1G，已轮转到 $backup"
+      find "$LOGDIR" -maxdepth 1 -type f -name 'backend.log.*.bak' | sort | head -n -1 | xargs -r rm -f
+    fi
+  fi
+}
+
 # 启动后端服务
 start_backend() {
-  nohup bash -lc "cd \"$ROOT\" && ./mvnw spring-boot:run" >>"$BACKEND_LOG" 2>&1 &
+  rotate_backend_log_if_needed
+  nohup bash -lc "cd \"$ROOT\" && ./mvnw spring-boot:run" >"$BACKEND_LOG" 2>&1 &
 }
 
 # 启动前端页面

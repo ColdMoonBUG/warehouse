@@ -167,6 +167,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getReturnById, saveReturn, postReturn, voidReturn } from '@/api/return'
 import { getSalespersonAccounts, getSalespersonName, getSession } from '@/api/auth'
+import { getSaleById, linkSaleReturn } from '@/api/sale'
 import { getStores } from '@/api/store'
 import { getProducts } from '@/api/product'
 import { getWarehouses } from '@/api/stock'
@@ -279,7 +280,11 @@ async function post() {
   await postReturn(doc.value.id)
   const detail = await getReturnById(doc.value.id)
   if (detail) applyDoc(detail)
-  ElMessage.success('过账成功')
+  const saleId = route.query.saleId as string | undefined
+  if (saleId) {
+    await linkSaleReturn(saleId, doc.value.id)
+  }
+  ElMessage.success(saleId ? '过账成功，已关联销单' : '过账成功')
 }
 
 function amountSum() {
@@ -315,6 +320,17 @@ async function loadDetail(id: string) {
     fromWarehouseId: vehicleWarehouses.value[0]?.id || '',
     createdAt: new Date().toISOString()
   }
+
+  const saleId = route.query.saleId as string | undefined
+  if (saleId) {
+    const sale = await getSaleById(saleId)
+    if (sale) {
+      doc.value.salespersonId = sale.salespersonId
+      doc.value.storeId = sale.storeId
+      doc.value.fromWarehouseId = sale.warehouseId || vehicleWarehouses.value[0]?.id || ''
+    }
+  }
+
   if (doc.value.returnType === 'warehouse_return' && !doc.value.toWarehouseId) {
     doc.value.toWarehouseId = targetWarehouses.value[0]?.id || ''
   }

@@ -30,6 +30,9 @@ public class SaleDoc implements Serializable {
     @JsonFormat(pattern = "yyyy-MM-dd", timezone = "Asia/Shanghai")
     private Date docDate;
 
+    @TableField("payment_type")
+    private String paymentType;
+
     private String remark;
     private String status;
     private String docType;

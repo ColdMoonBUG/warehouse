@@ -69,12 +69,16 @@ export interface SaleDoc {
   storeId: string
   warehouseId?: string
   date: string
+  paymentType?: 'cash' | 'bill'
   remark?: string
   status: DocStatus
   docType?: 'sale' | 'gift'
+  returnDocId?: string
   settled?: number
   settledAt?: string
   settledBy?: string
+  totalQty?: number
+  totalAmount?: number
   lines: SaleLine[]
   createdAt: string
 }

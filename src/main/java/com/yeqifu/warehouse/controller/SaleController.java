@@ -106,6 +106,10 @@ public class SaleController {
 
         normalizeLines(lines);
 
+        if (doc.getPaymentType() == null || doc.getPaymentType().isEmpty()) {
+            doc.setPaymentType("bill");
+        }
+
         // 计算总数量和总金额
         int totalQty = 0;
         BigDecimal totalAmount = BigDecimal.ZERO;
@@ -252,6 +256,11 @@ public class SaleController {
                 }
             }
             doc.setStatus("posted");
+            if ("cash".equals(doc.getPaymentType())) {
+                doc.setSettled(1);
+                doc.setSettledAt(new Date());
+                doc.setSettledBy(String.valueOf(doc.getSalespersonId()));
+            }
             saleDocMapper.updateById(doc);
             return Result.ok();
         } catch (RuntimeException e) {
@@ -369,13 +378,15 @@ public class SaleController {
     }
 
     @PostMapping("/settle/{id}")
-    public Result<Void> settle(@PathVariable String id) {
+    public Result<Void> settle(@PathVariable String id, javax.servlet.http.HttpSession session) {
         SaleDoc doc = saleDocMapper.selectById(id);
         if (doc == null || !"posted".equals(doc.getStatus())) {
             return Result.error("单据状态异常");
         }
         doc.setSettled(1);
         doc.setSettledAt(new java.util.Date());
+        Object operatorId = session.getAttribute("warehouseAccountId");
+        doc.setSettledBy(operatorId instanceof String ? (String) operatorId : null);
         saleDocMapper.updateById(doc);
         return Result.ok();
     }
@@ -397,7 +408,10 @@ public class SaleController {
     public Result<java.util.Map<String, Integer>> storeSaleQty(@RequestParam(defaultValue = "30") Integer days) {
         java.time.LocalDate start = java.time.LocalDate.now().minusDays(days);
         List<SaleDoc> docs = saleDocMapper.selectList(
-            new LambdaQueryWrapper<SaleDoc>().ge(SaleDoc::getDocDate, java.sql.Date.valueOf(start))
+            new LambdaQueryWrapper<SaleDoc>()
+                .eq(SaleDoc::getStatus, "posted")
+                .eq(SaleDoc::getDocType, "sale")
+                .ge(SaleDoc::getDocDate, java.sql.Date.valueOf(start))
         );
         java.util.Map<String, Integer> map = new java.util.HashMap<>();
         for (SaleDoc doc : docs) {

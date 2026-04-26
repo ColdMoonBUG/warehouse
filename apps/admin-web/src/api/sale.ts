@@ -65,3 +65,7 @@ export async function settleSale(id: string) {
 export async function unsettleSale(id: string) {
   await request.post(`/sale/unsettle/${id}`)
 }
+
+export async function linkSaleReturn(id: string, returnDocId: string) {
+  await request.post(`/sale/linkReturn/${id}`, null, { params: { returnDocId } })
+}

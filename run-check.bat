@@ -31,6 +31,7 @@ for /f "tokens=5" %%a in ('netstat -ano ^| findstr /R /C:":8888 .*LISTENING"') d
 
 if not defined BACKEND_RUNNING (
   echo [2/6] Start backend...
+  powershell -NoProfile -Command "$limit=1GB; if (Test-Path '%BACKEND_LOG%') { $size=(Get-Item '%BACKEND_LOG%').Length; if ($size -ge $limit) { $stamp=Get-Date -Format 'yyyyMMdd_HHmmss'; $bak='%BACKEND_LOG%.' + $stamp + '.bak'; Move-Item '%BACKEND_LOG%' $bak -Force; New-Item -ItemType File -Path '%BACKEND_LOG%' -Force | Out-Null; Get-ChildItem '%LOGDIR%' -Filter 'backend.log.*.bak' | Sort-Object LastWriteTime -Descending | Select-Object -Skip 1 | Remove-Item -Force -ErrorAction SilentlyContinue } }"
   start "backend" /b powershell -NoProfile -Command "Set-Location '%ROOT%'; & '.\mvnw.cmd' spring-boot:run 2>&1 | Tee-Object -FilePath '%BACKEND_LOG%'"
 ) else (
   echo [2/6] Backend already running.
