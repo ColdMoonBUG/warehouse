@@ -45,6 +45,108 @@ interface ApiResult<T> {
   count?: number
 }
 
+async function requestListPage<T>(url: string): Promise<{ list: T[]; total: number }> {
+  return request<{ list: T[]; total?: number; count?: number }>(url, 'GET').then((data: any) => {
+    if (Array.isArray(data)) {
+      return { list: data, total: data.length }
+    }
+    return {
+      list: Array.isArray(data?.list) ? data.list : (Array.isArray(data?.data) ? data.data : []),
+      total: Number(data?.total ?? data?.count ?? 0),
+    }
+  })
+}
+
+async function requestAllPaged<T>(baseUrl: string, pageSize: number = 200): Promise<T[]> {
+  const result: T[] = []
+  let page = 1
+  while (true) {
+    const separator = baseUrl.includes('?') ? '&' : '?'
+    const { list } = await requestListPage<T>(`${baseUrl}${separator}page=${page}&limit=${pageSize}`)
+    result.push(...list)
+    if (list.length < pageSize) break
+    page += 1
+  }
+  return result
+}
+
+async function requestAllPagedLegacy<T>(url: string, pageSize: number = 200): Promise<T[]> {
+  const result: T[] = []
+  let page = 1
+  while (true) {
+    const separator = url.includes('?') ? '&' : '?'
+    const list = await request<T[]>(`${url}${separator}page=${page}&limit=${pageSize}`, 'GET')
+    result.push(...list)
+    if (!Array.isArray(list) || list.length < pageSize) break
+    page += 1
+  }
+  return result
+}
+
+async function requestAllSales(storeId?: string): Promise<SaleDoc[]> {
+  const url = storeId ? `/api/sale/list?storeId=${encodeURIComponent(storeId)}` : '/api/sale/list'
+  try {
+    const list = await requestAllPaged<SaleDoc>(url)
+    if (list.length) return list
+  } catch {
+    // ignore and fallback
+  }
+  return requestAllPagedLegacy<SaleDoc>(url)
+}
+
+async function requestAllUnsettledSales(): Promise<SaleDoc[]> {
+  try {
+    const list = await requestAllPaged<SaleDoc>('/api/sale/unsettled')
+    if (list.length) return list
+  } catch {
+    // ignore and fallback
+  }
+  return requestAllPagedLegacy<SaleDoc>('/api/sale/unsettled')
+}
+
+async function requestAllReturns(): Promise<ReturnDoc[]> {
+  return requestAllPagedLegacy<ReturnDoc>('/api/return/list')
+}
+
+async function requestAllTransfers(): Promise<TransferDoc[]> {
+  return requestAllPagedLegacy<TransferDoc>('/api/transfer/list')
+}
+
+async function requestAllInbounds(): Promise<InboundDoc[]> {
+  return requestAllPagedLegacy<InboundDoc>('/api/inbound/list')
+}
+
+async function requestAllOutbounds(): Promise<OutboundDoc[]> {
+  return requestAllPagedLegacy<OutboundDoc>('/api/outbound/list')
+}
+
+async function requestAllAccounts(includeInactive = false): Promise<Account[]> {
+  const url = `/api/account/list?includeInactive=${includeInactive ? 'true' : 'false'}`
+  return requestAllPagedLegacy<Account>(url)
+}
+
+async function requestAllStores(includeInactive = false): Promise<Store[]> {
+  const url = `/api/store/list?includeInactive=${includeInactive ? 'true' : 'false'}`
+  return requestAllPagedLegacy<Store>(url)
+}
+
+async function requestAllProducts(): Promise<Product[]> {
+  return requestAllPagedLegacy<Product>('/api/product/list')
+}
+
+async function requestAllWarehouses(): Promise<Warehouse[]> {
+  return requestAllPagedLegacy<Warehouse>('/api/warehouse/list')
+}
+
+async function requestAllSuppliers(): Promise<Supplier[]> {
+  return requestAllPagedLegacy<Supplier>('/api/supplier/list')
+}
+
+async function requestAllStock(warehouseId?: string): Promise<StockItem[]> {
+  const url = warehouseId ? `/api/stock/list?warehouseId=${encodeURIComponent(warehouseId)}` : '/api/stock/list'
+  return requestAllPagedLegacy<StockItem>(url)
+}
+
 type ReferenceCacheKey =
   | 'accounts_active'
   | 'accounts_all'
@@ -909,8 +1011,7 @@ export async function getSales(storeId?: string): Promise<SaleDoc[]> {
     if (storeId) list = list.filter(d => d.storeId === storeId)
     return list
   }
-  const url = storeId ? `/api/sale/list?storeId=${encodeURIComponent(storeId)}` : '/api/sale/list'
-  return (await request<SaleDoc[]>(url, 'GET')).map(normalizeSaleDoc)
+  return (await requestAllSales(storeId)).map(normalizeSaleDoc)
 }
 
 export async function getSaleDetail(id: string): Promise<SaleDoc | null> {
@@ -1019,7 +1120,7 @@ export async function getReturns(): Promise<ReturnDoc[]> {
       return []
     }
   }
-  return (await request<ReturnDoc[]>('/api/return/list', 'GET')).map(normalizeReturnDoc)
+  return (await requestAllReturns()).map(normalizeReturnDoc)
 }
 
 export async function getReturnDetail(id: string): Promise<ReturnDoc | null> {
@@ -1089,7 +1190,7 @@ export async function getUnsettledSales(): Promise<SaleDoc[]> {
       .filter(d => d.status === 'posted' && !d.settled)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   }
-  return (await request<SaleDoc[]>('/api/sale/unsettled', 'GET')).map(normalizeSaleDoc)
+  return (await requestAllUnsettledSales()).map(normalizeSaleDoc)
 }
 
 export async function settleSale(id: string): Promise<void> {

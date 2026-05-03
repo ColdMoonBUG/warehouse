@@ -34,85 +34,87 @@
       <view class="section">
         <text class="label">商品明细</text>
         <text v-if="fromWarehouse" class="field-tip stock-hint">{{ stockHint }}</text>
-        <view class="line-card" v-for="(l, i) in lines" :key="i">
+        <view class="selector-toolbar">
+          <input v-model="keyword" class="search-input" placeholder="搜索商品名称/编码/条码" />
+          <picker mode="selector" :range="sortModeOptions" range-key="label" :value="sortModeIndex" @change="onSortModeChange">
+            <view class="picker sort-picker"><text>{{ currentSortLabel }}</text></view>
+          </picker>
+        </view>
+        <view class="field quick-pick-field">
+          <text class="field-label">快捷选品</text>
+          <picker mode="selector" :range="productsWithStock" range-key="displayName" :value="quickPickIndex" :disabled="!quickPickEnabled" @change="onQuickPickChange">
+            <view class="field-box picker-box" :class="{ disabled: !quickPickEnabled }"><text>{{ quickPickText }}</text></view>
+          </picker>
+          <text v-if="!quickPickEnabled" class="field-tip">{{ keyword ? '当前筛选下暂无商品' : '暂无可选商品' }}</text>
+        </view>
+        <view class="line-card" v-for="(line, index) in lines" :key="index">
           <view class="line-head">
-            <text class="line-title">明细 {{ i + 1 }}</text>
-            <button class="btn-delete" @tap="removeLine(i)">删除</button>
+            <text class="line-title">明细 {{ index + 1 }}</text>
+            <button class="btn-delete" @tap="removeLine(index)">删除</button>
           </view>
           <view class="field">
             <text class="field-label">商品</text>
-            <picker mode="selector" :range="productsWithStock" range-key="displayName" @change="(e)=>onProductChange(e,i)">
-              <view class="field-box picker-box"><text>{{ productName(l.productId) || '请选择商品' }}</text></view>
+            <picker mode="selector" :range="productsWithStock" range-key="displayName" @change="(e) => onProductChange(e, index)">
+              <view class="field-box picker-box"><text>{{ productName(line.productId) || '请选择商品' }}</text></view>
             </picker>
           </view>
           <view class="field-grid field-grid-triple">
             <view class="field">
               <text class="field-label">箱数</text>
-              <input class="field-box input-box" v-model.number="l.boxQty" type="number" placeholder="0" @blur="syncLineQty(l)" />
+              <input class="field-box input-box" v-model.number="line.boxQty" type="number" placeholder="0" @blur="syncLineQty(line)" />
             </view>
             <view class="field">
               <text class="field-label">袋数</text>
-              <input class="field-box input-box" v-model.number="l.bagQty" type="number" placeholder="0" @blur="syncLineQty(l)" />
+              <input class="field-box input-box" v-model.number="line.bagQty" type="number" placeholder="0" @blur="syncLineQty(line)" />
             </view>
             <view class="field">
               <text class="field-label">总袋数</text>
-              <input class="field-box input-box" v-model.number="l.qty" type="number" placeholder="0" @blur="onQtyChange(l)" />
+              <input class="field-box input-box" v-model.number="line.qty" type="number" placeholder="0" @blur="onQtyChange(line)" />
             </view>
           </view>
-          <text v-if="lineSummary(l)" class="field-tip">{{ lineSummary(l) }}</text>
-          <text v-if="lineStockPreview(l.productId)" class="field-tip stock-preview">{{ lineStockPreview(l.productId) }}</text>
+          <text v-if="lineSummary(line)" class="field-tip">{{ lineSummary(line) }}</text>
+          <text v-if="lineStockPreview(line.productId)" class="field-tip stock-preview">{{ lineStockPreview(line.productId) }}</text>
         </view>
         <button class="btn-add-line" @tap="addLine">+ 添加一行</button>
       </view>
 
       <view class="actions">
         <button class="btn" @tap="save">保存</button>
-        <button class="btn ghost" :disabled="!form.id || form.status!=='draft'" @tap="post">过账</button>
-        <button class="btn danger" :disabled="!form.id || form.status!=='posted'" @tap="voidDoc">作废</button>
+        <button class="btn ghost" :disabled="!form.id || form.status !== 'draft'" @tap="post">过账</button>
+        <button class="btn danger" :disabled="!form.id || form.status !== 'posted'" @tap="voidDoc">作废</button>
       </view>
     </view>
   </view>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
 import { useReferenceStore } from '@/store/reference'
 import { getTransferDetail, saveTransfer, postTransfer, voidTransfer, getStock, getProductDetail } from '@/api'
-import type { TransferDoc, TransferLine, Product, Warehouse, StockItem } from '@/types'
-import { formatDate, getPageQueryParam, calcQty, deriveBagQty, normalizeBoxPackQty, normalizeCount, formatProductPackageSummary, formatStockPreview, getProductStockQty, toStockQtyMap } from '@/utils'
+import type { TransferDoc, TransferLine, Product, Warehouse } from '@/types'
+import { formatDate, getPageQueryParam, calcQty, deriveBagQty, normalizeBoxPackQty, normalizeCount, formatProductPackageSummary, formatStockPreview, getProductStockQty, toStockQtyMap, formatProductQuickPickLabel } from '@/utils'
 
 type FormLine = TransferLine & { bagQty?: number }
+type SortMode = 'custom' | 'stock-desc' | 'name-asc'
+
+const SORT_MODE_KEY = 'wh_admin_outbound_sort_mode'
+const CUSTOM_SORT_KEY = 'wh_product_sort_admin_outbound'
+
+const sortModeOptions = [
+  { label: '自定义排序', value: 'custom' as SortMode },
+  { label: '库存优先', value: 'stock-desc' as SortMode },
+  { label: '名称排序', value: 'name-asc' as SortMode },
+]
 
 const userStore = useUserStore()
 const referenceStore = useReferenceStore()
 const warehouses = ref<Warehouse[]>([])
 const products = ref<Product[]>([])
-const sortedProducts = computed(() => {
-  if (!fromWarehouse.value) return products.value
-  const sm = sourceStockMap.value
-  return [...products.value].sort((a, b) => {
-    const sa = sm[a.id] || 0, sb = sm[b.id] || 0
-    if (sa > 0 && sb === 0) return -1
-    if (sa === 0 && sb > 0) return 1
-    return sb - sa
-  })
-})
-
-const productsWithStock = computed(() => {
-  if (!fromWarehouse.value) {
-    return sortedProducts.value.map(p => ({ ...p, displayName: p.barcode ? `${p.name} (${p.barcode})` : p.name }))
-  }
-  const sm = sourceStockMap.value
-  return sortedProducts.value.map(p => {
-    const stock = sm[p.id] || 0
-    const stockText = stock > 0 ? `库存: ${stock}袋` : '无库存'
-    const barcodeText = p.barcode ? ` ${p.barcode}` : ''
-    const displayName = `${p.name}${barcodeText} (${stockText})`
-    return { ...p, displayName }
-  })
-})
+const keyword = ref('')
+const sortMode = ref<SortMode>('custom')
+const customSortIds = ref<string[]>([])
 const lines = ref<FormLine[]>([])
 const form = ref<Partial<TransferDoc>>({ fromWarehouseId: 'main', date: formatDate(new Date(), 'YYYY-MM-DD'), status: 'draft' })
 const queryId = ref('')
@@ -128,8 +130,11 @@ const stockHint = computed(() => {
   return fromWarehouse.value ? `${fromWhName.value}库存已加载` : ''
 })
 
+const currentSortLabel = computed(() => sortModeOptions.find(option => option.value === sortMode.value)?.label || '排序')
+const sortModeIndex = computed(() => sortModeOptions.findIndex(option => option.value === sortMode.value))
+
 function productById(id: string) {
-  return products.value.find(p => p.id === id)
+  return products.value.find(product => product.id === id)
 }
 
 function productPackQty(productId: string) {
@@ -183,11 +188,13 @@ async function refreshStockPreview() {
   try {
     const stockList = await getStock(fromWarehouse.value.id)
     sourceStockMap.value = toStockQtyMap(stockList)
-  } finally { stockLoading.value = false }
+  } finally {
+    stockLoading.value = false
+  }
 }
 
 async function ensureProductsLoaded(ids: string[]) {
-  const missingIds = [...new Set(ids)].filter(id => id && !products.value.some(p => p.id === id))
+  const missingIds = [...new Set(ids)].filter(id => id && !products.value.some(product => product.id === id))
   if (!missingIds.length) return
   const missingProducts = await Promise.all(missingIds.map(id => getProductDetail(id)))
   products.value = [...products.value, ...(missingProducts.filter(Boolean) as Product[])]
@@ -208,30 +215,120 @@ function guard() {
   return true
 }
 
-function addLine() {
-  lines.value.push(normalizeLine({ id: '', productId: '', qty: 0, boxQty: 0 }))
+function compareByCustomSort(left: Product, right: Product) {
+  const leftIndex = customSortIds.value.indexOf(left.id)
+  const rightIndex = customSortIds.value.indexOf(right.id)
+  if (leftIndex >= 0 && rightIndex >= 0) return leftIndex - rightIndex
+  if (leftIndex >= 0) return -1
+  if (rightIndex >= 0) return 1
+  return left.name.localeCompare(right.name, 'zh-CN')
 }
 
-function removeLine(i: number) { lines.value.splice(i, 1) }
+const filteredProducts = computed(() => {
+  const key = keyword.value.trim().toLowerCase()
+  const list = products.value.filter(product => {
+    if (!key) return true
+    return [product.name, product.code, product.barcode].some(value => (value || '').toLowerCase().includes(key))
+  })
+
+  if (sortMode.value === 'name-asc') {
+    return [...list].sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'))
+  }
+
+  if (sortMode.value === 'stock-desc') {
+    const stockMap = sourceStockMap.value
+    return [...list].sort((left, right) => {
+      const leftStock = stockMap[left.id] || 0
+      const rightStock = stockMap[right.id] || 0
+      if (leftStock === rightStock) return left.name.localeCompare(right.name, 'zh-CN')
+      return rightStock - leftStock
+    })
+  }
+
+  return [...list].sort(compareByCustomSort)
+})
+
+const productsWithStock = computed(() => {
+  const stockMap = sourceStockMap.value
+  return filteredProducts.value.map(product => {
+    const stock = stockMap[product.id] || 0
+    const displayName = formatProductQuickPickLabel(product, stock, product.boxQty)
+    return { ...product, displayName }
+  })
+})
+
+const quickPickEnabled = computed(() => productsWithStock.value.length > 0)
+const quickPickIndex = computed(() => -1)
+const quickPickText = computed(() => {
+  if (!quickPickEnabled.value) return keyword.value ? '当前筛选下暂无商品' : '暂无可选商品'
+  return '快捷选择商品'
+})
+
+function loadSortPreference() {
+  try {
+    const savedMode = uni.getStorageSync(SORT_MODE_KEY)
+    if (savedMode && sortModeOptions.some(option => option.value === savedMode)) {
+      sortMode.value = savedMode as SortMode
+    }
+  } catch {
+    // ignore
+  }
+  try {
+    const savedIds = uni.getStorageSync(CUSTOM_SORT_KEY)
+    customSortIds.value = Array.isArray(savedIds) ? savedIds : []
+  } catch {
+    customSortIds.value = []
+  }
+}
+
+function onSortModeChange(e: any) {
+  sortMode.value = sortModeOptions[Number(e.detail.value)]?.value || 'custom'
+  try {
+    uni.setStorageSync(SORT_MODE_KEY, sortMode.value)
+  } catch {
+    // ignore
+  }
+}
+
+function addLine(productId: string = '') {
+  const nextLine = normalizeLine({ id: '', productId, qty: 0, boxQty: 0 })
+  lines.value.push(nextLine)
+  if (productId) {
+    syncLineQty(nextLine)
+  }
+}
+
+function removeLine(index: number) {
+  lines.value.splice(index, 1)
+}
 
 function onFromWhChange(e: any) {
-  const idx = Number(e.detail.value)
-  form.value.fromWarehouseId = warehouses.value[idx]?.id || ''
+  const index = Number(e.detail.value)
+  form.value.fromWarehouseId = warehouses.value[index]?.id || ''
   refreshStockPreview()
 }
 
 function onToWhChange(e: any) {
-  const idx = Number(e.detail.value)
-  form.value.toWarehouseId = warehouses.value[idx]?.id || ''
+  const index = Number(e.detail.value)
+  form.value.toWarehouseId = warehouses.value[index]?.id || ''
 }
 
-function onProductChange(e: any, i: number) {
-  const idx = Number(e.detail.value)
-  lines.value[i].productId = productsWithStock.value[idx]?.id || ''
-  syncLineQty(lines.value[i])
+function onProductChange(e: any, index: number) {
+  const productIndex = Number(e.detail.value)
+  lines.value[index].productId = productsWithStock.value[productIndex]?.id || ''
+  syncLineQty(lines.value[index])
 }
 
-function productName(id: string) { return productById(id)?.name || '' }
+function onQuickPickChange(e: any) {
+  const productIndex = Number(e.detail.value)
+  const productId = productsWithStock.value[productIndex]?.id || ''
+  if (!productId) return
+  addLine(productId)
+}
+
+function productName(id: string) {
+  return productById(id)?.name || ''
+}
 
 async function loadEdit(id: string) {
   const doc = await getTransferDetail(id)
@@ -240,13 +337,16 @@ async function loadEdit(id: string) {
 
 async function save() {
   if (!form.value.fromWarehouseId || !form.value.toWarehouseId) {
-    uni.showToast({ title: '请选择调出/调入仓库', icon: 'none' }); return
+    uni.showToast({ title: '请选择调出/调入仓库', icon: 'none' })
+    return
   }
   if (form.value.fromWarehouseId === form.value.toWarehouseId) {
-    uni.showToast({ title: '调出和调入仓库不能相同', icon: 'none' }); return
+    uni.showToast({ title: '调出和调入仓库不能相同', icon: 'none' })
+    return
   }
   if (lines.value.length === 0) {
-    uni.showToast({ title: '请添加明细', icon: 'none' }); return
+    uni.showToast({ title: '请添加明细', icon: 'none' })
+    return
   }
   const submitLines = lines.value.map(toSubmitLine)
   await saveTransfer(form.value as TransferDoc, submitLines)
@@ -270,15 +370,20 @@ async function voidDoc() {
   uni.showToast({ title: '已作废', icon: 'success' })
 }
 
-function goBack() { uni.navigateBack() }
+function goBack() {
+  uni.navigateBack()
+}
 
-onLoad((query) => { queryId.value = query?.id || getPageQueryParam('id') })
+onLoad((query) => {
+  queryId.value = query?.id || getPageQueryParam('id')
+})
 
 onMounted(async () => {
   if (!guard()) return
   referenceStore.hydrate()
   warehouses.value = [...referenceStore.warehouses]
   products.value = [...referenceStore.products]
+  loadSortPreference()
 
   pageLoading.value = true
   try {
@@ -288,7 +393,9 @@ onMounted(async () => {
   } catch {
     warehouses.value = [...referenceStore.warehouses]
     products.value = [...referenceStore.products]
-  } finally { pageLoading.value = false }
+  } finally {
+    pageLoading.value = false
+  }
 
   if (queryId.value) await loadEdit(queryId.value)
   if (lines.value.length === 0) addLine()
@@ -305,6 +412,11 @@ onMounted(async () => {
 .section { background:#fff; border-radius:16rpx; padding:20rpx; margin-bottom:16rpx; }
 .label { display:block; font-size:26rpx; color:#666; margin-bottom:10rpx; }
 .picker { padding: 16rpx; border:2rpx solid #eee; border-radius:12rpx; font-size:28rpx; margin-bottom: 12rpx; background:#fff; }
+.selector-toolbar { display:flex; gap:16rpx; align-items:center; margin:16rpx 0; }
+.search-input { flex:1; min-height:80rpx; padding:0 20rpx; border:2rpx solid #dbe3ee; border-radius:12rpx; background:#fff; font-size:28rpx; color:#333; }
+.sort-picker { min-width:220rpx; margin-bottom:0; }
+.quick-pick-field { margin-bottom:16rpx; }
+.field-box.disabled { color:#999; background:#f7f7f7; }
 .line-card { background:#f8fafc; border:2rpx solid #eef2f7; border-radius:16rpx; padding:20rpx; margin-bottom:20rpx; }
 .line-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:16rpx; }
 .line-title { font-size:26rpx; font-weight:600; color:#333; }

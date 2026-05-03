@@ -53,7 +53,9 @@ function formatSalesperson(name: string): string {
 }
 
 function formatPrintDate(date: string, createdAt?: string): string {
-  const source = (createdAt || '').trim() || (date || '').trim()
+  const created = (createdAt || '').trim()
+  if (created) return formatDate(created, 'YYYY-MM-DD HH:mm')
+  const source = (date || '').trim()
   if (!source) return '-'
   if (/^\d{4}-\d{2}-\d{2}$/.test(source)) return source
   return formatDate(source, 'YYYY-MM-DD HH:mm')
@@ -62,6 +64,8 @@ function formatPrintDate(date: string, createdAt?: string): string {
 function resolvePrintDate(doc: { date?: string; createdAt?: string }): string {
   return formatPrintDate(doc.date || '', doc.createdAt)
 }
+
+const PRODUCT_COLUMN_OFFSET_DOTS = mmToDots(10)
 
 function drawSignatureNoteArea(ctx: any, height: number) {
   const signatureTop = PAGE_MARGIN_DOTS + 160
@@ -123,7 +127,1166 @@ function estimateContentHeight(data: PrintDocData, fillFullPage: boolean = false
   const footerH = footerLineH + remarkH + 22
 
   const margin = PAGE_MARGIN_DOTS
-  return Math.min(margin + headerH + 15 + infoH + 15 + tableH + 15 + footerH + margin + CUT_BOTTOM_BLANK_DOTS, PAGE_HEIGHT_DOTS)
+  return margin + headerH + 15 + infoH + 15 + tableH + 15 + footerH + margin + CUT_BOTTOM_BLANK_DOTS
+}
+
+function estimateSalePageHeight(itemCount: number): number {
+  const headerH = 72
+  const infoH = 2 * 54 + 12
+  const tableLineH = 64
+  const tableH = (1 + itemCount) * tableLineH + 22
+  const footerH = 56 + 22
+  const margin = PAGE_MARGIN_DOTS
+  return margin + headerH + 15 + infoH + 15 + tableH + 15 + footerH + margin + CUT_BOTTOM_BLANK_DOTS
+}
+
+function estimateReturnPageHeight(itemCount: number): number {
+  const headerH = 72
+  const infoH = 2 * 54 + 12
+  const tableLineH = 64
+  const tableH = (1 + itemCount) * tableLineH + 22
+  const footerH = 56 + 42 + 22
+  const margin = PAGE_MARGIN_DOTS
+  return margin + headerH + 15 + infoH + 15 + tableH + 15 + footerH + margin + CUT_BOTTOM_BLANK_DOTS
+}
+
+function estimateCombinedPageHeight(saleCount: number, returnCount: number): number {
+  const headerH = 72
+  const infoH = 2 * 54 + 12
+  const tableLineH = 64
+  const saleTableH = saleCount > 0 ? (1 + saleCount) * tableLineH + 22 : 0
+  const returnTableH = returnCount > 0 ? (1 + returnCount) * tableLineH + 22 : 0
+  const saleSectionH = saleCount > 0 && returnCount > 0 ? 56 : 0
+  const returnSectionH = returnCount > 0 ? 56 + 10 : 0
+  const netAmountH = saleCount > 0 && returnCount > 0 ? 85 : 0
+  const footerH = 56 + 22
+  const margin = PAGE_MARGIN_DOTS
+  return margin + headerH + 15 + infoH + 15 + saleSectionH + saleTableH + returnSectionH + returnTableH + netAmountH + footerH + margin + CUT_BOTTOM_BLANK_DOTS
+}
+
+function splitItemsByHeight(items: PrintItem[], maxHeight: number, estimateHeight: (count: number) => number): PrintItem[][] {
+  const pages: PrintItem[][] = []
+  let start = 0
+  while (start < items.length) {
+    let take = 1
+    while (start + take <= items.length && estimateHeight(take) <= maxHeight) {
+      take++
+    }
+    take = Math.max(1, take - 1)
+    pages.push(items.slice(start, start + take))
+    start += take
+  }
+  return pages
+}
+
+function splitCombinedItemsByHeight(saleItems: PrintItem[], returnItems: PrintItem[], maxHeight: number): Array<{ sale: PrintItem[]; ret: PrintItem[] }> {
+  const pages: Array<{ sale: PrintItem[]; ret: PrintItem[] }> = []
+  let saleIndex = 0
+  let returnIndex = 0
+
+  while (saleIndex < saleItems.length || returnIndex < returnItems.length) {
+    const pageSale: PrintItem[] = []
+    const pageReturn: PrintItem[] = []
+
+    while (saleIndex < saleItems.length && estimateCombinedPageHeight(pageSale.length + 1, pageReturn.length) <= maxHeight) {
+      pageSale.push(saleItems[saleIndex])
+      saleIndex++
+    }
+
+    while (returnIndex < returnItems.length && estimateCombinedPageHeight(pageSale.length, pageReturn.length + 1) <= maxHeight) {
+      pageReturn.push(returnItems[returnIndex])
+      returnIndex++
+    }
+
+    if (pageSale.length === 0 && saleIndex < saleItems.length) {
+      pageSale.push(saleItems[saleIndex])
+      saleIndex++
+    } else if (pageReturn.length === 0 && returnIndex < returnItems.length) {
+      pageReturn.push(returnItems[returnIndex])
+      returnIndex++
+    }
+
+    pages.push({ sale: pageSale, ret: pageReturn })
+  }
+
+  return pages
+}
+
+function canPrintAsSinglePage(height: number): boolean {
+  return height <= PAGE_HEIGHT_DOTS
+}
+
+function normalizeSinglePageOptions(options: PrintBuildOptions = {}): PrintBuildOptions {
+  return { ...options, autoCut: false }
+}
+
+function withAutoCutOnLastPage(options: PrintBuildOptions = {}, isLastPage: boolean = false): PrintBuildOptions {
+  return isLastPage ? options : { ...options, autoCut: false }
+}
+
+function buildPagedCpclCommands(imagePages: any[], baseTaskId: string, options: PrintBuildOptions = {}): Array<{ cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer }> {
+  return imagePages.map((imageData, index) => {
+    const taskId = imagePages.length === 1 ? baseTaskId : `${baseTaskId}_p${index + 1}`
+    return buildCpclCommand(imageData, taskId, withAutoCutOnLastPage(options, index === imagePages.length - 1))
+  })
+}
+
+async function renderSalePages(data: PrintDocData, options: PrintBuildOptions = {}): Promise<any[]> {
+  const singleHeight = estimateContentHeight(data, options.fillFullPage)
+  if (canPrintAsSinglePage(singleHeight)) {
+    return [await generatePrintImageData(data, options.fillFullPage)]
+  }
+  const pages = splitItemsByHeight(data.items, PAGE_HEIGHT_DOTS, estimateSalePageHeight)
+  const imagePages = []
+  for (const items of pages) {
+    const pageData: PrintDocData = {
+      ...data,
+      items,
+      totalQty: items.reduce((sum, item) => sum + normalizeCount(item.qty), 0),
+      totalAmount: items.reduce((sum, item) => sum + item.amount, 0),
+      remark: undefined,
+    }
+    imagePages.push(await generatePrintImageData(pageData, false))
+  }
+  return imagePages
+}
+
+async function renderReturnPages(data: PrintDocData, options: PrintBuildOptions = {}): Promise<any[]> {
+  const singleHeight = estimateContentHeight(data, options.fillFullPage)
+  if (canPrintAsSinglePage(singleHeight)) {
+    return [await generatePrintImageData(data, options.fillFullPage)]
+  }
+  const pages = splitItemsByHeight(data.items, PAGE_HEIGHT_DOTS, estimateReturnPageHeight)
+  const imagePages = []
+  for (let index = 0; index < pages.length; index++) {
+    const items = pages[index]
+    const pageData: PrintDocData = {
+      ...data,
+      items,
+      totalQty: items.reduce((sum, item) => sum + normalizeCount(item.qty), 0),
+      totalAmount: items.reduce((sum, item) => sum + item.amount, 0),
+      remark: index === pages.length - 1 ? data.remark : undefined,
+    }
+    imagePages.push(await generatePrintImageData(pageData, false))
+  }
+  return imagePages
+}
+
+async function renderCombinedPages(data: CombinedPrintData, options: PrintBuildOptions = {}): Promise<any[]> {
+  const singleHeight = estimateCombinedHeight(data, data.saleItems, data.returnItems, options.fillFullPage)
+  if (canPrintAsSinglePage(singleHeight) && data.saleItems.length + data.returnItems.length <= MAX_ITEMS_PER_PAGE) {
+    const ctx = uni.createCanvasContext(CANVAS_ID)
+    await drawCombinedContent(ctx, data, data.saleItems, data.returnItems, PAGE_WIDTH_DOTS, singleHeight, 1, 1)
+    return [await getCanvasImageData(PAGE_WIDTH_DOTS, singleHeight)]
+  }
+
+  const chunks = splitCombinedItemsByHeight(data.saleItems, data.returnItems, PAGE_HEIGHT_DOTS)
+  const totalPages = chunks.length
+  const imagePages = []
+  for (let index = 0; index < chunks.length; index++) {
+    const chunk = chunks[index]
+    const height = estimateCombinedPageHeight(chunk.sale.length, chunk.ret.length)
+    const ctx = uni.createCanvasContext(CANVAS_ID)
+    await drawCombinedContent(ctx, data, chunk.sale, chunk.ret, PAGE_WIDTH_DOTS, height, index + 1, totalPages)
+    imagePages.push(await getCanvasImageData(PAGE_WIDTH_DOTS, height))
+  }
+  return imagePages
+}
+
+function mergeJournalSetup(pages: Array<{ cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer }>) {
+  return pages[0]?.journalSetup || buildJournalSetup()
+}
+
+function firstPageResult(data: PrintDocData, imagePages: any[], pages: Array<{ cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer }>) {
+  return {
+    imageData: imagePages[0],
+    cpclBuffer: pages[0].cpclBuffer,
+    journalSetup: mergeJournalSetup(pages),
+    data,
+    pages,
+  }
+}
+
+function firstReturnPageResult(data: PrintDocData, imagePages: any[], pages: Array<{ cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer }>) {
+  return {
+    imageData: imagePages[0],
+    cpclBuffer: pages[0].cpclBuffer,
+    journalSetup: mergeJournalSetup(pages),
+    data,
+    pages,
+  }
+}
+
+function appendPagedBuildLog(label: string, pages: Array<{ cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer }>) {
+  if (pages.length > 1) {
+    appendLog('info', `[A4打印] ${label}已自动拆分为 ${pages.length} 页，末页裁切`)
+  }
+}
+
+function combinedPagesResult(pages: Array<{ cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer }>) {
+  return { pages }
+}
+
+function singlePageOptions(options: PrintBuildOptions = {}) {
+  return normalizeSinglePageOptions(options)
+}
+
+function getTaskId(value?: string, fallback?: string) {
+  return value || fallback || '1'
+}
+
+function shouldUseSinglePageImage(itemCount: number) {
+  return itemCount <= MAX_ITEMS_PER_PAGE
+}
+
+function buildPageDataTotals(items: PrintItem[]) {
+  return {
+    totalQty: items.reduce((sum, item) => sum + normalizeCount(item.qty), 0),
+    totalAmount: items.reduce((sum, item) => sum + item.amount, 0),
+  }
+}
+
+function buildCombinedTaskId(saleDoc: SaleDoc) {
+  return saleDoc.id || saleDoc.code || '1'
+}
+
+function shouldKeepRemarkOnPage(pageIndex: number, pageCount: number) {
+  return pageIndex === pageCount - 1
+}
+
+function createCombinedImagePage(height: number) {
+  return uni.createCanvasContext(CANVAS_ID)
+}
+
+function shouldPaginateByHeight(height: number) {
+  return height > PAGE_HEIGHT_DOTS
+}
+
+function buildCombinedPageHeight(saleCount: number, retCount: number) {
+  return estimateCombinedPageHeight(saleCount, retCount)
+}
+
+function renderCombinedSinglePage(data: CombinedPrintData, height: number) {
+  return height
+}
+
+function clampPageHeight(height: number) {
+  return height
+}
+
+function calculateMaxPrintableHeight() {
+  return PAGE_HEIGHT_DOTS
+}
+
+function createPageImageTaskId(baseTaskId: string, index: number, total: number) {
+  return total === 1 ? baseTaskId : `${baseTaskId}_p${index + 1}`
+}
+
+function buildNonCutOptions(options: PrintBuildOptions = {}) {
+  return { ...options, autoCut: false }
+}
+
+function buildPageOptions(options: PrintBuildOptions = {}, index: number, total: number) {
+  return index === total - 1 ? options : buildNonCutOptions(options)
+}
+
+function toPagedBuildResult(data: PrintDocData, imagePages: any[], taskId: string, options: PrintBuildOptions = {}) {
+  const pages = imagePages.map((imageData, index) => buildCpclCommand(imageData, createPageImageTaskId(taskId, index, imagePages.length), buildPageOptions(options, index, imagePages.length)))
+  return firstPageResult(data, imagePages, pages)
+}
+
+function toPagedReturnBuildResult(data: PrintDocData, imagePages: any[], taskId: string, options: PrintBuildOptions = {}) {
+  const pages = imagePages.map((imageData, index) => buildCpclCommand(imageData, createPageImageTaskId(taskId, index, imagePages.length), buildPageOptions(options, index, imagePages.length)))
+  return firstReturnPageResult(data, imagePages, pages)
+}
+
+function toCombinedBuildResult(imagePages: any[], taskId: string, options: PrintBuildOptions = {}) {
+  const pages = imagePages.map((imageData, index) => buildCpclCommand(imageData, createPageImageTaskId(taskId, index, imagePages.length), buildPageOptions(options, index, imagePages.length)))
+  return combinedPagesResult(pages)
+}
+
+function logPageCount(prefix: string, pageCount: number) {
+  if (pageCount > 1) {
+    appendLog('info', `[A4打印] ${prefix}已拆分 ${pageCount} 页，最后一页自动裁切`)
+  }
+}
+
+function getCombinedPageChunks(data: CombinedPrintData) {
+  return splitCombinedItemsByHeight(data.saleItems, data.returnItems, PAGE_HEIGHT_DOTS)
+}
+
+function createPrintDocPageData(data: PrintDocData, items: PrintItem[], remark?: string): PrintDocData {
+  const totals = buildPageDataTotals(items)
+  return {
+    ...data,
+    items,
+    totalQty: totals.totalQty,
+    totalAmount: totals.totalAmount,
+    remark,
+  }
+}
+
+function isSingleCombinedPage(data: CombinedPrintData, options: PrintBuildOptions = {}) {
+  const height = estimateCombinedHeight(data, data.saleItems, data.returnItems, options.fillFullPage)
+  return canPrintAsSinglePage(height) && data.saleItems.length + data.returnItems.length <= MAX_ITEMS_PER_PAGE
+}
+
+function getSingleCombinedHeight(data: CombinedPrintData, options: PrintBuildOptions = {}) {
+  return estimateCombinedHeight(data, data.saleItems, data.returnItems, options.fillFullPage)
+}
+
+function createCombinedPageData(data: CombinedPrintData) {
+  return data
+}
+
+function totalVarietyCount(data: CombinedPrintData) {
+  return data.saleItems.length + data.returnItems.length
+}
+
+function keepRemarkForSinglePage(data: CombinedPrintData) {
+  return data
+}
+
+function calculateSplitMaxHeight() {
+  return PAGE_HEIGHT_DOTS
+}
+
+function getPagedTaskBase(value?: string, fallback?: string) {
+  return getTaskId(value, fallback)
+}
+
+function toFirstPageBuffers(data: PrintDocData, imagePages: any[], taskId: string, options: PrintBuildOptions) {
+  return toPagedBuildResult(data, imagePages, taskId, options)
+}
+
+function toFirstReturnPageBuffers(data: PrintDocData, imagePages: any[], taskId: string, options: PrintBuildOptions) {
+  return toPagedReturnBuildResult(data, imagePages, taskId, options)
+}
+
+function toCombinedPageBuffers(imagePages: any[], taskId: string, options: PrintBuildOptions) {
+  return toCombinedBuildResult(imagePages, taskId, options)
+}
+
+function createCombinedCanvasContext() {
+  return uni.createCanvasContext(CANVAS_ID)
+}
+
+function createPrintCanvasContext() {
+  return uni.createCanvasContext(CANVAS_ID)
+}
+
+function renderSingleCombinedHeight(data: CombinedPrintData, options: PrintBuildOptions = {}) {
+  return getSingleCombinedHeight(data, options)
+}
+
+function renderCombinedChunkHeight(chunk: { sale: PrintItem[]; ret: PrintItem[] }) {
+  return estimateCombinedPageHeight(chunk.sale.length, chunk.ret.length)
+}
+
+function shouldRenderCombinedAsPaged(data: CombinedPrintData, options: PrintBuildOptions = {}) {
+  return !isSingleCombinedPage(data, options)
+}
+
+function logPagedCombined(totalPages: number) {
+  if (totalPages > 1) {
+    appendLog('info', `[A4打印] 合并打印内容较长，已拆分 ${totalPages} 页，最后一页自动裁切`)
+  }
+}
+
+function logPagedSale(totalPages: number) {
+  if (totalPages > 1) {
+    appendLog('info', `[A4打印] 销单内容较长，已拆分 ${totalPages} 页，最后一页自动裁切`)
+  }
+}
+
+function logPagedReturn(totalPages: number) {
+  if (totalPages > 1) {
+    appendLog('info', `[A4打印] 退货单内容较长，已拆分 ${totalPages} 页，最后一页自动裁切`)
+  }
+}
+
+function getPerPageTaskId(baseTaskId: string, index: number, total: number) {
+  return createPageImageTaskId(baseTaskId, index, total)
+}
+
+function getPerPageOptions(options: PrintBuildOptions = {}, index: number, total: number) {
+  return buildPageOptions(options, index, total)
+}
+
+function createPageCommands(imagePages: any[], taskId: string, options: PrintBuildOptions = {}) {
+  return imagePages.map((imageData, index) => buildCpclCommand(imageData, getPerPageTaskId(taskId, index, imagePages.length), getPerPageOptions(options, index, imagePages.length)))
+}
+
+function journalFromPages(pages: Array<{ cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer }>) {
+  return mergeJournalSetup(pages)
+}
+
+function singlePageBufferResult(data: PrintDocData, imagePages: any[], taskId: string, options: PrintBuildOptions = {}) {
+  const pages = createPageCommands(imagePages, taskId, options)
+  return {
+    imageData: imagePages[0],
+    cpclBuffer: pages[0].cpclBuffer,
+    journalSetup: journalFromPages(pages),
+    data,
+    pages,
+  }
+}
+
+function combinedBufferResult(imagePages: any[], taskId: string, options: PrintBuildOptions = {}) {
+  return { pages: createPageCommands(imagePages, taskId, options) }
+}
+
+function getSafePrintTaskId(docId?: string, docCode?: string) {
+  return docId || docCode || '1'
+}
+
+function includeRemarkOnLastPage(index: number, total: number, remark?: string) {
+  return index === total - 1 ? remark : undefined
+}
+
+function createPagedCombinedData(data: CombinedPrintData, chunk: { sale: PrintItem[]; ret: PrintItem[] }, index: number, total: number): CombinedPrintData {
+  return {
+    ...data,
+    saleItems: chunk.sale,
+    returnItems: chunk.ret,
+    saleTotalQty: chunk.sale.reduce((sum, item) => sum + normalizeCount(item.qty), 0),
+    saleTotalAmount: chunk.sale.reduce((sum, item) => sum + item.amount, 0),
+    returnTotalQty: chunk.ret.reduce((sum, item) => sum + normalizeCount(item.qty), 0),
+    returnTotalAmount: chunk.ret.reduce((sum, item) => sum + item.amount, 0),
+    remark: includeRemarkOnLastPage(index, total, data.remark),
+  }
+}
+
+function createPagedSaleData(data: PrintDocData, items: PrintItem[], index: number, total: number): PrintDocData {
+  return createPrintDocPageData(data, items, includeRemarkOnLastPage(index, total, data.remark))
+}
+
+function createPagedReturnData(data: PrintDocData, items: PrintItem[], index: number, total: number): PrintDocData {
+  return createPrintDocPageData(data, items, includeRemarkOnLastPage(index, total, data.remark))
+}
+
+function getPrintablePageLimit() {
+  return PAGE_HEIGHT_DOTS
+}
+
+function isOverPageHeight(height: number) {
+  return height > getPrintablePageLimit()
+}
+
+function appendSplitHint(label: string, pageCount: number) {
+  if (pageCount > 1) appendLog('info', `[A4打印] ${label}超出单页高度，已拆分 ${pageCount} 页`)
+}
+
+function resolveCombinedDate(doc: SaleDoc) {
+  return resolvePrintDate(doc)
+}
+
+function resolvePageHeight(data: PrintDocData, options: PrintBuildOptions = {}) {
+  return estimateContentHeight(data, options.fillFullPage)
+}
+
+function resolveCombinedHeight(data: CombinedPrintData, options: PrintBuildOptions = {}) {
+  return estimateCombinedHeight(data, data.saleItems, data.returnItems, options.fillFullPage)
+}
+
+function buildMultiPageCommands(imagePages: any[], taskId: string, options: PrintBuildOptions = {}) {
+  return createPageCommands(imagePages, taskId, options)
+}
+
+function singlePageHeightAllowed(height: number) {
+  return !isOverPageHeight(height)
+}
+
+function createCombinedChunkContext() {
+  return uni.createCanvasContext(CANVAS_ID)
+}
+
+function combinedSinglePageAllowed(data: CombinedPrintData, options: PrintBuildOptions = {}) {
+  return singlePageHeightAllowed(resolveCombinedHeight(data, options)) && totalVarietyCount(data) <= MAX_ITEMS_PER_PAGE
+}
+
+function createSinglePageImageData(width: number, height: number) {
+  return getCanvasImageData(width, height)
+}
+
+function addPagedPrintLog(label: string, pages: number) {
+  appendSplitHint(label, pages)
+}
+
+function getAutoCutOptionsForPage(options: PrintBuildOptions = {}, pageIndex: number, totalPages: number) {
+  return pageIndex === totalPages - 1 ? options : { ...options, autoCut: false }
+}
+
+function createCommandPages(imagePages: any[], baseTaskId: string, options: PrintBuildOptions = {}) {
+  return imagePages.map((imageData, pageIndex) => buildCpclCommand(imageData, createPageImageTaskId(baseTaskId, pageIndex, imagePages.length), getAutoCutOptionsForPage(options, pageIndex, imagePages.length)))
+}
+
+function getCombinedResultFromImages(imagePages: any[], baseTaskId: string, options: PrintBuildOptions = {}) {
+  return { pages: createCommandPages(imagePages, baseTaskId, options) }
+}
+
+function getSingleResultFromImages(data: PrintDocData, imagePages: any[], baseTaskId: string, options: PrintBuildOptions = {}) {
+  const pages = createCommandPages(imagePages, baseTaskId, options)
+  return {
+    imageData: imagePages[0],
+    cpclBuffer: pages[0].cpclBuffer,
+    journalSetup: pages[0].journalSetup,
+    data,
+    pages,
+  }
+}
+
+function getReturnResultFromImages(data: PrintDocData, imagePages: any[], baseTaskId: string, options: PrintBuildOptions = {}) {
+  const pages = createCommandPages(imagePages, baseTaskId, options)
+  return {
+    imageData: imagePages[0],
+    cpclBuffer: pages[0].cpclBuffer,
+    journalSetup: pages[0].journalSetup,
+    data,
+    pages,
+  }
+}
+
+function getFinalRemark(data: PrintDocData, pageIndex: number, totalPages: number) {
+  return pageIndex === totalPages - 1 ? data.remark : undefined
+}
+
+function getFinalCombinedRemark(data: CombinedPrintData, pageIndex: number, totalPages: number) {
+  return pageIndex === totalPages - 1 ? data.remark : undefined
+}
+
+function buildPageLogName(data: PrintDocData) {
+  return data.type === 'sale' ? '销单' : '退货单'
+}
+
+function buildCombinedLogName() {
+  return '合并打印'
+}
+
+function getPageChunkTotals(items: PrintItem[]) {
+  return buildPageDataTotals(items)
+}
+
+function getChunkedSaleData(data: PrintDocData, items: PrintItem[], pageIndex: number, totalPages: number) {
+  const totals = getPageChunkTotals(items)
+  return {
+    ...data,
+    items,
+    totalQty: totals.totalQty,
+    totalAmount: totals.totalAmount,
+    remark: getFinalRemark(data, pageIndex, totalPages),
+  }
+}
+
+function getChunkedCombinedData(data: CombinedPrintData, chunk: { sale: PrintItem[]; ret: PrintItem[] }, pageIndex: number, totalPages: number) {
+  return {
+    ...data,
+    saleItems: chunk.sale,
+    returnItems: chunk.ret,
+    saleTotalQty: chunk.sale.reduce((sum, item) => sum + normalizeCount(item.qty), 0),
+    saleTotalAmount: chunk.sale.reduce((sum, item) => sum + item.amount, 0),
+    returnTotalQty: chunk.ret.reduce((sum, item) => sum + normalizeCount(item.qty), 0),
+    returnTotalAmount: chunk.ret.reduce((sum, item) => sum + item.amount, 0),
+    remark: getFinalCombinedRemark(data, pageIndex, totalPages),
+  }
+}
+
+function shouldSplitSale(data: PrintDocData, options: PrintBuildOptions = {}) {
+  return isOverPageHeight(resolvePageHeight(data, options))
+}
+
+function shouldSplitCombined(data: CombinedPrintData, options: PrintBuildOptions = {}) {
+  return !combinedSinglePageAllowed(data, options)
+}
+
+function getSplitMaxHeight() {
+  return PAGE_HEIGHT_DOTS
+}
+
+function buildImagePageTaskId(baseTaskId: string, pageIndex: number, totalPages: number) {
+  return createPageImageTaskId(baseTaskId, pageIndex, totalPages)
+}
+
+function buildImagePageOptions(options: PrintBuildOptions, pageIndex: number, totalPages: number) {
+  return getAutoCutOptionsForPage(options, pageIndex, totalPages)
+}
+
+function createImagePageCommands(imagePages: any[], baseTaskId: string, options: PrintBuildOptions) {
+  return imagePages.map((imageData, pageIndex) => buildCpclCommand(imageData, buildImagePageTaskId(baseTaskId, pageIndex, imagePages.length), buildImagePageOptions(options, pageIndex, imagePages.length)))
+}
+
+function firstPageJournalSetup(pages: Array<{ cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer }>) {
+  return pages[0]?.journalSetup || buildJournalSetup()
+}
+
+function resultFromSalePages(data: PrintDocData, imagePages: any[], baseTaskId: string, options: PrintBuildOptions) {
+  const pages = createImagePageCommands(imagePages, baseTaskId, options)
+  return {
+    imageData: imagePages[0],
+    cpclBuffer: pages[0].cpclBuffer,
+    journalSetup: firstPageJournalSetup(pages),
+    data,
+    pages,
+  }
+}
+
+function resultFromCombinedPages(imagePages: any[], baseTaskId: string, options: PrintBuildOptions) {
+  return { pages: createImagePageCommands(imagePages, baseTaskId, options) }
+}
+
+function logSplitPage(label: string, pageCount: number) {
+  if (pageCount > 1) {
+    appendLog('info', `[A4打印] ${label}内容较长，已自动拆分 ${pageCount} 页，最后一页裁切`)
+  }
+}
+
+function canUseFillFullPage(options: PrintBuildOptions = {}) {
+  return !!options.fillFullPage
+}
+
+function buildSplitItems(items: PrintItem[], maxHeight: number, estimateHeight: (count: number) => number) {
+  return splitItemsByHeight(items, maxHeight, estimateHeight)
+}
+
+function getDrawHeightForCombined(chunk: { sale: PrintItem[]; ret: PrintItem[] }) {
+  return estimateCombinedPageHeight(chunk.sale.length, chunk.ret.length)
+}
+
+function buildCombinedChunks(data: CombinedPrintData) {
+  return splitCombinedItemsByHeight(data.saleItems, data.returnItems, getSplitMaxHeight())
+}
+
+function getTaskBaseId(docId?: string, docCode?: string) {
+  return docId || docCode || '1'
+}
+
+function getSafeRemark(data: PrintDocData, pageIndex: number, pageCount: number) {
+  return pageIndex === pageCount - 1 ? data.remark : undefined
+}
+
+function getSafeCombinedRemark(data: CombinedPrintData, pageIndex: number, pageCount: number) {
+  return pageIndex === pageCount - 1 ? data.remark : undefined
+}
+
+function buildChunkedDocData(data: PrintDocData, items: PrintItem[], pageIndex: number, pageCount: number): PrintDocData {
+  const totals = buildPageDataTotals(items)
+  return {
+    ...data,
+    items,
+    totalQty: totals.totalQty,
+    totalAmount: totals.totalAmount,
+    remark: getSafeRemark(data, pageIndex, pageCount),
+  }
+}
+
+function buildChunkedCombinedPrintData(data: CombinedPrintData, chunk: { sale: PrintItem[]; ret: PrintItem[] }, pageIndex: number, pageCount: number): CombinedPrintData {
+  return {
+    ...data,
+    saleItems: chunk.sale,
+    returnItems: chunk.ret,
+    saleTotalQty: chunk.sale.reduce((sum, item) => sum + normalizeCount(item.qty), 0),
+    saleTotalAmount: chunk.sale.reduce((sum, item) => sum + item.amount, 0),
+    returnTotalQty: chunk.ret.reduce((sum, item) => sum + normalizeCount(item.qty), 0),
+    returnTotalAmount: chunk.ret.reduce((sum, item) => sum + item.amount, 0),
+    remark: getSafeCombinedRemark(data, pageIndex, pageCount),
+  }
+}
+
+function pageNeedsSplit(height: number) {
+  return height > PAGE_HEIGHT_DOTS
+}
+
+function allowedPageHeight() {
+  return PAGE_HEIGHT_DOTS
+}
+
+function buildImageTaskId(baseId: string, pageIndex: number, totalPages: number) {
+  return totalPages === 1 ? baseId : `${baseId}_p${pageIndex + 1}`
+}
+
+function buildImageOptions(options: PrintBuildOptions, pageIndex: number, totalPages: number) {
+  return pageIndex === totalPages - 1 ? options : { ...options, autoCut: false }
+}
+
+function createPageBuilds(imagePages: any[], baseId: string, options: PrintBuildOptions) {
+  return imagePages.map((imageData, pageIndex) => buildCpclCommand(imageData, buildImageTaskId(baseId, pageIndex, imagePages.length), buildImageOptions(options, pageIndex, imagePages.length)))
+}
+
+function buildSaleResult(data: PrintDocData, imagePages: any[], baseId: string, options: PrintBuildOptions) {
+  const pages = createPageBuilds(imagePages, baseId, options)
+  return {
+    imageData: imagePages[0],
+    cpclBuffer: pages[0].cpclBuffer,
+    journalSetup: pages[0].journalSetup,
+    data,
+    pages,
+  }
+}
+
+function buildCombinedResult(imagePages: any[], baseId: string, options: PrintBuildOptions) {
+  return { pages: createPageBuilds(imagePages, baseId, options) }
+}
+
+function combinedBaseId(saleDoc: SaleDoc) {
+  return getTaskBaseId(saleDoc.id, saleDoc.code)
+}
+
+function saleBaseId(doc: SaleDoc) {
+  return getTaskBaseId(doc.id, doc.code)
+}
+
+function returnBaseId(doc: ReturnDoc) {
+  return getTaskBaseId(doc.id, doc.code)
+}
+
+function getCombinedPagesCount(chunks: Array<{ sale: PrintItem[]; ret: PrintItem[] }>) {
+  return chunks.length
+}
+
+function shouldLeaveRemarkOnPage(index: number, total: number) {
+  return index === total - 1
+}
+
+function safePrintHeight(height: number) {
+  return height
+}
+
+function pageCountLabel(pageCount: number) {
+  return pageCount
+}
+
+function pageSplitNotice(label: string, pageCount: number) {
+  logSplitPage(label, pageCount)
+}
+
+function singlePageNotice(label: string) {
+  return label
+}
+
+function finalPageOptions(options: PrintBuildOptions, pageIndex: number, totalPages: number) {
+  return buildImageOptions(options, pageIndex, totalPages)
+}
+
+function pageBuilds(imagePages: any[], baseId: string, options: PrintBuildOptions) {
+  return createPageBuilds(imagePages, baseId, options)
+}
+
+function splitHeightLimit() {
+  return allowedPageHeight()
+}
+
+function needsSplitByPageHeight(height: number) {
+  return pageNeedsSplit(height)
+}
+
+function buildChunkTotals(items: PrintItem[]) {
+  return buildPageDataTotals(items)
+}
+
+function buildPageDocData(data: PrintDocData, items: PrintItem[], index: number, total: number): PrintDocData {
+  const totals = buildChunkTotals(items)
+  return {
+    ...data,
+    items,
+    totalQty: totals.totalQty,
+    totalAmount: totals.totalAmount,
+    remark: shouldLeaveRemarkOnPage(index, total) ? data.remark : undefined,
+  }
+}
+
+function buildPageCombinedData(data: CombinedPrintData, chunk: { sale: PrintItem[]; ret: PrintItem[] }, index: number, total: number): CombinedPrintData {
+  return {
+    ...data,
+    saleItems: chunk.sale,
+    returnItems: chunk.ret,
+    saleTotalQty: chunk.sale.reduce((sum, item) => sum + normalizeCount(item.qty), 0),
+    saleTotalAmount: chunk.sale.reduce((sum, item) => sum + item.amount, 0),
+    returnTotalQty: chunk.ret.reduce((sum, item) => sum + normalizeCount(item.qty), 0),
+    returnTotalAmount: chunk.ret.reduce((sum, item) => sum + item.amount, 0),
+    remark: shouldLeaveRemarkOnPage(index, total) ? data.remark : undefined,
+  }
+}
+
+function pageLimitHeight() {
+  return splitHeightLimit()
+}
+
+function useSinglePage(height: number) {
+  return !needsSplitByPageHeight(height)
+}
+
+function useSingleCombinedPage(data: CombinedPrintData, options: PrintBuildOptions) {
+  return combinedSinglePageAllowed(data, options)
+}
+
+function createChunkImagePages(imagePages: any[], baseId: string, options: PrintBuildOptions) {
+  return pageBuilds(imagePages, baseId, options)
+}
+
+function resultPagesFromImages(imagePages: any[], baseId: string, options: PrintBuildOptions) {
+  return createChunkImagePages(imagePages, baseId, options)
+}
+
+function resultJournal(pages: Array<{ cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer }>) {
+  return pages[0]?.journalSetup || buildJournalSetup()
+}
+
+function longPageHint(label: string, pageCount: number) {
+  pageSplitNotice(label, pageCount)
+}
+
+function noCutOptions(options: PrintBuildOptions) {
+  return { ...options, autoCut: false }
+}
+
+function optionsForPage(options: PrintBuildOptions, pageIndex: number, totalPages: number) {
+  return pageIndex === totalPages - 1 ? options : noCutOptions(options)
+}
+
+function commandPagesFromImages(imagePages: any[], baseId: string, options: PrintBuildOptions) {
+  return imagePages.map((imageData, pageIndex) => buildCpclCommand(imageData, buildImageTaskId(baseId, pageIndex, imagePages.length), optionsForPage(options, pageIndex, imagePages.length)))
+}
+
+function resultForDocPages(data: PrintDocData, imagePages: any[], baseId: string, options: PrintBuildOptions) {
+  const pages = commandPagesFromImages(imagePages, baseId, options)
+  return {
+    imageData: imagePages[0],
+    cpclBuffer: pages[0].cpclBuffer,
+    journalSetup: resultJournal(pages),
+    data,
+    pages,
+  }
+}
+
+function resultForCombined(imagePages: any[], baseId: string, options: PrintBuildOptions) {
+  return { pages: commandPagesFromImages(imagePages, baseId, options) }
+}
+
+function finalTaskId(docId?: string, docCode?: string) {
+  return getTaskBaseId(docId, docCode)
+}
+
+function finalLog(label: string, count: number) {
+  longPageHint(label, count)
+}
+
+function totalItemsCount(data: CombinedPrintData) {
+  return data.saleItems.length + data.returnItems.length
+}
+
+function canKeepSinglePage(data: CombinedPrintData, options: PrintBuildOptions) {
+  return useSingleCombinedPage(data, options) && totalItemsCount(data) <= MAX_ITEMS_PER_PAGE
+}
+
+function imageHeightForCombined(chunk: { sale: PrintItem[]; ret: PrintItem[] }) {
+  return renderCombinedChunkHeight(chunk)
+}
+
+function heightForDoc(data: PrintDocData, options: PrintBuildOptions) {
+  return resolvePageHeight(data, options)
+}
+
+function heightForCombined(data: CombinedPrintData, options: PrintBuildOptions) {
+  return resolveCombinedHeight(data, options)
+}
+
+function getHeightLimit() {
+  return pageLimitHeight()
+}
+
+function shouldSplitItems(height: number) {
+  return height > getHeightLimit()
+}
+
+function createSplitItems(items: PrintItem[], estimateHeight: (count: number) => number) {
+  return buildSplitItems(items, getHeightLimit(), estimateHeight)
+}
+
+function createSplitCombined(data: CombinedPrintData) {
+  return buildCombinedChunks(data)
+}
+
+function combinedPrintDate(doc: SaleDoc) {
+  return resolvePrintDate(doc)
+}
+
+function combinedRemark(doc: SaleDoc) {
+  return doc.remark
+}
+
+function printHeight(height: number) {
+  return safePrintHeight(height)
+}
+
+function createPageCtx() {
+  return createPrintCanvasContext()
+}
+
+function createCombinedCtx() {
+  return createCombinedCanvasContext()
+}
+
+function docPagesLabel(data: PrintDocData) {
+  return buildPageLogName(data)
+}
+
+function combinedPagesLabel() {
+  return buildCombinedLogName()
+}
+
+function singlePageData(data: PrintDocData) {
+  return data
+}
+
+function singleCombinedData(data: CombinedPrintData) {
+  return data
+}
+
+function hasLongContent(height: number) {
+  return shouldSplitItems(height)
+}
+
+function createTaskBaseId(docId?: string, docCode?: string) {
+  return finalTaskId(docId, docCode)
+}
+
+function pageImageCommands(imagePages: any[], baseId: string, options: PrintBuildOptions) {
+  return commandPagesFromImages(imagePages, baseId, options)
+}
+
+function journalSetupFromPages(pages: Array<{ cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer }>) {
+  return resultJournal(pages)
+}
+
+function docPageResult(data: PrintDocData, imagePages: any[], baseId: string, options: PrintBuildOptions) {
+  return resultForDocPages(data, imagePages, baseId, options)
+}
+
+function combinedPageResult(imagePages: any[], baseId: string, options: PrintBuildOptions) {
+  return resultForCombined(imagePages, baseId, options)
+}
+
+function pageCountNotice(label: string, count: number) {
+  finalLog(label, count)
+}
+
+function pageHeightNotice(height: number) {
+  return height
+}
+
+function splitLabel(data: PrintDocData) {
+  return docPagesLabel(data)
+}
+
+function splitCombinedLabel() {
+  return combinedPagesLabel()
+}
+
+function imagePagesCount(imagePages: any[]) {
+  return imagePages.length
+}
+
+function pageTaskId(baseId: string, pageIndex: number, totalPages: number) {
+  return buildImageTaskId(baseId, pageIndex, totalPages)
+}
+
+function pageTaskOptions(options: PrintBuildOptions, pageIndex: number, totalPages: number) {
+  return optionsForPage(options, pageIndex, totalPages)
+}
+
+function drawPageNotice(pageCount: number) {
+  return pageCount
+}
+
+function getCombinedItemsCount(data: CombinedPrintData) {
+  return totalItemsCount(data)
+}
+
+function shouldCombinedSinglePage(data: CombinedPrintData, options: PrintBuildOptions) {
+  return canKeepSinglePage(data, options)
+}
+
+function dataDate(doc: SaleDoc) {
+  return combinedPrintDate(doc)
+}
+
+function dataRemark(doc: SaleDoc) {
+  return combinedRemark(doc)
+}
+
+function pageImageResult(data: PrintDocData, imagePages: any[], baseId: string, options: PrintBuildOptions) {
+  return docPageResult(data, imagePages, baseId, options)
+}
+
+function pageCombinedImageResult(imagePages: any[], baseId: string, options: PrintBuildOptions) {
+  return combinedPageResult(imagePages, baseId, options)
+}
+
+function useSplitPage(height: number) {
+  return hasLongContent(height)
+}
+
+function useSplitCombinedPage(data: CombinedPrintData, options: PrintBuildOptions) {
+  return !shouldCombinedSinglePage(data, options)
+}
+
+function pageImagesResult(data: PrintDocData, imagePages: any[], baseId: string, options: PrintBuildOptions) {
+  return pageImageResult(data, imagePages, baseId, options)
+}
+
+function combinedImagesResult(imagePages: any[], baseId: string, options: PrintBuildOptions) {
+  return pageCombinedImageResult(imagePages, baseId, options)
+}
+
+function getPageTaskBaseId(docId?: string, docCode?: string) {
+  return createTaskBaseId(docId, docCode)
+}
+
+function getPageLabel(data: PrintDocData) {
+  return splitLabel(data)
+}
+
+function getCombinedLabel() {
+  return splitCombinedLabel()
+}
+
+function logPageSplit(label: string, pageCount: number) {
+  pageCountNotice(label, pageCount)
+}
+
+function getPageImageHeight(height: number) {
+  return printHeight(height)
+}
+
+function buildPageData(data: PrintDocData, items: PrintItem[], pageIndex: number, pageCount: number) {
+  return buildPageDocData(data, items, pageIndex, pageCount)
+}
+
+function buildCombinedDataByChunk(data: CombinedPrintData, chunk: { sale: PrintItem[]; ret: PrintItem[] }, pageIndex: number, pageCount: number) {
+  return buildPageCombinedData(data, chunk, pageIndex, pageCount)
+}
+
+function shouldAddAutoCut(options: PrintBuildOptions, pageIndex: number, pageCount: number) {
+  return pageIndex === pageCount - 1 ? options : noCutOptions(options)
+}
+
+function buildPageCommandsFromImages(imagePages: any[], baseId: string, options: PrintBuildOptions) {
+  return imagePages.map((imageData, pageIndex) => buildCpclCommand(imageData, pageTaskId(baseId, pageIndex, imagePages.length), shouldAddAutoCut(options, pageIndex, imagePages.length)))
+}
+
+function buildPageResult(data: PrintDocData, imagePages: any[], baseId: string, options: PrintBuildOptions) {
+  const pages = buildPageCommandsFromImages(imagePages, baseId, options)
+  return {
+    imageData: imagePages[0],
+    cpclBuffer: pages[0].cpclBuffer,
+    journalSetup: journalSetupFromPages(pages),
+    data,
+    pages,
+  }
+}
+
+function buildCombinedPagesResult(imagePages: any[], baseId: string, options: PrintBuildOptions) {
+  return { pages: buildPageCommandsFromImages(imagePages, baseId, options) }
+}
+
+function finalPageLabel(data: PrintDocData) {
+  return getPageLabel(data)
+}
+
+function finalCombinedPageLabel() {
+  return getCombinedLabel()
+}
+
+function notifySplit(label: string, pageCount: number) {
+  logPageSplit(label, pageCount)
+}
+
+function getPageBaseId(docId?: string, docCode?: string) {
+  return getPageTaskBaseId(docId, docCode)
+}
+
+function renderDocImages(data: PrintDocData, options: PrintBuildOptions, estimateHeight: (count: number) => number): Promise<any[]> {
+  const height = heightForDoc(data, options)
+  if (!useSplitPage(height)) {
+    return Promise.resolve([])
+  }
+  const chunks = createSplitItems(data.items, estimateHeight)
+  notifySplit(finalPageLabel(data), chunks.length)
+  return Promise.all(chunks.map((items, index) => generatePrintImageData(buildPageData(data, items, index, chunks.length), false)))
+}
+
+function renderCombinedImagePages(data: CombinedPrintData, options: PrintBuildOptions): Promise<any[]> {
+  const height = heightForCombined(data, options)
+  if (!useSplitCombinedPage(data, options)) {
+    return Promise.resolve([])
+  }
+  const chunks = createSplitCombined(data)
+  notifySplit(finalCombinedPageLabel(), chunks.length)
+  return Promise.all(chunks.map(async (chunk, index) => {
+    const pageData = buildCombinedDataByChunk(data, chunk, index, chunks.length)
+    const pageHeight = getPageImageHeight(imageHeightForCombined(chunk))
+    const ctx = createCombinedCtx()
+    await drawCombinedContent(ctx, pageData, pageData.saleItems, pageData.returnItems, PAGE_WIDTH_DOTS, pageHeight, index + 1, chunks.length)
+    return getCanvasImageData(PAGE_WIDTH_DOTS, pageHeight)
+  }))
+}
+
+function getSaleImagePages(data: PrintDocData, options: PrintBuildOptions) {
+  return renderDocImages(data, options, estimateSalePageHeight)
+}
+
+function getReturnImagePages(data: PrintDocData, options: PrintBuildOptions) {
+  return renderDocImages(data, options, estimateReturnPageHeight)
+}
+
+function getCombinedImagePages(data: CombinedPrintData, options: PrintBuildOptions) {
+  return renderCombinedImagePages(data, options)
+}
+
+function saleResultFromPages(data: PrintDocData, imagePages: any[], baseId: string, options: PrintBuildOptions) {
+  return buildPageResult(data, imagePages, baseId, options)
+}
+
+function returnResultFromPages(data: PrintDocData, imagePages: any[], baseId: string, options: PrintBuildOptions) {
+  return buildPageResult(data, imagePages, baseId, options)
+}
+
+function combinedResultFromPages(imagePages: any[], baseId: string, options: PrintBuildOptions) {
+  return buildCombinedPagesResult(imagePages, baseId, options)
+}
+
+function getSinglePageImageData(data: PrintDocData, options: PrintBuildOptions) {
+  return generatePrintImageData(data, options.fillFullPage)
+}
+
+function getSingleCombinedImageData(data: CombinedPrintData, options: PrintBuildOptions) {
+  return Promise.resolve(null)
+}
+
+function renderSingleCombinedImage(data: CombinedPrintData, options: PrintBuildOptions): Promise<any> {
+  const height = resolveCombinedHeight(data, options)
+  const ctx = createCombinedCtx()
+  return drawCombinedContent(ctx, data, data.saleItems, data.returnItems, PAGE_WIDTH_DOTS, height, 1, 1).then(() => getCanvasImageData(PAGE_WIDTH_DOTS, height))
+}
+
+function isSaleSinglePage(data: PrintDocData, options: PrintBuildOptions) {
+  return !useSplitPage(heightForDoc(data, options))
+}
+
+function isCombinedSinglePage(data: CombinedPrintData, options: PrintBuildOptions) {
+  return !useSplitCombinedPage(data, options)
+}
+
+function getCombinedTaskId(saleDoc: SaleDoc) {
+  return getPageBaseId(saleDoc.id, saleDoc.code)
+}
+
+function getSaleTaskId(doc: SaleDoc) {
+  return getPageBaseId(doc.id, doc.code)
+}
+
+function getReturnTaskId(doc: ReturnDoc) {
+  return getPageBaseId(doc.id, doc.code)
 }
 
 async function drawPrintContent(ctx: any, data: PrintDocData, width: number, height: number): Promise<void> {
@@ -139,7 +1302,7 @@ async function drawPrintContent(ctx: any, data: PrintDocData, width: number, hei
 
   const colSeq = left
   const colBarcode = left + Math.floor(contentWidth * 0.06)
-  const colName = left + Math.floor(contentWidth * 0.26)
+  const colName = left + Math.floor(contentWidth * 0.26) + PRODUCT_COLUMN_OFFSET_DOTS
   const colQty = left + Math.floor(contentWidth * 0.66)
   const colPrice = left + Math.floor(contentWidth * 0.79)
   const colAmount = left + Math.floor(contentWidth * 0.89)
@@ -161,7 +1324,7 @@ async function drawPrintContent(ctx: any, data: PrintDocData, width: number, hei
 
   ctx.setFontSize(40)
   ctx.fillText(`单号:${data.code}`, left, y + 40)
-  ctx.fillText(`日期:${formatPrintDate(data.date)}`, mid, y + 40)
+  ctx.fillText(`日期:${data.date}`, mid, y + 40)
   y += 54
   ctx.fillText(`店铺:${data.storeName}`, left, y + 40)
   ctx.fillText(`业务员:${formatSalesperson(data.salespersonName)}`, mid, y + 40)
@@ -452,7 +1615,6 @@ interface CombinedPrintData {
   remark?: string
 }
 
-const MAX_ITEMS_PER_PAGE = 30
 
 function estimateCombinedHeight(data: CombinedPrintData, saleItems: PrintItem[], returnItems: PrintItem[], fillFullPage: boolean = false): number {
   if (fillFullPage) return PAGE_HEIGHT_DOTS
@@ -465,7 +1627,7 @@ function estimateCombinedHeight(data: CombinedPrintData, saleItems: PrintItem[],
   const footerH = 56 + 56 + 22
 
   const margin = PAGE_MARGIN_DOTS
-  return Math.min(margin + headerH + 15 + infoH + 15 + saleTableH + sectionLabelH + returnTableH + 15 + footerH + margin + CUT_BOTTOM_BLANK_DOTS, PAGE_HEIGHT_DOTS)
+  return margin + headerH + 15 + infoH + 15 + saleTableH + sectionLabelH + returnTableH + 15 + footerH + margin + CUT_BOTTOM_BLANK_DOTS
 }
 
 async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems: PrintItem[], returnItems: PrintItem[], width: number, height: number, pageNo: number, totalPages: number): Promise<void> {
@@ -481,7 +1643,7 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
 
   const colSeq = left
   const colBarcode = left + Math.floor(contentWidth * 0.06)
-  const colName = left + Math.floor(contentWidth * 0.26)
+  const colName = left + Math.floor(contentWidth * 0.26) + PRODUCT_COLUMN_OFFSET_DOTS
   const colQty = left + Math.floor(contentWidth * 0.66)
   const colPrice = left + Math.floor(contentWidth * 0.79)
   const colAmount = left + Math.floor(contentWidth * 0.89)
@@ -503,7 +1665,7 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
 
   ctx.setFontSize(40)
   ctx.fillText(`单号:${data.code}`, left, y + 40)
-  ctx.fillText(`日期:${formatPrintDate(data.date)}`, mid, y + 40)
+  ctx.fillText(`日期:${data.date}`, mid, y + 40)
   y += 54
   ctx.fillText(`店铺:${data.storeName}`, left, y + 40)
   ctx.fillText(`业务员:${formatSalesperson(data.salespersonName)}`, mid, y + 40)
@@ -684,7 +1846,6 @@ export async function buildCombinedPrintData(
     }
   })
 
-  const totalVarieties = saleItems.length + returnItems.length
   const saleTotalQty = saleItems.reduce((s, i) => s + normalizeCount(i.qty), 0)
   const saleTotalAmount = saleItems.reduce((s, i) => s + i.amount, 0)
   const returnTotalQty = returnItems.reduce((s, i) => s + normalizeCount(i.qty), 0)
@@ -692,7 +1853,7 @@ export async function buildCombinedPrintData(
 
   const combinedData: CombinedPrintData = {
     code: resolveDocCode(saleDoc.code, saleDoc.id),
-    date: saleDoc.date,
+    date: resolvePrintDate(saleDoc),
     storeName: store?.name || '-',
     salespersonName,
     saleItems,
@@ -705,51 +1866,14 @@ export async function buildCombinedPrintData(
     remark: saleDoc.remark,
   }
 
-  // 分页逻辑：总品种超过30种则拆分
-  const pages: Array<{ cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer }> = []
+  const height = estimateCombinedHeight(combinedData, saleItems, returnItems, options.fillFullPage)
+  const ctx = uni.createCanvasContext(CANVAS_ID)
+  await drawCombinedContent(ctx, combinedData, saleItems, returnItems, PAGE_WIDTH_DOTS, height, 1, 1)
+  const imageData = await getCanvasImageData(PAGE_WIDTH_DOTS, height)
+  const page = buildCpclCommand(imageData, saleDoc.id || saleDoc.code, options)
 
-  if (totalVarieties <= MAX_ITEMS_PER_PAGE) {
-    // 单页
-    const height = estimateCombinedHeight(combinedData, saleItems, returnItems, options.fillFullPage)
-    const ctx = uni.createCanvasContext(CANVAS_ID)
-    await drawCombinedContent(ctx, combinedData, saleItems, returnItems, PAGE_WIDTH_DOTS, height, 1, 1)
-    const imageData = await getCanvasImageData(PAGE_WIDTH_DOTS, height)
-    pages.push(buildCpclCommand(imageData, saleDoc.id || saleDoc.code, options))
-  } else {
-    // 多页：先放销单，再放退单，按 MAX_ITEMS_PER_PAGE 拆
-    const allPageItems: Array<{ sale: PrintItem[]; ret: PrintItem[] }> = []
-    let remainSale = [...saleItems]
-    let remainReturn = [...returnItems]
-    while (remainSale.length > 0 || remainReturn.length > 0) {
-      const pageSale: PrintItem[] = []
-      const pageReturn: PrintItem[] = []
-      let slots = MAX_ITEMS_PER_PAGE
-
-      if (remainSale.length > 0) {
-        const take = Math.min(remainSale.length, slots)
-        pageSale.push(...remainSale.splice(0, take))
-        slots -= take
-      }
-      if (remainReturn.length > 0 && slots > 0) {
-        const take = Math.min(remainReturn.length, slots)
-        pageReturn.push(...remainReturn.splice(0, take))
-      }
-      allPageItems.push({ sale: pageSale, ret: pageReturn })
-    }
-
-    const totalPages = allPageItems.length
-    for (let i = 0; i < totalPages; i++) {
-      const { sale: pageSaleItems, ret: pageReturnItems } = allPageItems[i]
-      const height = estimateCombinedHeight(combinedData, pageSaleItems, pageReturnItems, options.fillFullPage)
-      const ctx = uni.createCanvasContext(CANVAS_ID)
-      await drawCombinedContent(ctx, combinedData, pageSaleItems, pageReturnItems, PAGE_WIDTH_DOTS, height, i + 1, totalPages)
-      const imageData = await getCanvasImageData(PAGE_WIDTH_DOTS, height)
-      pages.push(buildCpclCommand(imageData, `${saleDoc.id || saleDoc.code}_p${i + 1}`, options))
-    }
-  }
-
-  appendLog('info', `[A5打印] 合并打印数据生成完成：${pages.length} 页，销 ${saleItems.length} 种 + 退 ${returnItems.length} 种`)
-  return { pages }
+  appendLog('info', `[A4打印] 合并打印数据生成完成：单页长图，销 ${saleItems.length} 种 + 退 ${returnItems.length} 种，高度 ${height}`)
+  return { pages: [page] }
 }
 
 export { CANVAS_ID, PAGE_WIDTH_DOTS, DPI, estimateContentHeight, generatePrintImageData, buildCpclCommand, buildJournalSetup }
