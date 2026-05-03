@@ -1,105 +1,220 @@
-## 系统名称 
-仓库管理系统 warehouse 
-### 系统概要
-仓库管理系统总共分为两个大的模块，分别是系统模块和业务模块。其中系统模块和业务模块底下又有其子模块。
-### 功能模块
-#### 一、业务模块
-##### 1、客户管理
-###### 客户列表
-###### 客户分页和模糊查询
-###### 客户添加、修改、删除、批量删除
-##### 2、供应商管理
-###### 供应商列表
-###### 供应商分页和模糊查询
-###### 供应商添加、修改、删除、批量删除
-##### 3、商品管理
-###### 商品列表
-###### 商品分页和模糊查询
-###### 商品添加、修改、删除、商品图片的上传
-##### 4、商品进货管理
-###### 商品进货列表
-###### 商品进货分页和模糊查询
-###### 商品进货添加、修改、删除、商品退货
-##### 5、商品退货管理
-###### 商品退货列表
-###### 商品退货分页和模糊查询
-###### 商品退货删除
-##### 6、商品销售管理
-###### 商品销售列表
-###### 商品销售分页和模糊查询
-###### 商品销售添加、修改、删除、商品销售退货
-##### 7、商品销售退货管理
-###### 商品销售退货列表
-###### 商品销售退货分页和模糊查询
-###### 商品销售退货删除
-#### 二、系统模块
-##### 1、用户登陆
-###### 校验用户名、密码以及验证码
-###### 登陆成功将登陆信息写入登陆日志
-###### 未登录直接访问服务器资源进行拦截
-##### 2、菜单管理
-###### 全查询菜单和根据左边的树查询不同菜单
-###### 菜单的添加、修改、删除
-##### 3、角色管理
-###### 全查询角色和模糊查询
-###### 角色的添加、修改、删除以及给角色分配权限
-##### 4、用户管理
-###### 全查询用户和模糊查询
-###### 用户的添加、修改、删除、重置密码以及给用户分配角色
-##### 5、部门管理
-###### 全查询部门、模糊查询以及根据左边的树查询不同的部门
-###### 部门的添加、修改、删除
+# Warehouse ERP
 
-### 技术选型
-#### 后台技术选型
-* SpringBoot
-* Shiro
-* MybatisPlus
-#### 前端技术选型
-* LayUI、DTree
+一个面向 **车销 / 仓储 / 销退 / 打印** 场景的全栈业务系统，包含 **管理端 Web 后台、业务员移动端、Spring Boot 后端、MySQL 数据层**，覆盖从基础资料、库存流转到销退结算与移动打印的完整业务链路。
 
-### 开发环境
-* 操作系统：Windows 10
-* 编程语言：Java
-* 开发工具：IDEA、Navicat、Git
-* 项目构建：Maven 3.5.2
-* 服务器：Tomcat 8.5
-* 数据库：MySQL 5.0
-* 代码托管平台：GitHub
+---
 
-### 预览效果
-登陆页面
-![](https://github.com/yeqifu/warehouse/blob/master/src/main/resources/static/images/login.PNG)
-部门管理
-![](https://github.com/yeqifu/warehouse/blob/master/src/main/resources/static/images/dept.PNG)
-菜单管理
-![](https://github.com/yeqifu/warehouse/blob/master/src/main/resources/static/images/menu.PNG)
-权限管理
-![](https://github.com/yeqifu/warehouse/blob/master/src/main/resources/static/images/permission.PNG)
-角色管理
-![](https://github.com/yeqifu/warehouse/blob/master/src/main/resources/static/images/role.PNG)
-用户管理
-![](https://github.com/yeqifu/warehouse/blob/master/src/main/resources/static/images/user.PNG)
-登陆日志管理
-![](https://github.com/yeqifu/warehouse/blob/master/src/main/resources/static/images/loginfo.PNG)
-系统公告管理
-![](https://github.com/yeqifu/warehouse/blob/master/src/main/resources/static/images/notice.PNG)
-缓存管理
-![](https://github.com/yeqifu/warehouse/blob/master/src/main/resources/static/images/cache.PNG)
-客户管理
-![](https://github.com/yeqifu/warehouse/blob/master/src/main/resources/static/images/customer.PNG)
-供应商管理
-![](https://github.com/yeqifu/warehouse/blob/master/src/main/resources/static/images/provider.PNG)
-商品管理
-![](https://github.com/yeqifu/warehouse/blob/master/src/main/resources/static/images/goods.PNG)
-商品进货管理
-![](https://github.com/yeqifu/warehouse/blob/master/src/main/resources/static/images/inport.PNG)
-商品退货管理
-![](https://github.com/yeqifu/warehouse/blob/master/src/main/resources/static/images/output.PNG)
-商品销售管理
-![](https://github.com/yeqifu/warehouse/blob/master/src/main/resources/static/images/sales.PNG)
-商品销售退货管理
-![](https://github.com/yeqifu/warehouse/blob/master/src/main/resources/static/images/salesback.PNG)
+## 项目定位
 
-### 讨论
-有问题请在([issue])讨论 或联系我QQ：1784525940，你请注明来意。该项目是开源的，如果clone到本地运行不起来，或者需要我讲解之类的，我可以有偿讲解，伸手党勿加~
+该项目聚焦真实业务场景下的仓储与车销流程，核心目标不是演示单点功能，而是打通一整套可运行的业务闭环：
+
+- 超市、商品、厂家、业务员等基础资料维护
+- 主仓 / 车库 / 退货仓 的库存管理
+- 入库、调拨、出库、销单、退货单流转
+- 未结清 / 已结清销售单管理
+- 业务员提成结算
+- 移动端蓝牙打印（A4Pro / CPCL）
+- 测试模式 / 正式模式切换与运维维护能力
+
+---
+
+## 技术栈
+
+### 后端
+- Java 8
+- Spring Boot 2.2
+- MyBatis-Plus
+- MySQL 8
+- Druid
+- Lombok
+- Swagger 2
+
+### 前端
+- `apps/admin-web`：Vue 3 + Vite + TypeScript + Element Plus
+- `apps/mobile-app`：uni-app + Vue 3 + TypeScript
+
+### 工程与运维
+- Maven 构建
+- SQL 基线 + 增量迁移脚本
+- Windows / Linux 本地联调脚本
+- 日志控制与运行模式管理
+
+---
+
+## 架构概览
+
+```text
+.
+├─ apps/
+│  ├─ admin-web/          # 管理端 Web 后台（Vue3 + Vite）
+│  ├─ mobile-app/         # 业务员移动端（uni-app）
+│  └─ doc/                # 业务文档 / 设备资料
+├─ src/main/java/com/yeqifu/warehouse/
+│  ├─ controller/         # 业务接口层
+│  ├─ entity/             # 领域实体
+│  ├─ mapper/             # 数据访问层
+│  └─ common/             # 公共能力（运行模式、返回结构等）
+├─ src/main/resources/
+│  ├─ application.yml     # 后端运行配置
+│  └─ mapper/             # MyBatis Mapper XML
+├─ sql/                   # 数据库初始化与迁移脚本
+├─ run-check.sh           # Linux 本地联调脚本
+└─ run-check.bat          # Windows 本地联调脚本
+```
+
+---
+
+## 核心功能模块
+
+### 1. 基础资料管理
+- 账户与业务员管理
+- 超市/门店管理
+- 商品管理
+- 厂家/供应商管理
+
+### 2. 库存与仓库体系
+- 主仓、车库、退货仓三类仓库
+- 库存查询与台账记录
+- 调拨与库存流转追踪
+
+### 3. 单据流转
+- 入库单
+- 调拨单
+- 出库单
+- 销单
+- 退货单
+
+### 4. 销退与结算
+- 销售单未结清 / 已结清状态管理
+- 现金 / 单子两种结算方式
+- 销售单与退货单关联
+- 销退净额计算
+
+### 5. 移动端业务支持
+- 业务员端创建销单 / 退单
+- 历史销单查询与时间范围筛选
+- 蓝牙打印与 A4Pro 设备适配
+- 打印模板动态高度生成、自动裁切控制
+
+### 6. 运维与测试能力
+- 测试模式 / 正式模式切换
+- 清库并保留基础资料
+- 标准仓库重建
+- 启动健康检查与日志诊断
+
+---
+
+## 技术亮点
+
+### 1. 双端协同的业务建模
+同一套后端模型同时服务：
+- 管理端 Web
+- 业务员移动端
+
+项目不是简单的“一个后台 + 一个小程序”，而是围绕同一套库存/销退/结清规则，统一了：
+- 单据结构
+- 状态流转
+- 业务员身份约束
+- 统计口径
+
+### 2. 真实业务流中的库存约束
+库存并不是单纯 CRUD，而是通过：
+- 入库
+- 调拨
+- 出库
+- 销售
+- 退货
+
+不断驱动库存变化，并保留台账记录，适合展示对 **业务规则建模** 和 **跨单据影响控制** 的理解。
+
+### 3. 结算状态建模
+销售单支持：
+- `draft`
+- `posted`
+- `voided`
+- `settled / unsettled`
+
+并结合：
+- `cash`
+- `bill`
+
+实现“现金自动结清、单子后续收款”的业务差异，体现了状态建模与流程控制能力。
+
+### 4. 移动打印能力
+移动端支持蓝牙打印，围绕 A4Pro 设备做了完整适配：
+- 设备预设绑定
+- CPCL 指令构建
+- 动态内容高度计算
+- 长单完整输出后自动裁切
+- 页面底部留白控制
+
+这部分体现了前端不仅能做 UI，也能处理 **硬件交互 / 图像生成 / 打印协议**。
+
+### 5. 测试模式与正式模式切换
+后端实现了运行模式管理：
+- 测试模式：支持联调与库存模拟
+- 正式模式：恢复真实库存约束
+
+并配套维护接口与管理页，体现了项目对 **开发联调、运维切换、数据清理** 的考虑，而不是只停留在功能开发层面。
+
+### 6. SQL 基线与迁移链
+项目保留了：
+- 主结构基线脚本
+- 增量迁移脚本
+- 测试种子脚本
+
+适合展示对 **数据库演进**、**结构变更**、**环境初始化** 的基本工程能力。
+
+---
+
+## 工程能力侧重点
+
+这个项目更适合展示以下能力：
+
+- 全栈开发能力（Java + Vue + uni-app）
+- 业务系统建模能力
+- 多端协同设计能力
+- 状态流转与库存约束处理能力
+- SQL / 数据迁移能力
+- 移动端蓝牙打印与设备适配能力
+- 面向真实场景的问题修复与持续演进能力
+
+---
+
+## 本地开发
+
+### 后端启动
+```bash
+./mvnw spring-boot:run
+```
+
+默认端口：
+- `http://127.0.0.1:8888`
+
+### 管理端启动
+```bash
+pnpm -C apps/admin-web install
+pnpm -C apps/admin-web dev -- --host 0.0.0.0
+```
+
+### 移动端构建（H5）
+```bash
+pnpm -C apps/mobile-app install
+pnpm -C apps/mobile-app build:h5
+```
+
+---
+
+## 数据库脚本
+
+优先使用 `sql/` 目录下当前主线脚本：
+
+- `warehouse_schema.sql`：数据库主结构基线
+- `2026*.sql`：增量迁移脚本
+- `seed_from_mock.sql`：测试基准数据
+
+---
+
+## 说明
+
+当前仓库以 `com.yeqifu.warehouse` 这一套 `wh_*` 业务主线为准。项目正在持续收敛历史模板遗留代码，使仓库结构更聚焦于当前实际业务与工程能力展示。
