@@ -6,9 +6,18 @@
 
     <view class="content">
       <view class="tabs">
-        <view class="tab" :class="{active: activeTab==='sale'}" @tap="switchTab('sale')">销售</view>
-        <view class="tab" :class="{active: activeTab==='return'}" @tap="switchTab('return')">退货</view>
-        <view class="tab" :class="{active: activeTab==='unsettled'}" @tap="switchTab('unsettled')">未收款</view>
+        <view class="tab sale-tab" :class="{active: activeTab==='sale'}" @tap="switchTab('sale')">
+          <text class="tab-title">销售</text>
+          <text class="tab-desc">开销单、看历史</text>
+        </view>
+        <view class="tab return-tab" :class="{active: activeTab==='return'}" @tap="switchTab('return')">
+          <text class="tab-title">退货</text>
+          <text class="tab-desc">处理退单</text>
+        </view>
+        <view class="tab unsettled-tab" :class="{active: activeTab==='unsettled'}" @tap="switchTab('unsettled')">
+          <text class="tab-title">未收款</text>
+          <text class="tab-desc">确认已收款</text>
+        </view>
       </view>
 
       <view v-if="userStore.isAdmin" class="search-bar">
@@ -360,24 +369,120 @@ onShow(() => {
 
 .tabs {
   display: flex;
-  background: #fff;
-  border-radius: 12rpx;
-  overflow: hidden;
+  gap: 16rpx;
   margin-bottom: 20rpx;
 }
 
 .tab {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 132rpx;
   text-align: center;
-  padding: 18rpx 0;
+  padding: 18rpx 10rpx;
   font-size: 28rpx;
-  color: #666;
+  color: #4b5563;
+  background: #fff;
+  border: 3rpx solid #dbe3ee;
+  border-radius: 20rpx;
+  box-sizing: border-box;
 }
 
-.tab.active {
-  color: #1890ff;
-  font-weight: 600;
-  background: rgba(24, 144, 255, 0.08);
+.tab:not(.active) {
+  box-shadow: 0 4rpx 10rpx rgba(15, 23, 42, 0.05);
+}
+
+.bottom-action-cards {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 22rpx;
+}
+
+.bottom-action-card {
+  flex: 1;
+  min-height: 120rpx;
+  padding: 18rpx 16rpx;
+  border-radius: 18rpx;
+  background: #fff;
+  border: 3rpx solid #dbe3ee;
+  box-sizing: border-box;
+}
+
+.bottom-action-card .action-title {
+  display: block;
+  font-size: 30rpx;
+  font-weight: 700;
+}
+
+.bottom-action-card .action-desc {
+  display: block;
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  color: #64748b;
+}
+
+.bottom-action-card.sale {
+  border-color: #14b8a6;
+  background: #f0fdfa;
+}
+
+.bottom-action-card.return {
+  border-color: #f97316;
+  background: #fff7ed;
+}
+
+.bottom-action-card.unsettled {
+  border-color: #ef4444;
+  background: #fef2f2;
+}
+
+.bottom-action-card.sale .action-title { color: #0f766e; }
+.bottom-action-card.return .action-title { color: #9a3412; }
+.bottom-action-card.unsettled .action-title { color: #b91c1c; }
+
+.tab-title {
+  font-size: 30rpx;
+  font-weight: 700;
+}
+
+.tab-desc {
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  color: #94a3b8;
+}
+
+.tab.sale-tab.active {
+  color: #0f766e;
+  border-color: #14b8a6;
+  background: #f0fdfa;
+  box-shadow: 0 6rpx 16rpx rgba(20, 184, 166, 0.12);
+}
+
+.tab.return-tab.active {
+  color: #9a3412;
+  border-color: #f97316;
+  background: #fff7ed;
+  box-shadow: 0 6rpx 16rpx rgba(249, 115, 22, 0.12);
+}
+
+.tab.unsettled-tab.active {
+  color: #b91c1c;
+  border-color: #ef4444;
+  background: #fef2f2;
+  box-shadow: 0 6rpx 16rpx rgba(239, 68, 68, 0.12);
+}
+
+.usage-tip {
+  margin-bottom: 16rpx;
+  padding: 16rpx 20rpx;
+  background: #fffbe6;
+  border: 2rpx solid #ffe58f;
+  border-radius: 14rpx;
+  color: #8c6d1f;
+  font-size: 24rpx;
+  line-height: 1.6;
 }
 
 .search-bar {

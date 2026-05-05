@@ -75,7 +75,9 @@ public class SaleController {
         List<SaleDoc> records = result.getRecords();
         for (SaleDoc doc : records) {
             List<SaleLine> lines = saleLineMapper.selectList(
-                new LambdaQueryWrapper<SaleLine>().eq(SaleLine::getDocId, doc.getId())
+                new LambdaQueryWrapper<SaleLine>()
+                    .eq(SaleLine::getDocId, doc.getId())
+                    .orderByDesc(SaleLine::getId)
             );
             doc.setLines(lines);
         }
@@ -370,7 +372,9 @@ public class SaleController {
         List<SaleDoc> records = result.getRecords();
         for (SaleDoc doc : records) {
             List<SaleLine> lines = saleLineMapper.selectList(
-                new LambdaQueryWrapper<SaleLine>().eq(SaleLine::getDocId, doc.getId())
+                new LambdaQueryWrapper<SaleLine>()
+                    .eq(SaleLine::getDocId, doc.getId())
+                    .orderByDesc(SaleLine::getId)
             );
             doc.setLines(lines);
         }
@@ -416,7 +420,9 @@ public class SaleController {
         java.util.Map<String, Integer> map = new java.util.HashMap<>();
         for (SaleDoc doc : docs) {
             List<SaleLine> lines = saleLineMapper.selectList(
-                new LambdaQueryWrapper<SaleLine>().eq(SaleLine::getDocId, doc.getId())
+                new LambdaQueryWrapper<SaleLine>()
+                    .eq(SaleLine::getDocId, doc.getId())
+                    .orderByDesc(SaleLine::getId)
             );
             int sum = 0;
             for (SaleLine line : lines) sum += line.getQty() == null ? 0 : line.getQty();
@@ -436,7 +442,9 @@ public class SaleController {
         java.util.Map<String, Integer> map = new java.util.HashMap<>();
         for (SaleDoc doc : docs) {
             List<SaleLine> lines = saleLineMapper.selectList(
-                new LambdaQueryWrapper<SaleLine>().eq(SaleLine::getDocId, doc.getId())
+                new LambdaQueryWrapper<SaleLine>()
+                    .eq(SaleLine::getDocId, doc.getId())
+                    .orderByDesc(SaleLine::getId)
             );
             for (SaleLine line : lines) {
                 int qty = line.getQty() == null ? 0 : line.getQty();

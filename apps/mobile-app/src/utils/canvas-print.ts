@@ -1395,14 +1395,9 @@ async function drawPrintContent(ctx: any, data: PrintDocData, width: number, hei
   drawSignatureNoteArea(ctx, height)
 
   await new Promise<void>((resolve) => {
-    let resolved = false
-    const done = () => {
-      if (resolved) return
-      resolved = true
-      resolve()
-    }
-    ctx.draw(false, done)
-    setTimeout(done, 3000)
+    ctx.draw(false, () => {
+      setTimeout(resolve, 200)
+    })
   })
 }
 
@@ -1802,14 +1797,9 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
   drawSignatureNoteArea(ctx, height)
 
   await new Promise<void>((resolve) => {
-    let resolved = false
-    const done = () => {
-      if (resolved) return
-      resolved = true
-      resolve()
-    }
-    ctx.draw(false, done)
-    setTimeout(done, 3000)
+    ctx.draw(false, () => {
+      setTimeout(resolve, 200)
+    })
   })
 }
 

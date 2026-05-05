@@ -218,7 +218,7 @@ async function writeBleWithFlowControl(
         } catch (e: any) {
           if (e?.code === 10007) {
             retries++
-            await sleep(10)
+            await sleep(30)
           } else {
             throw e
           }
@@ -233,7 +233,7 @@ async function writeBleWithFlowControl(
         await writeBleSimple(device, value, count)
         return
       }
-      await sleep(30)
+      await sleep(60)
     }
   }
 }
@@ -261,7 +261,7 @@ async function writeBleSimple(
       chunk
     )
     count = end
-    if (count < total) await sleep(20)
+    if (count < total) await sleep(40)
   }
 }
 
