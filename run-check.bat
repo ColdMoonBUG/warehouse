@@ -28,6 +28,12 @@ java -version
 
 set "BACKEND_RUNNING="
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr /R /C:":8888 .*LISTENING"') do set "BACKEND_RUNNING=1"
+if not defined BACKEND_RUNNING (
+  rem 双重保险：检查是否有 spring-boot:run 的 Java 进程在跑
+  for /f %%a in ('wmic process where "name='java.exe'" get ProcessId ^| findstr /R "[0-9]"') do (
+    set "BACKEND_RUNNING=1"
+  )
+)
 
 if not defined BACKEND_RUNNING (
   echo [2/6] Start backend...

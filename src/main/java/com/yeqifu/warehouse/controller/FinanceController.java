@@ -90,14 +90,35 @@ public class FinanceController {
             byStore.computeIfAbsent(sid, k -> new ArrayList<>()).add(doc);
         }
 
-        // 获取涉及的退单
+        // 收集销单 ID
         Set<String> allSaleDocIds = saleDocs.stream().map(SaleDoc::getId).collect(Collectors.toCollection(LinkedHashSet::new));
 
-        // 获取这些销单的提成流水
-        List<CommissionLedger> ledgers = commissionLedgerMapper.selectList(
-            new LambdaQueryWrapper<CommissionLedger>()
-                .in(CommissionLedger::getDocId, allSaleDocIds)
+        // 收集同一天的退货单 ID（vehicle_return 有提成流水）
+        List<ReturnDoc> returnDocsOfDay = returnDocMapper.selectList(
+            new LambdaQueryWrapper<ReturnDoc>()
+                .eq(ReturnDoc::getDocDate, sqlDate)
+                .eq(ReturnDoc::getStatus, "posted")
         );
+        Set<String> allReturnDocIds = returnDocsOfDay.stream().map(ReturnDoc::getId).collect(Collectors.toCollection(LinkedHashSet::new));
+
+        // 构建退单 storeId 映射，方便后续按超市归属
+        Map<String, String> returnDocStoreMap = new LinkedHashMap<>();
+        for (ReturnDoc rd : returnDocsOfDay) {
+            if (rd.getId() != null && rd.getStoreId() != null) {
+                returnDocStoreMap.put(rd.getId(), rd.getStoreId());
+            }
+        }
+
+        // 查销单 + 退单的提成流水
+        Set<String> allDocIds = new LinkedHashSet<>(allSaleDocIds);
+        allDocIds.addAll(allReturnDocIds);
+
+        // 获取这些单据的提成流水
+        List<CommissionLedger> ledgers = allDocIds.isEmpty() ? new ArrayList<>()
+            : commissionLedgerMapper.selectList(
+                new LambdaQueryWrapper<CommissionLedger>()
+                    .in(CommissionLedger::getDocId, allDocIds)
+            );
         Map<String, List<CommissionLedger>> ledgerByDoc = new LinkedHashMap<>();
         for (CommissionLedger l : ledgers) {
             if (l.getDocId() != null) {
@@ -136,6 +157,17 @@ public class FinanceController {
                     } else {
                         returnCommission = returnCommission.add(amt);
                     }
+                }
+            }
+
+            // 同一超市当天退货单（vehicle_return）的提成流水也并入
+            for (Map.Entry<String, String> rdEntry : returnDocStoreMap.entrySet()) {
+                if (!storeId.equals(rdEntry.getValue())) continue;
+                List<CommissionLedger> rdLedgers = ledgerByDoc.getOrDefault(rdEntry.getKey(), new ArrayList<>());
+                ledgerCount += rdLedgers.size();
+                for (CommissionLedger l : rdLedgers) {
+                    BigDecimal amt = defaultAmount(l.getCommissionAmount());
+                    returnCommission = returnCommission.add(amt);
                 }
             }
 
@@ -235,6 +267,109 @@ public class FinanceController {
             return auth;
         }
         return Result.ok(listUnsettledLedgers(salespersonId));
+    }
+
+    /**
+     * 按销单聚合的未结明细（前端按月分组展示用）
+     */
+    @GetMapping("/unsettled-by-doc")
+    public Result<List<UnsettledDocVO>> unsettledByDoc(@RequestParam String salespersonId, HttpSession session) {
+        Result<List<UnsettledDocVO>> auth = rejectIfNotAdmin(session);
+        if (auth != null) return auth;
+
+        List<CommissionLedger> ledgers = listUnsettledLedgers(salespersonId);
+        if (ledgers.isEmpty()) return Result.ok(new ArrayList<>());
+
+        // 收集所有 docId
+        Set<String> docIds = ledgers.stream().map(CommissionLedger::getDocId)
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        // 查销单
+        List<SaleDoc> saleDocs = docIds.isEmpty() ? new ArrayList<>()
+            : saleDocMapper.selectBatchIds(docIds);
+        Map<String, SaleDoc> saleMap = saleDocs.stream()
+            .collect(Collectors.toMap(SaleDoc::getId, d -> d, (a, b) -> a, LinkedHashMap::new));
+
+        // 查退单
+        List<ReturnDoc> returnDocs = docIds.isEmpty() ? new ArrayList<>()
+            : returnDocMapper.selectBatchIds(docIds);
+        Map<String, ReturnDoc> returnMap = returnDocs.stream()
+            .collect(Collectors.toMap(ReturnDoc::getId, d -> d, (a, b) -> a, LinkedHashMap::new));
+
+        // 查门店
+        Set<String> storeIds = new LinkedHashSet<>();
+        saleDocs.forEach(d -> { if (d.getStoreId() != null) storeIds.add(d.getStoreId()); });
+        returnDocs.forEach(d -> { if (d.getStoreId() != null) storeIds.add(d.getStoreId()); });
+        Map<String, String> storeNameMap = storeIds.isEmpty() ? new LinkedHashMap<>()
+            : storeMapper.selectBatchIds(storeIds).stream()
+                .collect(Collectors.toMap(Store::getId, Store::getName, (a, b) -> a, LinkedHashMap::new));
+
+        // 按 docId 聚合 ledger
+        Map<String, List<CommissionLedger>> byDoc = new LinkedHashMap<>();
+        for (CommissionLedger l : ledgers) {
+            byDoc.computeIfAbsent(l.getDocId(), k -> new ArrayList<>()).add(l);
+        }
+
+        List<UnsettledDocVO> result = new ArrayList<>();
+        for (Map.Entry<String, List<CommissionLedger>> entry : byDoc.entrySet()) {
+            String docId = entry.getKey();
+            List<CommissionLedger> docLedgers = entry.getValue();
+
+            UnsettledDocVO vo = new UnsettledDocVO();
+            vo.setDocId(docId);
+
+            // 判断是销单还是退单
+            SaleDoc sale = saleMap.get(docId);
+            ReturnDoc ret = returnMap.get(docId);
+
+            if (sale != null) {
+                vo.setDocType("sale");
+                vo.setDocCode(sale.getCode());
+                vo.setDocDate(sale.getDocDate());
+                vo.setStoreName(storeNameMap.getOrDefault(sale.getStoreId(), "-"));
+                vo.setDocStatus(sale.getStatus());
+                vo.setReturnDocId(sale.getReturnDocId());
+            } else if (ret != null) {
+                vo.setDocType("return");
+                vo.setDocCode(ret.getCode());
+                vo.setDocDate(ret.getDocDate());
+                vo.setStoreName(storeNameMap.getOrDefault(ret.getStoreId(), "-"));
+                vo.setDocStatus(ret.getStatus());
+            } else {
+                vo.setDocType("unknown");
+                vo.setDocCode(docId);
+            }
+
+            // 汇总提成
+            BigDecimal saleCommission = BigDecimal.ZERO;
+            BigDecimal returnCommission = BigDecimal.ZERO;
+            int totalQty = 0;
+            for (CommissionLedger l : docLedgers) {
+                BigDecimal c = l.getCommissionAmount() != null ? l.getCommissionAmount() : BigDecimal.ZERO;
+                if (l.getBizType() != null && l.getBizType().startsWith("return")) {
+                    returnCommission = returnCommission.add(c);
+                } else {
+                    saleCommission = saleCommission.add(c);
+                }
+                totalQty += l.getQty() != null ? l.getQty() : 0;
+            }
+            vo.setSaleCommission(saleCommission);
+            vo.setReturnCommission(returnCommission);
+            vo.setNetCommission(saleCommission.add(returnCommission));
+            vo.setTotalQty(totalQty);
+            vo.setLedgers(docLedgers);
+            result.add(vo);
+        }
+
+        // 按日期倒序
+        result.sort((a, b) -> {
+            if (a.getDocDate() == null && b.getDocDate() == null) return 0;
+            if (a.getDocDate() == null) return 1;
+            if (b.getDocDate() == null) return -1;
+            return b.getDocDate().compareTo(a.getDocDate());
+        });
+
+        return Result.ok(result);
     }
 
     @GetMapping("/settlements")
@@ -536,7 +671,8 @@ public class FinanceController {
     }
 
     private boolean isSaleCommissionBizType(String bizType) {
-        return "sale".equals(bizType) || "void_sale".equals(bizType);
+        return "sale".equals(bizType) || "void_sale".equals(bizType)
+            || "gift".equals(bizType) || "void_gift".equals(bizType);
     }
 
     private BigDecimal defaultAmount(BigDecimal value) {
@@ -660,5 +796,21 @@ public class FinanceController {
         private BigDecimal returnCommission;
         private BigDecimal netCommission;
         private Integer ledgerCount;
+    }
+
+    @Data
+    public static class UnsettledDocVO {
+        private String docId;
+        private String docType;   // sale / return / unknown
+        private String docCode;
+        private Date docDate;
+        private String storeName;
+        private String docStatus;
+        private String returnDocId;  // 销单关联的退单ID
+        private BigDecimal saleCommission;
+        private BigDecimal returnCommission;
+        private BigDecimal netCommission;
+        private Integer totalQty;
+        private List<CommissionLedger> ledgers;
     }
 }

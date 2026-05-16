@@ -1,5 +1,5 @@
 import request from '@/utils/request'
-import type { CommissionLedger, CommissionSettlementDetail, CommissionSettlementSummary, CommissionSummary, StoreCommissionSummary } from '@/types'
+import type { CommissionLedger, CommissionSettlementDetail, CommissionSettlementSummary, CommissionSummary, StoreCommissionSummary, UnsettledDocVO } from '@/types'
 
 export async function getCommissionSummaries(): Promise<CommissionSummary[]> {
   const res = await request.get('/finance/commission/summary')
@@ -8,6 +8,11 @@ export async function getCommissionSummaries(): Promise<CommissionSummary[]> {
 
 export async function getUnsettledCommissionLedgers(salespersonId: string): Promise<CommissionLedger[]> {
   const res = await request.get('/finance/commission/unsettled', { params: { salespersonId } })
+  return res.data || []
+}
+
+export async function getUnsettledByDoc(salespersonId: string): Promise<UnsettledDocVO[]> {
+  const res = await request.get('/finance/commission/unsettled-by-doc', { params: { salespersonId } })
   return res.data || []
 }
 

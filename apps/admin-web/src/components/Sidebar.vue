@@ -19,6 +19,11 @@
         <span>首页看板</span>
       </el-menu-item>
 
+      <el-menu-item index="/search">
+        <i class="ri-search-line" />
+        <span>单据查询</span>
+      </el-menu-item>
+
       <el-sub-menu v-if="!isSales" index="/basic">
         <template #title>
           <i class="ri-database-2-line" />
@@ -50,6 +55,8 @@
         <el-menu-item index="/system/finance">财务结清</el-menu-item>
         <el-menu-item index="/system/store-finance">超市流水</el-menu-item>
         <el-menu-item index="/system/unsettled">未收款管理</el-menu-item>
+        <el-menu-item index="/system/stats">进退货统计</el-menu-item>
+        <el-menu-item index="/system/sales-stats">销售额统计</el-menu-item>
         <el-menu-item index="/system/maintenance">系统维护</el-menu-item>
       </el-sub-menu>
     </el-menu>

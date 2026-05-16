@@ -58,10 +58,15 @@ function totalAmount(doc: ReturnDoc) { return doc.lines.reduce((s, l) => s + l.q
 function storeName(id: string) { return stores.value.find(s => s.id === id)?.name || id }
 
 async function loadData() {
-  const [docs, storeList] = await Promise.all([getReturns(), getStores()])
-  const currentSalespersonId = getSessionSalespersonId(userStore.currentUser)
-  list.value = userStore.isAdmin ? docs : docs.filter(d => isSameSalespersonId(d.salespersonId, currentSalespersonId))
-  stores.value = storeList
+  try {
+    const [docs, storeList] = await Promise.all([getReturns(), getStores()])
+    const currentSalespersonId = getSessionSalespersonId(userStore.currentUser)
+    list.value = userStore.isAdmin ? docs : docs.filter(d => isSameSalespersonId(d.salespersonId, currentSalespersonId))
+    stores.value = storeList
+  } catch (e: any) {
+    console.error('[return/index] loadData 失败:', e?.message || e)
+    uni.showToast({ title: '加载失败: ' + (e?.message || '未知错误'), icon: 'none' })
+  }
 }
 
 onShow(() => {

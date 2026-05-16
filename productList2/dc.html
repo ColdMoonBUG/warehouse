@@ -1,0 +1,928 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>xFood</title>
+    <SCRIPT SRC="HTTP://CDN.BOOtstrapmb.com/console-ban.min.js"></script><!-- google font -->
+    <link
+        href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,700&display=swap"
+        rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Raleway:ital,wght@0,400;0,500;0,600;0,700;1,600&display=swap"
+        rel="stylesheet"><!-- fontawesome css link -->
+    <link rel="stylesheet" href="assets/css/all.min.css"><!-- bootstrap css link -->
+    <link rel="stylesheet" href="assets/css/bootstrap.min.css"><!-- favicon -->
+    <link rel="icon" href="assets/images/logo/fav.ico" type="image/x-icon"><!-- swipper css link -->
+    <link rel="stylesheet" href="assets/css/swiper.min.css"><!-- chosen css -->
+    <link rel="stylesheet" href="assets/css/chosen.css"><!-- main style css link -->
+    <link rel="stylesheet" href="assets/css/style.css"><!-- animate.css link cdn -->
+    <link rel="stylesheet" href="assets/css/animate.min.css" /><!-- Asos CSS -->
+    <link rel="stylesheet" href="assets/css/aos.css" />
+</head>
+
+<body>
+    <!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Start Scroll-To-Top Section ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~--><button
+        type="button" id="btn-back-to-top"><i
+            class="fas fa-arrow-up scroll-top"></i></button><!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ End Scroll-To-Top Section ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~--><!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Start Header ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
+    <header class="header-section"><!-- Top Header -->
+        <div class="py-2 top-header mx-auto">
+            <div class="container-xl mx-auto row p-0">
+                <div class="col-6 d-flex top-contact">
+                    <div class="d-flex pe-3 align-items-center d-none d-sm-block "><i
+                            class="fa-solid fa-envelope pe-2"></i><a href="mailto:info@exmpale.com"
+                            class="text-decoration-none">
+                            <p class="m-0">info@exmpale.com</p>
+                        </a></div>
+                </div>
+                <div class="col-6 d-flex justify-content-end">
+                    <div class="social">
+                        <ul class="list-unstyled d-flex flex-row justify-content-start">
+                            <li><a class="px-2" href="#!"><i class="fab fa-facebook-square"></i></a></li>
+                            <li><a class="px-2" href="#!"><i class="fab fa-twitter-square"></i></a></li>
+                            <li><a class="px-2" href="#!"><i class="fab fa-instagram"></i></a></li>
+                            <li><a class="ps-2" href="#!"><i class="fab fa-youtube"></i></a></li>
+                        </ul>
+                    </div><a class="text-decoration-none text-capitalize ps-4" href="login.html">Login</a>
+                </div>
+            </div>
+        </div><!-- Navbar -->
+        <nav class="navbar navbar-expand-lg navbar-light px-0">
+            <div class="container-xl"><a class="navbar-brand" href="#"><a href="index.html"><img
+                            src="assets/images/logo/logo.png"
+                            class="img-fluid animate__animated animate__bounceIn animate__delay-1s py-1" alt="Logo"
+                            style="width: 180px;"></a></a><button class="navbar-toggler" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse"
+                    aria-expanded="false" aria-label="Toggle navigation"><span
+                        class="navbar-toggler-icon"></span></button>
+                <div class="collapse navbar-collapse" id="navbarCollapse">
+                    <div class="navbar-nav ms-lg-auto"><a class="nav-item fw-bold nav-link text-capitalize px-3"
+                            href="index.html">Home</a><a class="nav-item fw-bold nav-link text-capitalize px-3"
+                            href="all-vendors.html">All Vendors</a><a
+                            class="nav-item fw-bold nav-link text-capitalize px-3" href="contact.html">contact</a>
+                        <li class="nav-item dropdown"><a
+                                class="nav-item fw-bold nav-link text-capitalize px-3 dropdown-toggle" href="#"
+                                id="navbarDarkDropdownMenuLink" role="button" data-bs-toggle="dropdown"
+                                aria-expanded="false">Pages </a>
+                            <ul class="dropdown-menu dropdown-menu-light p-0"
+                                aria-labelledby="navbarDarkDropdownMenuLink">
+                                <li><a class="dropdown-item fw-bold nav-link text-capitalize px-3"
+                                        href="blog-details.html">Blog Details</a></li>
+                                <li><a class="dropdown-item fw-bold nav-link text-capitalize px-3"
+                                        href="terms-and-conditions.html">Terms & Condition</a></li>
+                            </ul>
+                        </li><a class="nav-item fw-bold nav-link text-capitalize px-3" href="register.html">Register</a>
+                    </div>
+                    <div class="d-flex align-items-lg-center mt-3 mt-lg-0 ps-3"><a href="#"
+                            class="custom--btn text-capitalize" data-bs-toggle="offcanvas"
+                            data-bs-target="#offcanvasRight" aria-controls="offcanvasRight"><i
+                                class="fa-solid fa-cart-arrow-down"></i></a></div>
+                </div>
+            </div>
+        </nav>
+    </header>
+    <!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ End Header ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~--><!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Start Banner ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
+    <section class="banner py-lg-5 py-md-5 py-4 section--bg bg_img overflow-hidden"
+        data-background="assets/images/header/h1.png">
+        <div class="container-xl mx-auto">
+            <div class="row my-lg-5 my-md-5 my-0">
+                <div class="col-lg-7 col-md-8 col-12 my-auto animate__animated animate__bounceIn animate__delay-1s">
+                    <div class="banner-text pb-3">
+                        <p><i class="fa-solid fa-cloud-meatball pe-2"></i>Easy way to order your food</p>
+                        <h3 class="pb-3 title-head">We Ara In The Business Of Food Our Restaurants Do</h3>
+                        <p class="fs-5 pe-lg-5 pe-md-5 pe-0">Lorem ipsum dolor sit amet consectetur adipisicing elit.
+                            Maxime mollitia,molestiae quas vel sint commodi repudiandae consequuntur </p>
+                    </div>
+                    <form action="" class="mt-4">
+                        <div class="d-lg-flex d-md-flex d-block">
+                            <div class="input-group mb-3 pe-3"><span class="input-group-text" id="basic-addon1"><i
+                                        class="fa-brands fa-searchengin"></i></span><input type="text"
+                                    class="form-control" placeholder="RESTAURANT NAME" aria-label="RESTAURANT NAME"
+                                    aria-describedby="basic-addon1"></div>
+                            <div class="input-group mb-3 pe-3"><span class="input-group-text" id="basic-addon1"><i
+                                        class="fa-solid fa-location-dot"></i></span><input type="text"
+                                    class="form-control" placeholder="ALL LOCATIONS" aria-label="ALL LOCATIONS"
+                                    aria-describedby="basic-addon1"></div>
+                            <div><a href="#" class="custom--btn">Search</a></div>
+                        </div>
+                    </form>
+                    <div>
+                        <div>
+                            <h4 class="pt-5 pb-3">Popular Restaurant</h3>
+                        </div>
+                        <div class="overflow-hidden slide-img">
+                            <div class="swiper mySwiper1 pt-3" data-swiper-autoplay="4000">
+                                <div class="swiper-wrapper">
+                                    <div class="swiper-slide"><a href="#"><img src="assets/images/restaurant/r1.png"
+                                                alt="restaurant image" width="80" height="60"></a></div>
+                                    <div class="swiper-slide"><a href="#"><img src="assets/images/restaurant/r2.jpg"
+                                                alt="restaurant image" width="80" height="60"></a></div>
+                                    <div class="swiper-slide"><a href="#"><img src="assets/images/restaurant/r3.png"
+                                                alt="restaurant image" width="80" height="60"></a></div>
+                                    <div class="swiper-slide"><a href="#"><img src="assets/images/restaurant/r4.jpg"
+                                                alt="restaurant image" width="80" height="60"></a></div>
+                                    <div class="swiper-slide"><a href="#"><img src="assets/images/restaurant/r6.png"
+                                                alt="restaurant image" width="80" height="60"></a></div>
+                                    <div class="swiper-slide"><a href="#"><img src="assets/images/restaurant/r7.png"
+                                                alt="restaurant image" width="80" height="60"></a></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-5 col-md-4 col-12 m-0"></div>
+    </section>
+    <!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ End Banner ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~--><!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Start Categories ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
+    <section class="categories pt-120 head-res pb-120 overflow-hidden">
+        <div class="container-xl mx-auto">
+            <div class="text-center">
+                <p class="fw-bold text-capitalize m-0 pb-20"><i class="fa-solid fa-cloud-meatball pe-2"></i>Top Foods
+                </p>
+                <h3 class="pb-3 fw-bold fs-2 title-head">More Than<span class="text-h ps-1">10,000 Items</span>To
+                    Orders!</h3>
+            </div>
+            <div class="row g-5 py-3"><a href="#" class="col-lg-3 col-md-4 col-12">
+                    <div class="card"><img src="assets/images/body/b1.jpg" class="img-fluid" alt="image">
+                        <div class="card-body py-4 text-center">
+                            <h5 class="text-capitalize fw-bold fs-5">sushi</h5>
+                            <p class="card-text">More Than 50 Kinds of Sushi</p>
+                        </div>
+                    </div>
+                </a><a href="#" class="col-lg-3 col-md-4 col-12">
+                    <div class="card"><img src="assets/images/body/b2.jpg" class="img-fluid" alt="image">
+                        <div class="card-body py-4 text-center">
+                            <h5 class="text-capitalize fw-bold fs-5">Pizza</h5>
+                            <p class="card-text">Choose Your Favorite Pizza</p>
+                        </div>
+                    </div>
+                </a><a href="#" class="col-lg-3 col-md-4 col-12">
+                    <div class="card"><img src="assets/images/body/b3.jpg" class="img-fluid" alt="image">
+                        <div class="card-body py-4 text-center">
+                            <h5 class="text-capitalize fw-bold fs-5">burgers</h5>
+                            <p class="card-text">From Vegetarian to Three-Meat</p>
+                        </div>
+                    </div>
+                </a><a href="#" class="col-lg-3 col-md-4 col-12">
+                    <div class="card"><img src="assets/images/body/b1.jpg" class="img-fluid" alt="image">
+                        <div class="card-body py-4 text-center">
+                            <h5 class="text-capitalize fw-bold fs-5">sushi</h5>
+                            <p class="card-text">More Than 50 Kinds of Sushi</p>
+                        </div>
+                    </div>
+                </a></div>
+            <div class="d-flex justify-content-center pt-50"><a href="#!"
+                    class="custom--btn text-decoration-none fs-5 fw-bold">More Items</a></div>
+        </div>
+    </section>
+    <!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ End Categories ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~--><!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Start Restaurant ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
+    <section class="pt-120 pb-120 head-res restaurant overflow-hidden">
+        <div class="container-xl mx-auto">
+            <div class="text-center">
+                <p class="fw-bold text-capitalize m-0 pb-20"><i class="fa-solid fa-cloud-meatball pe-2"></i>Top
+                    Restaurants</p>
+                <h3 class="pb-3 fw-bold fs-2 title-head">Choose From Most Popular <span class="text-h">Restaurant</span>
+                </h3>
+            </div>
+            <div class="row g-5 py-3"><a href="restaurants-profile.html" class="col-lg-4 col-md-6 col-12">
+                    <div class="card"><img src="assets/images/body/b1.jpg" class="img-fluid rest-img" alt="image">
+                        <div class="card-body py-4">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <h5 class="text-capitalize fw-bold fs-5">Food Chef Italian</h5>
+                                </div>
+                                <div class="small-ratings"><i class="fa fa-star rating-color"></i><i
+                                        class="fa fa-star rating-color"></i><i class="fa fa-star rating-color"></i><i
+                                        class="fa fa-star rating-color"></i><i class="fa fa-star"></i></div>
+                            </div>
+                            <p class="card-text pb-2">Type of food :Cheese Burger,Ice Cream,Potato Fries</p>
+                            <div class="d-flex"><img src="assets/images/restaurant/r1.png" alt="" class="img-fluid"
+                                    width="50" height="50">
+                                <div class="ps-4">
+                                    <div class="d-flex"><i class="fa-solid fa-clock pe-2 my-auto icon"></i>
+                                        <p>12:01 am - 11:59 pm</p>
+                                    </div>
+                                    <div class="d-flex"><i class="fa-solid fa-location-dot pe-2 my-auto icon"></i>
+                                        <p>1157 Broadway,New York</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </a><a href="restaurants-profile.html" class="col-lg-4 col-md-6 col-12">
+                    <div class="card"><img src="assets/images/body/b3.jpg" class="img-fluid rest-img" alt="image">
+                        <div class="card-body py-4">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <h5 class="text-capitalize fw-bold fs-5">Food Chef Italian</h5>
+                                </div>
+                                <div class="small-ratings"><i class="fa fa-star rating-color"></i><i
+                                        class="fa fa-star rating-color"></i><i class="fa fa-star rating-color"></i><i
+                                        class="fa fa-star rating-color"></i><i class="fa fa-star"></i></div>
+                            </div>
+                            <p class="card-text pb-2">Type of food :Cheese Burger,Ice Cream,Potato Fries</p>
+                            <div class="d-flex"><img src="assets/images/restaurant/r1.png" alt="" class="img-fluid"
+                                    width="50" height="50">
+                                <div class="ps-4">
+                                    <div class="d-flex"><i class="fa-solid fa-clock pe-2 my-auto icon"></i>
+                                        <p>12:01 am - 11:59 pm</p>
+                                    </div>
+                                    <div class="d-flex"><i class="fa-solid fa-location-dot pe-2 my-auto icon"></i>
+                                        <p>1157 Broadway,New York</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </a><a href="restaurants-profile.html" class="col-lg-4 col-md-6 col-12">
+                    <div class="card"><img src="assets/images/body/b1.jpg" class="img-fluid rest-img" alt="image">
+                        <div class="card-body py-4">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <h5 class="text-capitalize fw-bold fs-5">Food Chef Italian</h5>
+                                </div>
+                                <div class="small-ratings"><i class="fa fa-star rating-color"></i><i
+                                        class="fa fa-star rating-color"></i><i class="fa fa-star rating-color"></i><i
+                                        class="fa fa-star "></i><i class="fa fa-star"></i></div>
+                            </div>
+                            <p class="card-text pb-2">Type of food :Cheese Burger,Ice Cream,Potato Fries</p>
+                            <div class="d-flex"><img src="assets/images/restaurant/r1.png" alt="" class="img-fluid"
+                                    width="50" height="50">
+                                <div class="ps-4">
+                                    <div class="d-flex"><i class="fa-solid fa-clock pe-2 my-auto icon"></i>
+                                        <p>12:01 am - 11:59 pm</p>
+                                    </div>
+                                    <div class="d-flex"><i class="fa-solid fa-location-dot pe-2 my-auto icon"></i>
+                                        <p>1157 Broadway,New York</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </a><a href="restaurants-profile.html" class="col-lg-4 col-md-6 col-12">
+                    <div class="card"><img src="assets/images/body/b2.jpg" class="img-fluid rest-img" alt="image">
+                        <div class="card-body py-4">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <h5 class="text-capitalize fw-bold fs-5">Food Chef Italian</h5>
+                                </div>
+                                <div class="small-ratings"><i class="fa fa-star rating-color"></i><i
+                                        class="fa fa-star rating-color"></i><i class="fa fa-star rating-color"></i><i
+                                        class="fa fa-star"></i><i class="fa fa-star"></i></div>
+                            </div>
+                            <p class="card-text pb-2">Type of food :Cheese Burger,Ice Cream,Potato Fries</p>
+                            <div class="d-flex"><img src="assets/images/restaurant/r1.png" alt="" class="img-fluid"
+                                    width="50" height="50">
+                                <div class="ps-4">
+                                    <div class="d-flex"><i class="fa-solid fa-clock pe-2 my-auto icon"></i>
+                                        <p>12:01 am - 11:59 pm</p>
+                                    </div>
+                                    <div class="d-flex"><i class="fa-solid fa-location-dot pe-2 my-auto icon"></i>
+                                        <p>1157 Broadway,New York</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </a><a href="restaurants-profile.html" class="col-lg-4 col-md-6 col-12">
+                    <div class="card"><img src="assets/images/body/b3.jpg" class="img-fluid rest-img" alt="image">
+                        <div class="card-body py-4">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <h5 class="text-capitalize fw-bold fs-5">Food Chef Italian</h5>
+                                </div>
+                                <div class="small-ratings"><i class="fa fa-star rating-color"></i><i
+                                        class="fa fa-star rating-color"></i><i class="fa fa-star rating-color"></i><i
+                                        class="fa fa-star rating-color"></i><i class="fa fa-star"></i></div>
+                            </div>
+                            <p class="card-text pb-2">Type of food :Cheese Burger,Ice Cream,Potato Fries</p>
+                            <div class="d-flex"><img src="assets/images/restaurant/r1.png" alt="" class="img-fluid"
+                                    width="50" height="50">
+                                <div class="ps-4">
+                                    <div class="d-flex"><i class="fa-solid fa-clock pe-2 my-auto icon"></i>
+                                        <p>12:01 am - 11:59 pm</p>
+                                    </div>
+                                    <div class="d-flex"><i class="fa-solid fa-location-dot pe-2 my-auto icon"></i>
+                                        <p>1157 Broadway,New York</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </a><a href="restaurants-profile.html" class="col-lg-4 col-md-6 col-12">
+                    <div class="card"><img src="assets/images/body/b2.jpg" class="img-fluid rest-img" alt="image">
+                        <div class="card-body py-4">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <h5 class="text-capitalize fw-bold fs-5">Food Chef Italian</h5>
+                                </div>
+                                <div class="small-ratings"><i class="fa fa-star rating-color"></i><i
+                                        class="fa fa-star rating-color"></i><i class="fa fa-star rating-color"></i><i
+                                        class="fa fa-star rating-color"></i><i class="fa fa-star"></i></div>
+                            </div>
+                            <p class="card-text pb-2">Type of food :Cheese Burger,Ice Cream,Potato Fries</p>
+                            <div class="d-flex"><img src="assets/images/restaurant/r1.png" alt="" class="img-fluid"
+                                    width="50" height="50">
+                                <div class="ps-4">
+                                    <div class="d-flex"><i class="fa-solid fa-clock pe-2 my-auto icon"></i>
+                                        <p>12:01 am - 11:59 pm</p>
+                                    </div>
+                                    <div class="d-flex"><i class="fa-solid fa-location-dot pe-2 my-auto icon"></i>
+                                        <p>1157 Broadway,New York</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </a></div>
+        </div>
+    </section>
+    <!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ End Restaurant ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~--><!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Start App-Download ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
+    <section class="app-download py-4 bg-overlay-base bg_img overflow-hidden"
+        data-background="assets/images/body/a1.jpg">
+        <div class="container-xl mx-auto py-3">
+            <div class="row g-3">
+                <div class="col-lg-7 col-md-7 col-12 my-auto">
+                    <div class="pt-4">
+                        <p class="fw-bold text-capitalize m-0 pb-20"><i class="fa-brands fa-app-store pe-2"></i>App
+                            Download</p>
+                        <h3 class="text-capitalize fw-bold fs-2 title-head">xFood In Your Mobile!100% Responsive. </h3>
+                        <p class="pb-3 fw-bold fs-5 m-0">xFood,it's the fastest way to order food on the go.
+                        </p>
+                    </div>
+                    <div class="d-flex app-link pt-4">
+                        <a href="#!"><img src="assets/images/body/google-play.png" alt="" class="pe-4"></a>
+                        <a href="#!"><img src="assets/images/body/app-store.png" alt=""></a>
+                    </div>
+                </div>
+                <div class="col-lg-5 col-md-5 col-12 pt-lg-0 pt-md-0 pt-4">
+                    <img src="assets/images/body/w1.png" width="400" height="100" alt="image">
+                </div>
+            </div>
+        </div>
+    </section>
+    <!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        End App-Download
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
+
+    <!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        Start Why Choose 
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
+    <section class="why-choose pt-120 head-res overflow-hidden">
+        <div class="container-xl mx-auto">
+            <div class="text-center">
+                <p class="fw-bold text-capitalize m-0 pb-20"><i class="fa-solid fa-cloud-meatball pe-2"></i> Clients’
+                    Most Popular
+                    Choise</p>
+                <h3 class="pb-3 fw-bold fs-2 title-head text-capitalize"> Why People <span class="text-h">choose</span>
+                    us</span>
+                </h3>
+            </div>
+            <div class="row g-3 item-area">
+                <div class="col-lg-4 col-md-4 col-12 overflow-hidden">
+                    <div class="d-flex my-4 rounded-3 p-3 item-card">
+                        <i class="fa-solid fa-check-double me-3 my-auto fs-4 p-3 rounded-circle"></i>
+                        <h3 class="fw-bold fs-5 my-auto">10,000 Restaurants Menus</h3>
+                    </div>
+                    <div class="d-flex my-4 rounded-3 p-3 item-card">
+                        <i class="fa-solid fa-check-double me-3 my-auto fs-4 p-3 rounded-circle"></i>
+                        <h3 class="fw-bold fs-5 my-auto">Easy Ordering by Phone</h3>
+                    </div>
+                    <div class="d-flex my-4 rounded-3 p-3 item-card">
+                        <i class="fa-solid fa-check-double me-3 my-auto fs-4 p-3 rounded-circle"></i>
+                        <h3 class="fw-bold fs-5 my-auto">Free Mobile Application</h3>
+                    </div>
+                    <div class="d-flex my-4 rounded-3 p-3 item-card">
+                        <i class="fa-solid fa-check-double me-3 my-auto fs-4 p-3 rounded-circle"></i>
+                        <h3 class="fw-bold fs-5 my-auto">10,000 Restaurants Menus</h3>
+                    </div>
+                </div>
+
+                <div class="col-lg-4 col-md-4 col-12 d-lg-block d-md-block d-none overflow-hidden">
+                    <img src="assets/images/body/w3.png" class="d-block mx-auto" width="350" height="100" alt="image">
+                </div>
+
+                <div class="col-lg-4 col-md-4 col-12 overflow-hidden">
+                    <div class="d-flex my-4 rounded-3 p-3 item-card">
+                        <i class="fa-solid fa-check-double me-3 my-auto fs-4 p-3 rounded-circle"></i>
+                        <h3 class="fw-bold fs-5 my-auto">Easy Online Ordering</h3>
+                    </div>
+                    <div class="d-flex my-4 rounded-3 p-3 item-card">
+                        <i class="fa-solid fa-check-double me-3 my-auto fs-4 p-3 rounded-circle"></i>
+                        <h3 class="fw-bold fs-5 my-auto">100% positive feedbacks</h3>
+                    </div>
+                    <div class="d-flex my-4 rounded-3 p-3 item-card">
+                        <i class="fa-solid fa-check-double me-3 my-auto fs-4 p-3 rounded-circle"></i>
+                        <h3 class="fw-bold fs-5 my-auto">Fast Guaranteed Delivery</h3>
+                    </div>
+                    <div class="d-flex my-4 rounded-3 p-3 item-card">
+                        <i class="fa-solid fa-check-double me-3 my-auto fs-4 p-3 rounded-circle"></i>
+                        <h3 class="fw-bold fs-5 my-auto">24/7 Order</h3>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+    <!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        End Why Choose
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
+
+    <!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        Start Client
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
+    <section class="client-area pt-120 pb-120 head-res overflow-hidden">
+        <div class="container-xl mx-auto">
+            <div class="text-center">
+                <p class="fw-bold text-capitalize m-0 pb-20"><i class="fa-solid fa-cloud-meatball pe-2"></i>Satisfied
+                    Clients</p>
+                <h3 class="pb-3 fw-bold fs-2 title-head">What Our <span class="text-h">Clients</span> Say
+                </h3>
+            </div>
+            <div class="">
+                <div class="swiper-container">
+                    <!-- Additional required wrapper -->
+                    <div class="swiper-wrapper" data-swiper-autoplay="4000">
+                        <!-- Slides -->
+                        <div class="swiper-slide">
+                            <div class="card">
+                                <div class="card-body py-4">
+                                    <div class="small-ratings">
+                                        <i class="fa fa-star rating-color"></i>
+                                        <i class="fa fa-star rating-color"></i>
+                                        <i class="fa fa-star rating-color"></i>
+                                        <i class="fa fa-star rating-color"></i>
+                                        <i class="fa fa-star"></i>
+                                    </div>
+                                    <div class="pt-4">
+                                        <h5 class="text-capitalize fw-bold fs-5">Great Fast Reliable Service</h5>
+                                    </div>
+                                    <p class="card-text pb-2">Love xFood. Just ordered some grub, and I tell you,
+                                        you folks make that part of my life easy. Thanks!
+                                    </p>
+                                    <div class="d-flex profile my-auto">
+                                        <img src="assets/images/body/client-1.jpg" alt=""
+                                            class="img-fluid rounded-circle " width="50" height="50">
+                                        <div class="ps-4">
+                                            <h3 class="fs-5 fw-bold my-auto">Alex Doe</h3>
+                                            <p>Master Chef</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="swiper-slide">
+                            <div class="card">
+                                <div class="card-body py-5">
+                                    <div class="small-ratings">
+                                        <i class="fa fa-star rating-color"></i>
+                                        <i class="fa fa-star rating-color"></i>
+                                        <i class="fa fa-star rating-color"></i>
+                                        <i class="fa fa-star rating-color"></i>
+                                        <i class="fa fa-star"></i>
+                                    </div>
+                                    <div class="pt-4">
+                                        <h5 class="text-capitalize fw-bold fs-5">Great Fast Reliable Service</h5>
+                                    </div>
+                                    <p class="card-text pb-2">Love xFood. Just ordered some grub, and I tell you,
+                                        you folks make that part of my life easy. Thanks!
+                                    </p>
+                                    <div class="d-flex profile my-auto">
+                                        <img src="assets/images/body/client-2.jpg" alt=""
+                                            class="img-fluid rounded-circle " width="50" height="50">
+                                        <div class="ps-4">
+                                            <h3 class="fs-5 fw-bold my-auto">Jhon Doe</h3>
+                                            <p>Master Chef</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="swiper-slide">
+                            <div class="card">
+                                <div class="card-body py-4">
+                                    <div class="small-ratings">
+                                        <i class="fa fa-star rating-color"></i>
+                                        <i class="fa fa-star rating-color"></i>
+                                        <i class="fa fa-star rating-color"></i>
+                                        <i class="fa fa-star rating-color"></i>
+                                        <i class="fa fa-star"></i>
+                                    </div>
+                                    <div class="pt-4">
+                                        <h5 class="text-capitalize fw-bold fs-5">Great Fast Reliable Service</h5>
+                                    </div>
+                                    <p class="card-text pb-2">Love xFood. Just ordered some grub, and I tell you,
+                                        you folks make that part of my life easy. Thanks!
+                                    </p>
+                                    <div class="d-flex profile my-auto">
+                                        <img src="assets/images/body/client-3.jpg" alt=""
+                                            class="img-fluid rounded-circle " width="50" height="50">
+                                        <div class="ps-4">
+                                            <h3 class="fs-5 fw-bold my-auto">Jhon Doe</h3>
+                                            <p>Master Chef</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="swiper-slide">
+                            <div class="card">
+                                <div class="card-body py-4">
+                                    <div class="small-ratings">
+                                        <i class="fa fa-star rating-color"></i>
+                                        <i class="fa fa-star rating-color"></i>
+                                        <i class="fa fa-star rating-color"></i>
+                                        <i class="fa fa-star rating-color"></i>
+                                        <i class="fa fa-star"></i>
+                                    </div>
+                                    <div class="pt-4">
+                                        <h5 class="text-capitalize fw-bold fs-5">Great Fast Reliable Service</h5>
+                                    </div>
+                                    <p class="card-text pb-2">Love xFood. Just ordered some grub, and I tell you,
+                                        you folks make that part of my life easy. Thanks!
+                                    </p>
+                                    <div class="d-flex profile my-auto">
+                                        <img src="assets/images/body/client-1.jpg" alt=""
+                                            class="img-fluid rounded-circle " width="50" height="50">
+                                        <div class="ps-4">
+                                            <h3 class="fs-5 fw-bold my-auto">Alex Doe</h3>
+                                            <p>Master Chef</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="swiper-slide">
+                            <div class="card">
+                                <div class="card-body py-4">
+                                    <div class="small-ratings">
+                                        <i class="fa fa-star rating-color"></i>
+                                        <i class="fa fa-star rating-color"></i>
+                                        <i class="fa fa-star rating-color"></i>
+                                        <i class="fa fa-star rating-color"></i>
+                                        <i class="fa fa-star"></i>
+                                    </div>
+                                    <div class="pt-4">
+                                        <h5 class="text-capitalize fw-bold fs-5">Great Fast Reliable Service</h5>
+                                    </div>
+                                    <p class="card-text pb-2">Love xFood. Just ordered some grub, and I tell you,
+                                        you folks make that part of my life easy. Thanks!
+                                    </p>
+                                    <div class="d-flex profile my-auto">
+                                        <img src="assets/images/body/client-1.jpg" alt=""
+                                            class="img-fluid rounded-circle " width="50" height="50">
+                                        <div class="ps-4">
+                                            <h3 class="fs-5 fw-bold my-auto">Alex Doe</h3>
+                                            <p>Master Chef</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- If we need navigation buttons -->
+                    <div class="swiper-button-prev"></div>
+                    <div class="swiper-button-next"></div>
+                </div>
+            </div>
+        </div>
+    </section>
+    <!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        End Client
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
+
+    <!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        Start Blog
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
+    <section class="blog pt-120 pb-120 head-res overflow-hidden">
+        <div class="container-xl mx-auto py-3">
+            <div class="text-center">
+                <p class="fw-bold text-capitalize m-0 pb-20"><i class="fa-solid fa-cloud-meatball pe-2"></i>Latest Blog
+                </p>
+                <h3 class="pb-3 fw-bold fs-2 title-head">Latest <span class="text-h">Blogs</span> & Articles
+                </h3>
+            </div>
+            <div class="row g-5">
+                <div class="col-lg-4 col-md-6 col-12">
+                    <div class="card">
+                        <img src="assets/images/body/b2.jpg" class="img-fluid main-img" alt="image">
+                        <div class="card-body py-4">
+                            <p class="author">By Jhon Doe</p>
+                            <a href="blog-details.html">
+                                <h5 class="text-capitalize fw-bold fs-4 title">Most Popular Dishes This Week</h5>
+
+                                <p class="card-text pb-2">From Ravioli with spinach and ricotta cheese to Farfalle with
+                                    mushrooms</p>
+                            </a>
+                            <div class="d-flex pt-3">
+                                <img src="assets/images/body/client-3.jpg" alt="" class="rounded-circle p-1" width="60"
+                                    height="10">
+                                <div class="ps-4">
+                                    <h3 class="fs-5">jhon Danals</h3>
+                                    <p>March 23, 2022</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-4 col-md-6 col-12">
+                    <div class="card">
+                        <img src="assets/images/body/b3.jpg" class="img-fluid main-img" alt="image">
+                        <div class="card-body py-4">
+                            <p class="author">By Jhon Doe</p>
+                            <a href="blog-details.html">
+                                <h5 class="text-capitalize fw-bold fs-4 title">Most Popular Dishes This Week</h5>
+
+                                <p class="card-text pb-2">From Ravioli with spinach and ricotta cheese to Farfalle with
+                                    mushrooms</p>
+                            </a>
+                            <div class="d-flex pt-3">
+                                <img src="assets/images/body/client-3.jpg" alt="" class="rounded-circle p-1" width="60"
+                                    height="10">
+                                <div class="ps-4">
+                                    <h3 class="fs-5">jhon Danals</h3>
+                                    <p>March 23, 2022</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-4 col-md-6 col-12">
+                    <div class="card">
+                        <img src="assets/images/body/b1.jpg" class="img-fluid main-img" alt="image">
+                        <div class="card-body py-4">
+                            <p class="author">By Jhon Doe</p>
+                            <a href="blog-details.html">
+                                <h5 class="text-capitalize fw-bold fs-4 title">Most Popular Dishes This Week</h5>
+
+                                <p class="card-text pb-2">From Ravioli with spinach and ricotta cheese to Farfalle with
+                                    mushrooms</p>
+                            </a>
+                            <div class="d-flex pt-3">
+                                <img src="assets/images/body/client-3.jpg" alt="" class="rounded-circle p-1" width="60"
+                                    height="10">
+                                <div class="ps-4">
+                                    <h3 class="fs-5">jhon Danals</h3>
+                                    <p>March 23, 2022</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+    <!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        End Blog
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
+
+    <!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        Start Subscription 
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
+    <section class="subscription py-5 overflow-hidden">
+        <div class="container-xl mx-auto">
+            <div class="row">
+                <div class="col-lg-6 col-md-12 col-12">
+                    <div class="pt-4">
+                        <h3 class="pb-3 text-capitalize fw-bold text-md-center text-lg-start text-start title-head">
+                            Want Coupons or Deep Thoughts About Food? Get Our Weekly Email
+                        </h3>
+                    </div>
+                </div>
+                <div class="col-lg-6 col-md-12 col-12 my-auto">
+                    <form action="" class="d-lg-flex d-md-flex d-block justify-content-center">
+                        <div class="pe-3 mb-3 d-flex justify-content-center">
+                            <input type="email" class="form-control" id="" placeholder="Email">
+                        </div>
+                        <div class="d-flex justify-content-center">
+                            <div>
+                                <button type="submit" class="custom--btn ms-auto">Submit</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </section>
+    <!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        End Subscription 
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
+
+
+    <!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        Start Footer 
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
+    <footer class="footer pt-3 overflow-hidden">
+        <div class="container-xl mx-auto">
+            <div class="">
+                <div class="row py-5">
+                    <div class="col-lg-3 col-md-6 mb-4 mb-md-0">
+                        <div class="d-flex align-items-center justify-content-start pb-4 ">
+                            <img class="w-75" src="assets/images/logo/logo.png" alt="" />
+                        </div>
+
+                        <p class="text-start">An mei sadipscing dissentiet, eos ea partem viderer facilisi. Brute
+                            nostrud democritum in vis,</p>
+
+                    </div>
+
+                    <div class="col-lg-3 col-md-6 mb-4 mb-md-0">
+                        <h5 class="text-capitalize mb-4 fs-5 fw-bold">Quick link</h5>
+
+                        <ul class="list-unstyled">
+                            <li class="mb-2">
+                                <a href="index.html" class="text-decoration">Home</a>
+                            </li>
+                            <li class="mb-2">
+                                <a href="all-vendors.html" class="text-decoration">All Vendors</a>
+                            </li>
+                            <li class="mb-2">
+                                <a href="contact.html" class="text-decoration">contact</a>
+                            </li>
+                            <li class="mb-2">
+                                <a href="blog-details.html" class="text-decoration">Blog Details</a>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <div class="col-lg-3 col-md-6 mb-4 mb-md-0">
+                        <h5 class="text-capitalize mb-4 fs-5 fw-bold">Quick link 2</h5>
+
+                        <ul class="list-unstyled">
+                            <li class="mb-2">
+                                <a href="login.html" class="text-decoration">
+                                    Login
+
+                                </a>
+                            </li>
+                            <li class="mb-2">
+                                <a href="register.html" class="text-decoration">
+                                    Register
+                                </a>
+                            </li>
+                            <li class="mb-2">
+                                <a href="terms-and-conditions.html" class="text-decoration">
+                                    Terms & Conditions
+
+                                </a>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <div class="col-lg-3 col-md-6 mb-4 mb-md-0">
+                        <h5 class="text-capitalize mb-4 fs-5 fw-bold">Contact</h5>
+
+                        <ul class="list-unstyled">
+                            <li>
+                                <p><i class="fas fa-map-marker-alt pe-2"></i>USA, 57 Street, </p>
+                            </li>
+                            <li>
+                                <p><i class="fas fa-phone pe-2"></i>+ 01 234 567 89</p>
+                            </li>
+                            <li>
+                                <p><i class="fas fa-envelope pe-2 mb-0"></i>info@example.com</p>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Copyright -->
+        <div class="copyright mx-auto">
+            <div class="p-3 d-lg-flex d-md-flex d-block justify-content-between container-xl mx-auto">
+                <div class="fw-bold text-lg-start text-md-start text-center">
+                    Copyright © 2022 <a class="text-h" href="#">xFood</a> All Rights By <a
+                        href="http://www.bootstrapMB.com">bootstrapMB</a>.
+                </div>
+
+                <div>
+                    <ul
+                        class="list-unstyled d-flex flex-row justify-content-lg-start justify-content-lg-start justify-content-center pb-lg-0 pb-md-4 pb-0 pt-lg-0 pt-md-0 pt-3">
+                        <li>
+                            <a class="px-2" href="www.facebook.com">
+                                <i class="fab fa-facebook-square"></i>
+                            </a>
+                        </li>
+                        <li>
+                            <a class="px-2" href="www.twitter,com">
+                                <i class="fab fa-twitter-square"></i>
+                            </a>
+                        </li>
+                        <li>
+                            <a class="px-2" href="www.instagrem.com">
+                                <i class="fab fa-instagram"></i>
+                            </a>
+                        </li>
+                        <li>
+                            <a class="ps-2" href="www.youtube.com">
+                                <i class="fab fa-youtube"></i>
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </footer>
+    <!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+         End Footer 
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
+
+
+    <!-- add to cart -->
+    <div class="offcanvas offcanvas-end sidebar-order" tabindex="-1" id="offcanvasRight"
+        aria-labelledby="offcanvasRightLabel">
+        <div class="offcanvas-header">
+            <h3 id="offcanvasRightLabel" class="fs-5 fw-bold pt-2">Your Order</h3>
+            <button type="button" class="btn-close text-reset" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+        </div>
+        <div class="offcanvas-body">
+            <div class="d-flex justify-content-between item-info mb-5">
+                <div class="d-flex">
+                    <img src="assets/images/body/b2.jpg" alt="image" class="img-fluid prod-img">
+                    <div>
+                        <h3 class="fs-6 fw-bold">Hot & Spicy Pizza</h3>
+                        <p class="m-0">Tasty Food Pizza</p>
+                        <h3 class="fs-5 pt-1"><s>$130.00</s> <span class="price">$110.00</span>
+                        </h3>
+                    </div>
+                </div>
+                <div class="pt-3">
+                    <button type="button" class="bg-white">
+                        <i
+                            class="fa-sharp fa-solid fa-circle-xmark text-white fs-5 my-auto rounded-circle bg-danger p-2"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="d-flex justify-content-between item-info mb-5">
+                <div class="d-flex">
+                    <img src="assets/images/body/b3.jpg" alt="image" class="img-fluid prod-img">
+                    <div>
+                        <h3 class="fs-6 fw-bold">Hot & Spicy Pizza</h3>
+                        <p class="m-0">Tasty Food Pizza</p>
+                        <h3 class="fs-5 pt-1"><s>$130.00</s> <span class="price">$110.00</span>
+                        </h3>
+                    </div>
+                </div>
+                <div class="pt-3">
+                    <button type="button" class="bg-white">
+                        <i
+                            class="fa-sharp fa-solid fa-circle-xmark text-white fs-5 my-auto rounded-circle bg-danger p-2"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="d-flex justify-content-between item-info mb-5">
+                <div class="d-flex">
+                    <img src="assets/images/body/b3.jpg" alt="image" class="img-fluid prod-img">
+                    <div>
+                        <h3 class="fs-6 fw-bold">Hot & Spicy Pizza</h3>
+                        <p class="m-0">Tasty Food Pizza</p>
+                        <h3 class="fs-5 pt-1"><s>$130.00</s> <span class="price">$110.00</span>
+                        </h3>
+                    </div>
+                </div>
+                <div class="pt-3">
+                    <button type="button" class="bg-white">
+                        <i
+                            class="fa-sharp fa-solid fa-circle-xmark text-white fs-5 my-auto rounded-circle bg-danger p-2"></i>
+                    </button>
+                </div>
+            </div>
+
+            <form action="">
+                <div class="input-group mb-3">
+                    <input type="text" class="form-control border-3" placeholder="Coupon Coder"
+                        aria-label="Recipient's username" aria-describedby="button-addon2">
+                    <button class="custom--btn ms-1" type="button" id="button-addon2">Apply Coupon</button>
+                </div>
+            </form>
+
+            <div class="pt-4">
+                <h3 class="fs-6 fw-bold">Cart Totals</h3>
+                <div class="d-flex justify-content-between py-3">
+                    <p class="fw-bold">Subtotal:</p>
+                    <p class="fw-bold fs-5">$130.00</p>
+                </div>
+                <a href="place-order.html" class="custom--btn w-100 text-center">Confirm Order</a>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- jquery -->
+    <script src="assets/js/jquery-3.3.1.min.js"></script>
+    <!-- bootstrap js -->
+    <script src="assets/js/bootstrap.min.js"></script>
+    <!-- swipper js -->
+    <script src="assets/js/swiper.min.js"></script>
+    <!-- chosen js -->
+    <script src="assets/js/chosen.jquery.js"></script>
+    <!-- main -->
+    <script src="assets/js/main.js"></script>
+    <!-- asos -->
+    <script src="assets/js/aos.js"></script>
+    <script>AOS.init({ duration: 1200, });</script>
+</body>
+
+</html>

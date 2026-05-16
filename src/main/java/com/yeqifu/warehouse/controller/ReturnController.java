@@ -37,18 +37,33 @@ public class ReturnController {
     private CommissionLedgerMapper commissionLedgerMapper;
 
     @Autowired
+    private com.yeqifu.warehouse.mapper.AccountMapper accountMapper;
+
+    @Autowired
     private RuntimeModeManager runtimeModeManager;
 
     private static final java.math.BigDecimal COMMISSION_RATE = new java.math.BigDecimal("0.06");
 
     @GetMapping("/list")
-    public Result<List<ReturnDoc>> list() {
-        List<ReturnDoc> docs = returnDocMapper.selectList(new LambdaQueryWrapper<ReturnDoc>().orderByDesc(ReturnDoc::getCreatedAt));
-        for (ReturnDoc doc : docs) {
-            List<ReturnLine> lines = returnLineMapper.selectList(new LambdaQueryWrapper<ReturnLine>().eq(ReturnLine::getDocId, doc.getId()));
-            doc.setLines(lines);
+    public Result<List<ReturnDoc>> list(
+            @RequestParam(defaultValue = "1") Integer page,
+            @RequestParam(defaultValue = "50") Integer limit) {
+        com.baomidou.mybatisplus.extension.plugins.pagination.Page<ReturnDoc> pageObj =
+            new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(page, limit);
+        com.baomidou.mybatisplus.core.metadata.IPage<ReturnDoc> result =
+            returnDocMapper.selectPage(pageObj, new LambdaQueryWrapper<ReturnDoc>().orderByDesc(ReturnDoc::getCreatedAt));
+        List<ReturnDoc> docs = result.getRecords();
+        if (!docs.isEmpty()) {
+            java.util.Set<String> docIds = docs.stream().map(ReturnDoc::getId).collect(java.util.stream.Collectors.toSet());
+            List<ReturnLine> allLines = returnLineMapper.selectList(
+                new LambdaQueryWrapper<ReturnLine>().in(ReturnLine::getDocId, docIds));
+            java.util.Map<String, List<ReturnLine>> lineMap = allLines.stream()
+                .collect(java.util.stream.Collectors.groupingBy(ReturnLine::getDocId));
+            for (ReturnDoc doc : docs) {
+                doc.setLines(lineMap.getOrDefault(doc.getId(), java.util.Collections.emptyList()));
+            }
         }
-        return Result.ok(docs);
+        return Result.ok(docs, result.getTotal());
     }
 
     @GetMapping("/detail/{id}")
@@ -94,11 +109,14 @@ public class ReturnController {
 
         if (doc.getId() == null || doc.getId().isEmpty()) {
             doc.setId(IdUtils.randomId());
-            doc.setCode(IdUtils.genCode("RT"));
+            doc.setCode(generateReturnCode(doc));
             returnDocMapper.insert(doc);
         } else {
             returnDocMapper.updateById(doc);
-            returnLineMapper.delete(new LambdaQueryWrapper<ReturnLine>().eq(ReturnLine::getDocId, doc.getId()));
+            // 仅当前端传入了明细时才更新明细，避免只更新单头时意外清空明细
+            if (!lines.isEmpty()) {
+                returnLineMapper.delete(new LambdaQueryWrapper<ReturnLine>().eq(ReturnLine::getDocId, doc.getId()));
+            }
         }
         for (ReturnLine line : lines) {
             int qty = line.getQty() == null ? 0 : line.getQty();
@@ -140,21 +158,23 @@ public class ReturnController {
                     insertLedger("return_vehicle", id, fromWarehouseId, line.getProductId(), qty);
                 }
 
-                // 退单扣提成（按退货金额 * 6%）
-                BigDecimal commissionAmount = amount.multiply(COMMISSION_RATE).setScale(2, RoundingMode.HALF_UP).negate();
-                CommissionLedger ledger = new CommissionLedger();
-                ledger.setId(IdUtils.randomId());
-                ledger.setBizType("return");
-                ledger.setDocId(id);
-                ledger.setSalespersonId(doc.getSalespersonId());
-                ledger.setStoreId(doc.getStoreId());
-                ledger.setProductId(line.getProductId());
-                ledger.setQty(qty);
-                ledger.setPrice(price);
-                ledger.setAmount(amount);
-                ledger.setCommissionRate(COMMISSION_RATE);
-                ledger.setCommissionAmount(commissionAmount);
-                commissionLedgerMapper.insert(ledger);
+                // 超市退货（vehicle_return）扣提成；退货回仓（warehouse_return）是仓管操作，不扣
+                if (!"warehouse_return".equals(doc.getReturnType())) {
+                    BigDecimal commissionAmount = amount.multiply(COMMISSION_RATE).setScale(2, RoundingMode.HALF_UP).negate();
+                    CommissionLedger ledger = new CommissionLedger();
+                    ledger.setId(IdUtils.randomId());
+                    ledger.setBizType("return");
+                    ledger.setDocId(id);
+                    ledger.setSalespersonId(doc.getSalespersonId());
+                    ledger.setStoreId(doc.getStoreId());
+                    ledger.setProductId(line.getProductId());
+                    ledger.setQty(qty);
+                    ledger.setPrice(price);
+                    ledger.setAmount(amount);
+                    ledger.setCommissionRate(COMMISSION_RATE);
+                    ledger.setCommissionAmount(commissionAmount);
+                    commissionLedgerMapper.insert(ledger);
+                }
             }
             doc.setStatus("posted");
             returnDocMapper.updateById(doc);
@@ -193,20 +213,23 @@ public class ReturnController {
                 BigDecimal price = line.getPrice() == null ? BigDecimal.ZERO : line.getPrice();
                 int qty = line.getQty() == null ? 0 : line.getQty();
                 BigDecimal amount = price.multiply(new BigDecimal(qty));
-                BigDecimal commissionAmount = amount.multiply(COMMISSION_RATE).setScale(2, RoundingMode.HALF_UP);
-                CommissionLedger ledger = new CommissionLedger();
-                ledger.setId(IdUtils.randomId());
-                ledger.setBizType("void_return");
-                ledger.setDocId(id);
-                ledger.setSalespersonId(doc.getSalespersonId());
-                ledger.setStoreId(doc.getStoreId());
-                ledger.setProductId(line.getProductId());
-                ledger.setQty(qty);
-                ledger.setPrice(price);
-                ledger.setAmount(amount);
-                ledger.setCommissionRate(COMMISSION_RATE);
-                ledger.setCommissionAmount(commissionAmount);
-                commissionLedgerMapper.insert(ledger);
+                // 超市退货才有提成流水需要对冲；退货回仓无提成流水
+                if (!"warehouse_return".equals(doc.getReturnType())) {
+                    BigDecimal commissionAmount = amount.multiply(COMMISSION_RATE).setScale(2, RoundingMode.HALF_UP);
+                    CommissionLedger ledger = new CommissionLedger();
+                    ledger.setId(IdUtils.randomId());
+                    ledger.setBizType("void_return");
+                    ledger.setDocId(id);
+                    ledger.setSalespersonId(doc.getSalespersonId());
+                    ledger.setStoreId(doc.getStoreId());
+                    ledger.setProductId(line.getProductId());
+                    ledger.setQty(qty);
+                    ledger.setPrice(price);
+                    ledger.setAmount(amount);
+                    ledger.setCommissionRate(COMMISSION_RATE);
+                    ledger.setCommissionAmount(commissionAmount);
+                    commissionLedgerMapper.insert(ledger);
+                }
             }
             doc.setStatus("voided");
             returnDocMapper.updateById(doc);
@@ -214,6 +237,47 @@ public class ReturnController {
         } catch (RuntimeException e) {
             TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
             return Result.error(e.getMessage());
+        }
+    }
+
+    private String generateReturnCode(com.yeqifu.warehouse.entity.ReturnDoc doc) {
+        java.util.Date docDate = doc.getDocDate() == null ? new java.util.Date() : doc.getDocDate();
+        String datePart = new java.text.SimpleDateFormat("yyyy-MM-dd").format(docDate);
+        String vehicleNo = resolveVehicleNo(doc.getSalespersonId());
+        // 车库退货用 th，退货回仓用 tc
+        String typeSuffix = "warehouse_return".equals(doc.getReturnType()) ? "tc" : "th";
+        String prefix = datePart + "-" + vehicleNo + "-" + typeSuffix + "-";
+        java.util.List<com.yeqifu.warehouse.entity.ReturnDoc> existing = returnDocMapper.selectList(
+            new LambdaQueryWrapper<com.yeqifu.warehouse.entity.ReturnDoc>()
+                .eq(com.yeqifu.warehouse.entity.ReturnDoc::getSalespersonId, doc.getSalespersonId())
+                .eq(com.yeqifu.warehouse.entity.ReturnDoc::getDocDate, docDate)
+                .likeRight(com.yeqifu.warehouse.entity.ReturnDoc::getCode, prefix)
+                .ne(doc.getId() != null && !doc.getId().isEmpty(),
+                    com.yeqifu.warehouse.entity.ReturnDoc::getId,
+                    doc.getId() != null ? doc.getId() : "")
+        );
+        long maxSeq = 0;
+        for (com.yeqifu.warehouse.entity.ReturnDoc d : existing) {
+            String code = d.getCode();
+            if (code != null && code.startsWith(prefix)) {
+                try {
+                    long seq = Long.parseLong(code.substring(prefix.length()));
+                    if (seq > maxSeq) maxSeq = seq;
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+        return prefix + (maxSeq + 1);
+    }
+
+    private String resolveVehicleNo(String salespersonId) {
+        if (salespersonId == null || salespersonId.isEmpty()) return "0";
+        com.yeqifu.warehouse.entity.Account account = accountMapper.selectById(salespersonId);
+        if (account == null || account.getDisplayName() == null) return "0";
+        switch (account.getDisplayName()) {
+            case "大车": return "1";
+            case "小车": return "2";
+            case "三车": return "3";
+            default: return "0";
         }
     }
 

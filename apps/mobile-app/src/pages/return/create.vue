@@ -1,11 +1,12 @@
 <template>
   <view class="create-page">
     <view class="header">
-      <text class="title">创建退货单</text>
+<text class="title">{{ step === 1 ? '创建退货单' : '退货单预览' }}</text>
     </view>
 
-    <view class="content">
-      <view v-if="pageLoading" class="section state-card">
+<view class="content" v-if="step === 1">
+  <view v-if="pageLoading" class="section state-card">
+
         <text class="state-text">{{ stores.length || products.length || warehouses.length ? '基础资料已显示，正在后台刷新...' : '正在加载基础资料...' }}</text>
       </view>
 
@@ -95,7 +96,7 @@
         <text>合计金额: ¥{{ totalAmount.toFixed(2) }}</text>
       </view>
 
-      <button class="btn-submit" @tap="submit" :disabled="!canSubmit">生成退货单</button>
+      <button class="btn-submit btn-primary" @tap="goPreview" :disabled="!canSubmit">生成退货单</button>
 
       <view v-if="storeSelectorVisible" class="store-popup">
         <view class="store-popup-mask" @tap="closeStoreSelector" />
@@ -126,7 +127,67 @@
           </scroll-view>
         </view>
       </view>
+ </view>
+
+    <view class="content" v-if="step === 2">
+      <view class="preview-banner">
+        <text class="preview-banner-text">退货单预览（尚未提交）</text>
+      </view>
+
+      <view class="card">
+        <view v-if="returnType === 'vehicle_return'" class="row"><text class="label">超市</text><text class="value">{{ selectedStore?.name || '-' }}</text></view>
+        <view class="row"><text class="label">退回车库</text><text class="value">{{ fromWarehouse?.name || '-' }}</text></view>
+        <view v-if="returnType === 'warehouse_return'" class="row"><text class="label">退货仓库</text><text class="value">{{ toWarehouse?.name || '-' }}</text></view>
+        <view class="row"><text class="label">日期</text><text class="value">{{ previewDate }}</text></view>
+        <view v-if="returnType === 'vehicle_return'" class="row"><text class="label">付款方式</text><text class="value">{{ payType === 'cash' ? '现金' : '单子' }}</text></view>
+      </view>
+
+      <view class="card">
+        <view class="card-title">退货商品 ({{ selectedProducts.length }}种)</view>
+        <view v-for="(p, idx) in selectedProducts" :key="p.id" class="preview-line">
+          <text class="preview-seq">{{ idx + 1 }}.</text>
+          <text class="preview-name">{{ p.name }}</text>
+          <text class="preview-qty">{{ qtyMap[p.id]?.qty || 0 }}袋</text>
+          <text class="preview-price">¥{{ (normalizeCount(qtyMap[p.id]?.qty) * (p.salePrice || 0)).toFixed(2) }}</text>
+        </view>
+      </view>
+
+      <view class="summary preview-summary">
+        <text>品种: {{ selectedProducts.length }}种 | 合计: {{ totalQty }}袋</text>
+        <text>合计金额: ¥{{ totalAmount.toFixed(2) }}</text>
+      </view>
+
+      <view v-if="returnType === 'vehicle_return'" class="pay-type-section">
+        <text class="pay-type-label">付款方式</text>
+        <view class="pay-type-options">
+          <view class="pay-type-option" :class="{ active: payType === 'card' }" @tap="payType = 'card'"><text>单子</text></view>
+          <view class="pay-type-option" :class="{ active: payType === 'cash' }" @tap="payType = 'cash'"><text>现金</text></view>
+        </view>
+      </view>
+
+      <view class="print-copies-section">
+        <text class="print-copies-label">打印数量</text>
+        <view class="print-copies-options">
+          <view class="print-copies-option" :class="{ active: printCopies === 1 }" @tap="printCopies = 1"><text>1张</text></view>
+          <view class="print-copies-option" :class="{ active: printCopies === 2 }" @tap="printCopies = 2"><text>2张</text></view>
+          <view class="print-copies-option" :class="{ active: printCopies === 3 }" @tap="printCopies = 3"><text>3张</text></view>
+        </view>
+      </view>
+
+      <view class="btn-group">
+        <button class="btn-submit btn-primary" @tap="submitAndPrint" :disabled="submitting">
+          {{ submitting ? '提交中...' : '确认并打印' }}
+        </button>
+        <button class="btn-submit btn-secondary" @tap="submitOnly" :disabled="submitting">
+          确认不打印
+        </button>
+        <button class="btn-submit btn-back" @tap="goBackToEdit">返回修改</button>
+      </view>
     </view>
+
+    <scroll-view scroll-x scroll-y style="width:0;height:0;overflow:hidden;">
+      <canvas :canvas-id="canvasId" :style="{ width: canvasWidthPx + 'px', height: canvasHeightPx + 'px' }" />
+    </scroll-view>
   </view>
 </template>
 
@@ -135,9 +196,12 @@ import { ref, computed, onMounted } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
 import { useReferenceStore } from '@/store/reference'
-import { getStock, saveReturn, postReturn, isOwnedStore, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId, getProductSaleQty } from '@/api'
+import { getStock, saveReturn, postReturn, isOwnedStore, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId, getProductSaleQty, getSalespersonDisplayName } from '@/api'
 import type { Store, Product, Warehouse, ReturnDoc, ReturnLine, StockItem } from '@/types'
 import { genId, formatProductQuickPickLabel, formatProductPackageSummary, calcQty, deriveBagQty, normalizeCount, normalizeBoxPackQty, formatStockPreview, getProductStockQty, toStockQtyMap, todayLocalDate } from '@/utils'
+import { printReturnA4, checkPrinterConnected, navigateToPrinterSettings } from '@/utils/bluetooth-printer'
+import { CANVAS_ID, PAGE_WIDTH_DOTS } from '@/utils/canvas-print'
+import { guardNetwork } from '@/utils/network'
 import { requestCurrentLocation } from '@/utils/location'
 import { haversineDistance, formatDistance } from '@/utils/geo'
 
@@ -178,6 +242,19 @@ const storeKeyword = ref('')
 const sortMode = ref<SortMode>('custom')
 const customSortOrder = ref<string[]>([])
 const productSaleQtyMap = ref<Record<string, number>>({})
+const step = ref<1 | 2>(1)
+const payType = ref<'cash' | 'card'>('card')
+const printCopies = ref(1)
+const submitting = ref(false)
+const previewDate = ref('')
+const addedProductOrder = ref(new Map<string, number>())
+const canvasId = CANVAS_ID
+const canvasWidthPx = PAGE_WIDTH_DOTS
+const canvasHeightPx = computed(() => {
+  const itemCount = selectedProducts.value.length
+  return Math.max(2480, 800 + itemCount * 64)
+})
+let _submitLock = false
 
 function onTypeChange(e: any) {
   returnType.value = typeOptions[Number(e.detail.value)]?.value as any
@@ -186,7 +263,7 @@ function onTypeChange(e: any) {
   } else {
     selectedStore.value = null
     if (!toWarehouse.value) {
-      toWarehouse.value = returnWarehouses.value[0] || null
+      toWarehouse.value = defaultReturnWarehouse()
     }
   }
   refreshStockPreview()
@@ -254,7 +331,11 @@ const vehicleWarehouses = computed(() => {
   return list.filter(w => isSameSalespersonId(w.salespersonId, sessionSalespersonId.value))
 })
 const mainWarehouse = computed(() => warehouses.value.find(w => w.type === 'main') || null)
-const returnWarehouses = computed(() => warehouses.value.filter(w => w.type === 'main'))
+const returnWarehouses = computed(() => warehouses.value.filter(w => w.type === 'return' || w.type === 'main'))
+
+function defaultReturnWarehouse(): Warehouse | null {
+  return returnWarehouses.value.find(w => w.type === 'return') || returnWarehouses.value[0] || null
+}
 const effectiveSalespersonId = computed(() => {
   return sessionSalespersonId.value || getWarehouseSalespersonId(fromWarehouse.value)
 })
@@ -318,7 +399,15 @@ const quickPickStockHint = computed(() => {
   return mainWarehouse.value ? '列表已显示车库和总仓库存' : '列表已显示车库库存'
 })
 
-const selectedProducts = computed(() => products.value.filter(p => !!qtyMap.value[p.id]))
+const selectedProducts = computed(() => {
+  const selected = products.value.filter(p => !!qtyMap.value[p.id])
+  const order = addedProductOrder.value
+  return [...selected].sort((a, b) => {
+    const oa = order.get(a.id) ?? 0
+    const ob = order.get(b.id) ?? 0
+    return ob - oa
+  })
+})
 
 const totalQty = computed(() => Object.values(qtyMap.value).reduce((sum, item) => sum + normalizeCount(item.qty), 0))
 const totalAmount = computed(() => {
@@ -412,10 +501,12 @@ function toggleSelect(p: Product) {
   if (isSelected(p.id)) {
     delete qtyMap.value[p.id]
     qtyMap.value = { ...qtyMap.value }
+    addedProductOrder.value.delete(p.id)
     return
   }
   qtyMap.value[p.id] = createQtyInput(p.id)
   qtyMap.value = { ...qtyMap.value }
+  addedProductOrder.value.set(p.id, Date.now())
 }
 
 function onQuickPickChange(e: any) {
@@ -477,7 +568,7 @@ async function loadData() {
   }
   syncStoresBySalesperson()
   if (!toWarehouse.value) {
-    toWarehouse.value = returnWarehouses.value[0] || null
+    toWarehouse.value = defaultReturnWarehouse()
   }
 
   pageLoading.value = true
@@ -499,7 +590,7 @@ async function loadData() {
 
     syncStoresBySalesperson()
     if (!toWarehouse.value) {
-      toWarehouse.value = returnWarehouses.value[0] || null
+      toWarehouse.value = defaultReturnWarehouse()
     }
   } catch (e: any) {
     stores.value = [...referenceStore.stores]
@@ -508,7 +599,7 @@ async function loadData() {
     warehouses.value = [...referenceStore.warehouses]
     syncStoresBySalesperson()
     if (!toWarehouse.value) {
-      toWarehouse.value = returnWarehouses.value[0] || null
+      toWarehouse.value = defaultReturnWarehouse()
     }
     if (stores.value.length || products.value.length || warehouses.value.length) {
       uni.showToast({ title: '基础资料刷新失败，已显示缓存', icon: 'none' })
@@ -529,18 +620,33 @@ async function loadData() {
   loadCustomSortOrder()
 }
 
-async function submit() {
+function goPreview() {
+  if (!canSubmit.value) return
   Object.keys(qtyMap.value).forEach(syncQty)
+  const zeroProduct = selectedProducts.value.find(p => {
+    const c = qtyMap.value[p.id]
+    return !normalizeCount(c?.boxQty) && !normalizeCount(c?.bagQty) && !normalizeCount(c?.qty)
+  })
+  if (zeroProduct) {
+    uni.showToast({ title: `${zeroProduct.name} 数量为0，请先修改`, icon: 'none' })
+    return
+  }
+  previewDate.value = todayLocalDate()
+  step.value = 2
+  uni.pageScrollTo({ scrollTop: 0, duration: 0 })
+}
 
+function goBackToEdit() {
+  step.value = 1
+  uni.pageScrollTo({ scrollTop: 0, duration: 0 })
+}
+
+async function doSubmit(): Promise<ReturnDoc | null> {
+  Object.keys(qtyMap.value).forEach(syncQty)
   if (!canSubmit.value) {
     uni.showToast({ title: '请完善信息', icon: 'none' })
-    return
+    return null
   }
-  if (returnType.value === 'vehicle_return' && !selectedStore.value) {
-    uni.showToast({ title: '请选择超市', icon: 'none' })
-    return
-  }
-
   const lines: ReturnLine[] = selectedProducts.value
     .map(p => ({
       id: genId(),
@@ -550,16 +656,14 @@ async function submit() {
       price: p.salePrice || 0,
     }))
     .filter(line => line.qty > 0)
-
   if (!fromWarehouse.value) {
     uni.showToast({ title: '请选择退回车库', icon: 'none' })
-    return
+    return null
   }
   if (returnType.value === 'warehouse_return' && !toWarehouse.value) {
     uni.showToast({ title: '请选择退货仓库', icon: 'none' })
-    return
+    return null
   }
-
   const draft = {
     salespersonId: currentSalespersonId(),
     storeId: selectedStore.value?.id || '',
@@ -568,19 +672,75 @@ async function submit() {
     returnType: returnType.value,
     fromWarehouseId: fromWarehouse.value?.id || '',
     toWarehouseId: returnType.value === 'warehouse_return' ? (toWarehouse.value?.id || '') : undefined,
+    payType: payType.value,
     lines,
   } as ReturnDoc
-
   try {
     const saved = await saveReturn(draft, draft.lines)
     await postReturn(saved.id)
-    uni.showToast({ title: '退货单已生成', icon: 'success' })
-    setTimeout(() => {
-      uni.navigateTo({ url: `/pages/return/detail?id=${saved.id}` })
-    }, 400)
+    return saved
   } catch (e: any) {
     uni.showToast({ title: e.message || '生成失败', icon: 'none' })
+    return null
   }
+}
+
+async function submitAndPrint() {
+  if (_submitLock) return
+  if (!(await guardNetwork('提交退货单'))) return
+  const printer = checkPrinterConnected()
+  if (!printer) {
+    uni.showModal({
+      title: '未连接打印机',
+      content: '请先到设置中的蓝牙打印页面连接打印机。',
+      confirmText: '去连接',
+      cancelText: '只确认',
+      success: async (res) => {
+        if (res.confirm) {
+          navigateToPrinterSettings()
+        } else {
+          await submitOnly()
+        }
+      },
+    })
+    return
+  }
+  _submitLock = true
+  submitting.value = true
+  const saved = await doSubmit()
+  if (!saved) {
+    submitting.value = false
+    _submitLock = false
+    return
+  }
+  try {
+    const store = stores.value.find(s => s.id === saved.storeId)
+    const spName = getSalespersonDisplayName(referenceStore.accounts, currentSalespersonId())
+    const copies = Math.min(Math.max(printCopies.value, 1), 3)
+    for (let i = 0; i < copies; i++) {
+      if (i > 0) await new Promise(r => setTimeout(r, 1500))
+      await printReturnA4(saved, store, spName, products.value, payType.value)
+    }
+    uni.showToast({ title: copies > 1 ? `已打印${copies}张` : '已确认并打印', icon: 'success' })
+  } catch (e: any) {
+    uni.showToast({ title: `已确认，打印失败: ${e.message || ''}`, icon: 'none', duration: 3000 })
+  }
+  submitting.value = false
+  _submitLock = false
+  setTimeout(() => { uni.redirectTo({ url: '/pages/return/index' }) }, 400)
+}
+
+async function submitOnly() {
+  if (_submitLock) return
+  if (!(await guardNetwork('提交退货单'))) return
+  _submitLock = true
+  submitting.value = true
+  const saved = await doSubmit()
+  submitting.value = false
+  _submitLock = false
+  if (!saved) return
+  uni.showToast({ title: '退货单已确认', icon: 'success' })
+  setTimeout(() => { uni.redirectTo({ url: '/pages/return/index' }) }, 400)
 }
 
 onShow(() => {
@@ -653,11 +813,38 @@ onMounted(() => {
 .store-search { margin-bottom:16rpx; }
 .store-search-input { width:100%; border:2rpx solid #eee; border-radius:12rpx; padding:16rpx 20rpx; font-size:28rpx; box-sizing:border-box; }
 .store-distance { font-size:22rpx; color:#1890ff; margin-left:auto; flex-shrink:0; }
-.btn-submit { width:100%; height:88rpx; background:#1890ff; color:#fff; font-size:32rpx; border-radius:44rpx; border:none; }
+.btn-submit { width:100%; height:88rpx; color:#fff; font-size:32rpx; border-radius:44rpx; border:none; margin-top:10rpx; }
 .btn-submit::after { border:none; }
+.btn-primary { background:#1890ff; }
+.btn-secondary { background:#fff; color:#1890ff; border:2rpx solid #1890ff; }
+.btn-back { background:#f0f0f0; color:#333; border:2rpx solid #d9d9d9; }
+.btn-group { display:flex; flex-direction:column; gap:16rpx; margin-top:20rpx; }
 .section-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:16rpx; }
 .sort-actions { display:flex; align-items:center; gap:12rpx; }
 .sort-manage { font-size:24rpx; color:#fa8c16; padding:6rpx 16rpx; border:2rpx solid #fa8c16; border-radius:999rpx; }
 .sort-trigger { font-size:24rpx; color:#1890ff; padding:6rpx 16rpx; border:2rpx solid #1890ff; border-radius:999rpx; }
 .empty { text-align:center; padding: 20rpx 0; color:#999; }
+.card { background:#fff; border-radius:16rpx; padding:24rpx; margin-bottom:20rpx; }
+.row { display:flex; justify-content:space-between; padding:10rpx 0; }
+.value { color:#333; }
+.card-title { font-size:28rpx; color:#666; margin-bottom:16rpx; }
+.preview-banner { background:#fffbe6; border:2rpx solid #ffe58f; border-radius:14rpx; padding:16rpx 20rpx; margin-bottom:20rpx; text-align:center; }
+.preview-banner-text { font-size:28rpx; color:#d48806; font-weight:600; }
+.preview-line { display:flex; align-items:center; gap:12rpx; padding:10rpx 0; border-bottom:1rpx solid #f5f5f5; }
+.preview-line:last-child { border-bottom:none; }
+.preview-seq { color:#999; font-size:24rpx; width:40rpx; }
+.preview-name { flex:1; font-size:28rpx; color:#333; }
+.preview-qty { font-size:26rpx; color:#666; }
+.preview-price { font-size:26rpx; color:#333; font-weight:600; }
+.preview-summary { background:#f8fafc; border:2rpx solid #dbeafe; border-radius:14rpx; }
+.pay-type-section { display:flex; align-items:center; gap:16rpx; padding:16rpx 10rpx; margin-bottom:10rpx; background:#f8fbff; border-radius:16rpx; }
+.pay-type-label { font-size:28rpx; color:#334155; font-weight:700; }
+.pay-type-options { display:flex; gap:12rpx; }
+.pay-type-option { padding:10rpx 28rpx; border-radius:999rpx; border:2rpx solid #ddd; font-size:26rpx; color:#666; min-width:120rpx; text-align:center; }
+.pay-type-option.active { background:#1890ff; color:#fff; border-color:#1890ff; }
+.print-copies-section { display:flex; align-items:center; gap:16rpx; padding:16rpx 10rpx; margin-bottom:10rpx; background:#f8fafc; border-radius:16rpx; }
+.print-copies-label { font-size:28rpx; color:#334155; font-weight:700; }
+.print-copies-options { display:flex; gap:12rpx; }
+.print-copies-option { padding:10rpx 28rpx; border-radius:999rpx; border:2rpx solid #ddd; font-size:26rpx; color:#666; min-width:120rpx; text-align:center; }
+.print-copies-option.active { background:#1890ff; color:#fff; border-color:#1890ff; }
 </style>

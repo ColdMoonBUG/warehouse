@@ -25,7 +25,8 @@ export interface PrinterPreset {
 }
 
 export const PRINTER_PRESETS: Record<string, PrinterPreset> = {
-  大车: { name: 'A4Pro-6A4F7A', mac: '98:3D:AE:6A:4F:7A', journalMode: false },
-  小车: { name: 'A4Pro-6C11A6', mac: '98:3D:AE:6C:11:A6', journalMode: false },
+  小车: { name: 'A4Pro-6A4F7A', mac: '98:3D:AE:6A:4F:7A', journalMode: false },
+  大车: { name: 'A4Pro-134B6E', mac: '34:CD:B0:13:4B:6E', journalMode: false },
   三车: { name: 'A4Pro-134C46', mac: '34:CD:B0:13:4C:46', journalMode: false },
+  管理员: { name: 'A4Pro-6B1DEA', mac: '98:3D:AE:6B:1D:EA', journalMode: false },
 }

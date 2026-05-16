@@ -2,8 +2,8 @@
     "name" : "艳萍麻花ERP",
     "appid" : "__UNI__819D7DA",
     "description" : "食品中间商车销管理系统",
-    "versionName" : "1.0.6",
-    "versionCode" : 119,
+    "versionName" : "1.0.9",
+    "versionCode" : 125,
     "transformPx" : false,
     "app-plus" : {
         "usingComponents" : true,

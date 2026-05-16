@@ -10,6 +10,7 @@ import { getSession, getSessionSalespersonId, uploadSalespersonLocation } from '
 import { useReferenceStore } from '@/store/reference'
 import { startBluetoothDaemon, pauseBluetoothDaemon } from '@/utils/bluetooth-printer'
 import { requestCurrentLocation } from '@/utils/location'
+import { startNetworkMonitor, stopNetworkMonitor } from '@/utils/network'
 
 const referenceStore = useReferenceStore()
 const LOCATION_UPLOAD_INTERVAL = 60 * 1000
@@ -61,11 +62,13 @@ onLaunch(() => {
 onShow(() => {
   startBluetoothDaemon()
   startLocationUploadTimer()
+  startNetworkMonitor()
 })
 
 onHide(() => {
   pauseBluetoothDaemon()
   clearLocationUploadTimer()
+  stopNetworkMonitor()
 })
 </script>
 

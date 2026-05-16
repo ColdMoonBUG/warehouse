@@ -160,6 +160,7 @@ async function submit() {
       salespersonId: form.value.salespersonId || undefined,
     })
     await referenceStore.preloadCore(true)
+    uni.$emit('store:updated')  // 通知地图刷新
     uni.showToast({ title: '保存成功', icon: 'success' })
     setTimeout(() => {
       uni.navigateBack()

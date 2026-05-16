@@ -8,7 +8,7 @@
       <view class="card">
         <view class="row"><text class="label">单号</text><text class="value">{{ doc.code }}</text></view>
         <view class="row"><text class="label">日期</text><text class="value">{{ doc.date }}</text></view>
-        <view class="row"><text class="label">超市</text><text class="value">{{ storeName }}</text></view>
+        <view v-if="doc.returnType !== 'warehouse_return'" class="row"><text class="label">超市</text><text class="value">{{ storeName }}</text></view>
         <view class="row"><text class="label">业务员</text><text class="value">{{ salespersonName }}</text></view>
         <view class="row"><text class="label">类型</text><text class="value">{{ typeText }}</text></view>
       </view>
@@ -49,7 +49,7 @@
             <view class="preview-section">
               <text class="preview-row">单号：{{ doc?.code }}</text>
               <text class="preview-row">日期：{{ doc?.date }}</text>
-              <text class="preview-row">店铺：{{ storeName }}</text>
+              <text v-if="doc?.returnType !== 'warehouse_return'" class="preview-row">店铺：{{ storeName }}</text>
               <text class="preview-row">业务员：{{ salespersonName }}</text>
               <text class="preview-row">类型：{{ typeText }}</text>
             </view>
@@ -102,9 +102,18 @@ import { CANVAS_ID, estimateContentHeight, PAGE_WIDTH_DOTS } from '@/utils/canva
 
 async function voidDoc() {
   if (!doc.value) return
-  await voidReturn(doc.value.id)
-  uni.showToast({ title: '已作废', icon: 'success' })
-  await loadDetail()
+  uni.showModal({
+    title: '确认作废',
+    content: '作废后库存和提成将全部回退，此操作不可撤销，确认继续？',
+    confirmText: '确认作废',
+    confirmColor: '#ff4d4f',
+    success: async (res) => {
+      if (!res.confirm) return
+      await voidReturn(doc.value!.id)
+      uni.showToast({ title: '已作废', icon: 'success' })
+      await loadDetail()
+    },
+  })
 }
 import { useUserStore } from '@/store/user'
 
@@ -130,7 +139,7 @@ const canvasHeightPx = computed(() => {
     items: doc.value.lines,
     totalQty: 0,
     totalAmount: 0,
-    payType: 'card',
+    payType: doc.value.payType || 'card',
     remark: doc.value.remark,
   }))
 })
@@ -186,7 +195,7 @@ async function confirmPrint() {
   if (!doc.value) return
   printing.value = true
   try {
-    await printReturnA4(doc.value, stores.value.find(s => s.id === doc.value?.storeId), salespersonName.value, products.value)
+    await printReturnA4(doc.value, stores.value.find(s => s.id === doc.value?.storeId), salespersonName.value, products.value, doc.value.payType || 'card')
     uni.showToast({ title: '打印指令已发送', icon: 'success' })
     showPreview.value = false
   } catch (error: any) {

@@ -49,7 +49,7 @@ function formatSalesperson(name: string): string {
   const trimmed = (name || '').trim()
   if (!trimmed) return '-'
   const phone = SALESPERSON_PHONES[trimmed]
-  return phone ? `${trimmed} ${phone}` : trimmed
+  return phone ? `${trimmed} 业务电话:${phone}` : trimmed
 }
 
 function formatPrintDate(date: string, createdAt?: string): string {
@@ -100,6 +100,7 @@ interface PrintItem {
   qty: number
   price: number
   amount: number
+  shelfDays?: number
 }
 
 interface PrintDocData {
@@ -112,6 +113,7 @@ interface PrintDocData {
   totalQty: number
   totalAmount: number
   payType: 'cash' | 'card'
+  returnType?: 'vehicle_return' | 'warehouse_return'
   remark?: string
 }
 
@@ -1303,16 +1305,21 @@ async function drawPrintContent(ctx: any, data: PrintDocData, width: number, hei
   const colSeq = left
   const colBarcode = left + Math.floor(contentWidth * 0.06)
   const colName = left + Math.floor(contentWidth * 0.26) + PRODUCT_COLUMN_OFFSET_DOTS
-  const colQty = left + Math.floor(contentWidth * 0.66)
-  const colPrice = left + Math.floor(contentWidth * 0.79)
-  const colAmount = left + Math.floor(contentWidth * 0.89)
+  const colQty = left + Math.floor(contentWidth * 0.62)
+  const colShelf = left + Math.floor(contentWidth * 0.72)
+  const colPrice = left + Math.floor(contentWidth * 0.82)
+  const colAmount = left + Math.floor(contentWidth * 0.91)
 
   ctx.setFillStyle('black')
 
   ctx.setFontSize(56)
   const titleText = data.type === 'sale' ? '艳萍麻花销单' : '艳萍麻花退单'
   const payTag = data.payType === 'cash' ? '[现金]' : '[单子]'
-  ctx.fillText(`${titleText} ${payTag}`, left, y + 56)
+  const isWarehouseReturn = data.type === 'return' && data.returnType === 'warehouse_return'
+  const headerLine = isWarehouseReturn
+    ? `${data.salespersonName}退单`
+    : `${titleText} ${payTag}`
+  ctx.fillText(headerLine, left, y + 56)
   y += 72
 
   ctx.setStrokeStyle('black')
@@ -1326,8 +1333,13 @@ async function drawPrintContent(ctx: any, data: PrintDocData, width: number, hei
   ctx.fillText(`单号:${data.code}`, left, y + 40)
   ctx.fillText(`日期:${data.date}`, mid, y + 40)
   y += 54
-  ctx.fillText(`店铺:${data.storeName}`, left, y + 40)
-  ctx.fillText(`业务员:${formatSalesperson(data.salespersonName)}`, mid, y + 40)
+  // 回仓退货：只显示业务员名，不显示店铺和手机号
+  if (isWarehouseReturn) {
+    ctx.fillText(`业务员:${(data.salespersonName || '').trim() || '-'}`, left, y + 40)
+  } else {
+    ctx.fillText(`店铺:${data.storeName}`, left, y + 40)
+    ctx.fillText(`业务员:${formatSalesperson(data.salespersonName)}`, mid, y + 40)
+  }
   y += 54
 
   ctx.setLineWidth(ll)
@@ -1341,6 +1353,7 @@ async function drawPrintContent(ctx: any, data: PrintDocData, width: number, hei
   ctx.fillText('条形码', colBarcode, y + 44)
   ctx.fillText('商品', colName, y + 44)
   ctx.fillText('数量', colQty, y + 44)
+  ctx.fillText('保质期', colShelf, y + 44)
   ctx.fillText('进价', colPrice, y + 44)
   ctx.fillText('总计', colAmount, y + 44)
   y += 58
@@ -1357,6 +1370,7 @@ async function drawPrintContent(ctx: any, data: PrintDocData, width: number, hei
     const barcodeText = (item.barcode || '-').slice(0, 13)
     const nameText = item.name
     const qtyText = `${normalizeCount(item.qty)}`
+    const shelfText = item.shelfDays ? `${item.shelfDays}天` : '-'
     const priceText = moneyText(item.price)
     const amountText = moneyText(item.amount)
 
@@ -1364,6 +1378,7 @@ async function drawPrintContent(ctx: any, data: PrintDocData, width: number, hei
     ctx.fillText(barcodeText, colBarcode, y + 44)
     ctx.fillText(nameText, colName, y + 44)
     ctx.fillText(qtyText, colQty, y + 44)
+    ctx.fillText(shelfText, colShelf, y + 44)
     ctx.fillText(priceText, colPrice, y + 44)
     ctx.fillText(amountText, colAmount, y + 44)
     y += 64
@@ -1523,6 +1538,7 @@ export async function buildSalePrintData(
       qty: line.qty,
       price: line.price,
       amount: Number(line.qty) * Number(line.price),
+      shelfDays: product?.shelfDays,
     }
   })
 
@@ -1555,6 +1571,7 @@ export async function buildReturnPrintData(
   store: Store | undefined,
   salespersonName: string,
   products: Product[],
+  payType: 'cash' | 'card' = 'card',
   options: PrintBuildOptions = {}
 ): Promise<{ imageData: any; cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer; data: PrintDocData }> {
   const items: PrintItem[] = doc.lines.map((line) => {
@@ -1566,6 +1583,7 @@ export async function buildReturnPrintData(
       qty: line.qty,
       price: line.price,
       amount: Number(line.qty) * Number(line.price),
+      shelfDays: product?.shelfDays,
     }
   })
 
@@ -1583,7 +1601,8 @@ export async function buildReturnPrintData(
     items,
     totalQty,
     totalAmount,
-    payType: 'card',
+    payType,
+    returnType: doc.returnType,
     remark: doc.remark ? `${returnTypeText} - ${doc.remark}` : returnTypeText,
   }
 
@@ -1639,9 +1658,10 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
   const colSeq = left
   const colBarcode = left + Math.floor(contentWidth * 0.06)
   const colName = left + Math.floor(contentWidth * 0.26) + PRODUCT_COLUMN_OFFSET_DOTS
-  const colQty = left + Math.floor(contentWidth * 0.66)
-  const colPrice = left + Math.floor(contentWidth * 0.79)
-  const colAmount = left + Math.floor(contentWidth * 0.89)
+  const colQty = left + Math.floor(contentWidth * 0.62)
+  const colShelf = left + Math.floor(contentWidth * 0.72)
+  const colPrice = left + Math.floor(contentWidth * 0.82)
+  const colAmount = left + Math.floor(contentWidth * 0.91)
 
   ctx.setFillStyle('black')
 
@@ -1684,6 +1704,7 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
     ctx.fillText('条形码', colBarcode, y + 44)
     ctx.fillText('商品', colName, y + 44)
     ctx.fillText('数量', colQty, y + 44)
+    ctx.fillText('保质期', colShelf, y + 44)
     ctx.fillText('进价', colPrice, y + 44)
     ctx.fillText('总计', colAmount, y + 44)
     y += 58
@@ -1701,6 +1722,7 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
       ctx.fillText((item.barcode || '-').slice(0, 13), colBarcode, y + 44)
       ctx.fillText(item.name, colName, y + 44)
       ctx.fillText(`${normalizeCount(item.qty)}`, colQty, y + 44)
+      ctx.fillText(item.shelfDays ? `${item.shelfDays}天` : '-', colShelf, y + 44)
       ctx.fillText(moneyText(item.price), colPrice, y + 44)
       ctx.fillText(moneyText(item.amount), colAmount, y + 44)
       y += 64
@@ -1732,6 +1754,7 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
     ctx.fillText('条形码', colBarcode, y + 44)
     ctx.fillText('商品', colName, y + 44)
     ctx.fillText('数量', colQty, y + 44)
+    ctx.fillText('保质期', colShelf, y + 44)
     ctx.fillText('进价', colPrice, y + 44)
     ctx.fillText('总计', colAmount, y + 44)
     y += 58
@@ -1749,6 +1772,7 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
       ctx.fillText((item.barcode || '-').slice(0, 13), colBarcode, y + 44)
       ctx.fillText(item.name, colName, y + 44)
       ctx.fillText(`${normalizeCount(item.qty)}`, colQty, y + 44)
+      ctx.fillText(item.shelfDays ? `${item.shelfDays}天` : '-', colShelf, y + 44)
       ctx.fillText(moneyText(item.price), colPrice, y + 44)
       ctx.fillText(moneyText(item.amount), colAmount, y + 44)
       y += 64
@@ -1821,6 +1845,7 @@ export async function buildCombinedPrintData(
       qty: line.qty,
       price: line.price,
       amount: Number(line.qty) * Number(line.price),
+      shelfDays: product?.shelfDays,
     }
   })
 
@@ -1833,6 +1858,7 @@ export async function buildCombinedPrintData(
       qty: line.qty,
       price: line.price,
       amount: Number(line.qty) * Number(line.price),
+      shelfDays: product?.shelfDays,
     }
   })
 
@@ -1864,6 +1890,166 @@ export async function buildCombinedPrintData(
 
   appendLog('info', `[A4打印] 合并打印数据生成完成：单页长图，销 ${saleItems.length} 种 + 退 ${returnItems.length} 种，高度 ${height}`)
   return { pages: [page] }
+}
+
+// ============================================================
+// 出库单（调拨单）打印
+// ============================================================
+
+interface TransferPrintData {
+  code: string
+  date: string
+  fromWarehouseName: string
+  toWarehouseName: string
+  items: PrintItem[]
+  totalQty: number
+  remark?: string
+}
+
+function estimateTransferPageHeight(itemCount: number): number {
+  const headerH = 72
+  const infoH = 2 * 54 + 12   // 只有调出/调入两行，去掉经手
+  const tableLineH = 64
+  const tableH = (1 + itemCount) * tableLineH + 22
+  const footerH = 56 + 22
+  const margin = PAGE_MARGIN_DOTS
+  return margin + headerH + 15 + infoH + 15 + tableH + 15 + footerH + margin + CUT_BOTTOM_BLANK_DOTS
+}
+
+async function drawTransferContent(ctx: any, data: TransferPrintData, width: number, height: number): Promise<void> {
+  ctx.setFillStyle('white')
+  ctx.fillRect(0, 0, width, height)
+
+  const left = CONTENT_LEFT_DOTS
+  const right = CONTENT_RIGHT_DOTS
+  const contentWidth = CONTENT_WIDTH_DOTS
+  const mid = left + Math.floor(contentWidth / 2)
+  let y = PAGE_MARGIN_DOTS
+  const ll = 1
+
+  const colSeq = left
+  const colBarcode = left + Math.floor(contentWidth * 0.06)
+  const colName = left + Math.floor(contentWidth * 0.26) + PRODUCT_COLUMN_OFFSET_DOTS
+  const colQty = left + Math.floor(contentWidth * 0.75)
+
+  ctx.setFillStyle('black')
+
+  ctx.setFontSize(56)
+  ctx.fillText('艳萍麻花出库单', left, y + 56)
+  y += 72
+
+  ctx.setStrokeStyle('black')
+  ctx.setLineWidth(ll)
+  ctx.moveTo(left, y)
+  ctx.lineTo(right, y)
+  ctx.stroke()
+  y += 14
+
+  ctx.setFontSize(40)
+  ctx.fillText(`单号:${data.code}`, left, y + 40)
+  ctx.fillText(`日期:${data.date}`, mid, y + 40)
+  y += 54
+  ctx.fillText(`调出:${data.fromWarehouseName}`, left, y + 40)
+  ctx.fillText(`调入:${data.toWarehouseName}`, mid, y + 40)
+  y += 54
+
+  ctx.setLineWidth(ll)
+  ctx.moveTo(left, y)
+  ctx.lineTo(right, y)
+  ctx.stroke()
+  y += 14
+
+  ctx.setFontSize(46)
+  ctx.fillText('序', colSeq, y + 44)
+  ctx.fillText('条形码', colBarcode, y + 44)
+  ctx.fillText('商品', colName, y + 44)
+  ctx.fillText('数量', colQty, y + 44)
+  y += 58
+
+  ctx.setLineWidth(ll)
+  ctx.moveTo(left, y)
+  ctx.lineTo(right, y)
+  ctx.stroke()
+  y += 12
+
+  let seqNo = 0
+  for (const item of data.items) {
+    seqNo++
+    ctx.fillText(`${seqNo}`, colSeq, y + 44)
+    ctx.fillText((item.barcode || '-').slice(0, 13), colBarcode, y + 44)
+    ctx.fillText(item.name, colName, y + 44)
+    ctx.fillText(`${normalizeCount(item.qty)}`, colQty, y + 44)
+    y += 64
+  }
+
+  y += 8
+  ctx.setLineWidth(ll)
+  ctx.moveTo(left, y)
+  ctx.lineTo(right, y)
+  ctx.stroke()
+  y += 15
+
+  ctx.setFontSize(46)
+  ctx.fillText(`品种:${data.items.length}种  合计:${normalizeCount(data.totalQty)}袋`, left, y + 46)
+  y += 56
+
+  if (data.remark) {
+    ctx.setFontSize(32)
+    ctx.fillText(`备注:${data.remark}`, left, y + 32)
+    y += 42
+  }
+
+  ctx.setLineWidth(ll)
+  ctx.moveTo(left, y)
+  ctx.lineTo(right, y)
+  ctx.stroke()
+
+  drawSignatureNoteArea(ctx, height)
+
+  await new Promise<void>((resolve) => {
+    ctx.draw(false, () => { setTimeout(resolve, 200) })
+  })
+}
+
+export async function buildTransferPrintData(
+  doc: import('@/types').TransferDoc,
+  fromWarehouseName: string,
+  toWarehouseName: string,
+  products: import('@/types').Product[],
+  options: PrintBuildOptions = {}
+): Promise<{ imageData: any; cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer }> {
+  const items: PrintItem[] = doc.lines.map((line) => {
+    const product = products.find((p) => p.id === line.productId)
+    return {
+      productId: line.productId,
+      name: product?.name || '未知商品',
+      barcode: product?.barcode,
+      qty: line.qty,
+      price: 0,
+      amount: 0,
+    }
+  })
+
+  const totalQty = items.reduce((sum, item) => sum + normalizeCount(item.qty), 0)
+
+  const data: TransferPrintData = {
+    code: resolveDocCode(doc.code, doc.id),
+    date: resolvePrintDate(doc),
+    fromWarehouseName,
+    toWarehouseName,
+    items,
+    totalQty,
+    remark: doc.remark,
+  }
+
+  const height = options.fillFullPage ? PAGE_HEIGHT_DOTS : estimateTransferPageHeight(items.length)
+  const ctx = uni.createCanvasContext(CANVAS_ID)
+  await drawTransferContent(ctx, data, PAGE_WIDTH_DOTS, height)
+  const imageData = await getCanvasImageData(PAGE_WIDTH_DOTS, height)
+  const { cpclBuffer, journalSetup } = buildCpclCommand(imageData, doc.id || doc.code, options)
+
+  appendLog('info', `[A4打印] 出库单打印数据生成完成：${items.length} 种，高度 ${height}`)
+  return { imageData, cpclBuffer, journalSetup }
 }
 
 export { CANVAS_ID, PAGE_WIDTH_DOTS, DPI, estimateContentHeight, generatePrintImageData, buildCpclCommand, buildJournalSetup }

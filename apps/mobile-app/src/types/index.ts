@@ -200,6 +200,7 @@ export interface ReturnDoc {
   toWarehouseId?: string
   remark?: string
   status: DocStatus
+  payType?: 'cash' | 'card'
   lines: ReturnLine[]
   createdAt: string
 }

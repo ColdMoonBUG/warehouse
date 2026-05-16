@@ -61,15 +61,15 @@
           <view class="field-grid field-grid-triple">
             <view class="field">
               <text class="field-label">箱数</text>
-              <input class="field-box input-box" v-model.number="line.boxQty" type="number" placeholder="0" @blur="syncLineQty(line)" />
+              <input class="field-box input-box" v-model.number="line.boxQty" type="number" placeholder="0" @blur="syncLineQty(line); triggerAutoSave()" />
             </view>
             <view class="field">
               <text class="field-label">袋数</text>
-              <input class="field-box input-box" v-model.number="line.bagQty" type="number" placeholder="0" @blur="syncLineQty(line)" />
+              <input class="field-box input-box" v-model.number="line.bagQty" type="number" placeholder="0" @blur="syncLineQty(line); triggerAutoSave()" />
             </view>
             <view class="field">
               <text class="field-label">总袋数</text>
-              <input class="field-box input-box" v-model.number="line.qty" type="number" placeholder="0" @blur="onQtyChange(line)" />
+              <input class="field-box input-box" v-model.number="line.qty" type="number" placeholder="0" @blur="onQtyChange(line); triggerAutoSave()" />
             </view>
           </view>
           <text v-if="lineSummary(line)" class="field-tip">{{ lineSummary(line) }}</text>
@@ -79,22 +79,29 @@
       </view>
 
       <view class="actions">
-        <button class="btn" @tap="save">保存</button>
         <button class="btn ghost" :disabled="!form.id || form.status !== 'draft'" @tap="post">过账</button>
         <button class="btn danger" :disabled="!form.id || form.status !== 'posted'" @tap="voidDoc">作废</button>
+        <button class="btn print" :disabled="!form.id || form.status !== 'posted'" @tap="printDoc">打印</button>
       </view>
     </view>
   </view>
+
+  <!-- 打印用隐藏画布 -->
+  <scroll-view scroll-x scroll-y style="width:0;height:0;overflow:hidden;">
+    <canvas :canvas-id="CANVAS_ID" :style="{ width: PAGE_WIDTH_DOTS + 'px', height: '3508px' }" />
+  </scroll-view>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { onLoad } from '@dcloudio/uni-app'
+import { computed, onMounted, ref, watch } from 'vue'
+import { onLoad, onBackPress } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
 import { useReferenceStore } from '@/store/reference'
 import { getTransferDetail, saveTransfer, postTransfer, voidTransfer, getStock, getProductDetail } from '@/api'
 import type { TransferDoc, TransferLine, Product, Warehouse } from '@/types'
 import { formatDate, getPageQueryParam, calcQty, deriveBagQty, normalizeBoxPackQty, normalizeCount, formatProductPackageSummary, formatStockPreview, getProductStockQty, toStockQtyMap, formatProductQuickPickLabel } from '@/utils'
+import { printTransferA4, checkPrinterConnected, navigateToPrinterSettings } from '@/utils/bluetooth-printer'
+import { CANVAS_ID, PAGE_WIDTH_DOTS } from '@/utils/canvas-print'
 
 type FormLine = TransferLine & { bagQty?: number }
 type SortMode = 'custom' | 'stock-desc' | 'name-asc'
@@ -292,31 +299,42 @@ function onSortModeChange(e: any) {
 
 function addLine(productId: string = '') {
   const nextLine = normalizeLine({ id: '', productId, qty: 0, boxQty: 0 })
-  lines.value.push(nextLine)
   if (productId) {
     syncLineQty(nextLine)
+    lines.value.unshift(nextLine)
+  } else {
+    lines.value.push(nextLine)
   }
+  triggerAutoSave()
 }
 
 function removeLine(index: number) {
   lines.value.splice(index, 1)
+  triggerAutoSave()
 }
 
 function onFromWhChange(e: any) {
   const index = Number(e.detail.value)
   form.value.fromWarehouseId = warehouses.value[index]?.id || ''
   refreshStockPreview()
+  triggerAutoSave()
 }
 
 function onToWhChange(e: any) {
   const index = Number(e.detail.value)
   form.value.toWarehouseId = warehouses.value[index]?.id || ''
+  triggerAutoSave()
 }
 
 function onProductChange(e: any, index: number) {
   const productIndex = Number(e.detail.value)
   lines.value[index].productId = productsWithStock.value[productIndex]?.id || ''
   syncLineQty(lines.value[index])
+  if (index !== 0) {
+    const [moved] = lines.value.splice(index, 1)
+    lines.value.unshift(moved)
+  }
+  triggerAutoSave()
 }
 
 function onQuickPickChange(e: any) {
@@ -336,22 +354,28 @@ async function loadEdit(id: string) {
 }
 
 async function save() {
-  if (!form.value.fromWarehouseId || !form.value.toWarehouseId) {
-    uni.showToast({ title: '请选择调出/调入仓库', icon: 'none' })
-    return
+  if (!form.value.fromWarehouseId || !form.value.toWarehouseId) return
+  if (form.value.fromWarehouseId === form.value.toWarehouseId) return
+  if (lines.value.length === 0) return
+  const hasProduct = lines.value.some(l => l.productId)
+  if (!hasProduct) return
+  try {
+    const submitLines = lines.value.map(toSubmitLine)
+    const saved = await saveTransfer(form.value as TransferDoc, submitLines)
+    if (saved && !form.value.id) {
+      form.value = { ...form.value, id: (saved as any).id, code: (saved as any).code }
+    }
+  } catch {
+    // 自动保存失败静默处理
   }
-  if (form.value.fromWarehouseId === form.value.toWarehouseId) {
-    uni.showToast({ title: '调出和调入仓库不能相同', icon: 'none' })
-    return
-  }
-  if (lines.value.length === 0) {
-    uni.showToast({ title: '请添加明细', icon: 'none' })
-    return
-  }
-  const submitLines = lines.value.map(toSubmitLine)
-  await saveTransfer(form.value as TransferDoc, submitLines)
-  uni.showToast({ title: '保存成功', icon: 'success' })
-  setTimeout(() => uni.navigateBack(), 400)
+}
+
+// 防抖自动保存
+let _autoSaveTimer: ReturnType<typeof setTimeout> | null = null
+function triggerAutoSave() {
+  if (form.value.status && form.value.status !== 'draft') return
+  if (_autoSaveTimer) clearTimeout(_autoSaveTimer)
+  _autoSaveTimer = setTimeout(save, 800)
 }
 
 async function post() {
@@ -368,6 +392,31 @@ async function voidDoc() {
   const doc = await getTransferDetail(form.value.id)
   if (doc) await applyDoc(doc)
   uni.showToast({ title: '已作废', icon: 'success' })
+}
+
+async function printDoc() {
+  if (!form.value.id) return
+  const printer = checkPrinterConnected()
+  if (!printer) {
+    uni.showModal({
+      title: '未连接打印机',
+      content: '请先到设置中的蓝牙打印页面连接打印机。',
+      confirmText: '去连接',
+      success: (res) => { if (res.confirm) navigateToPrinterSettings() },
+    })
+    return
+  }
+  try {
+    uni.showLoading({ title: '打印中...' })
+    const fromName = fromWhName.value || form.value.fromWarehouseId || '-'
+    const toName = toWhName.value || form.value.toWarehouseId || '-'
+    await printTransferA4(form.value as TransferDoc, fromName, toName, products.value)
+    uni.hideLoading()
+    uni.showToast({ title: '打印指令已发送', icon: 'success' })
+  } catch (e: any) {
+    uni.hideLoading()
+    uni.showToast({ title: `打印失败: ${e.message || ''}`, icon: 'none', duration: 3000 })
+  }
 }
 
 function goBack() {
@@ -398,7 +447,6 @@ onMounted(async () => {
   }
 
   if (queryId.value) await loadEdit(queryId.value)
-  if (lines.value.length === 0) addLine()
   await refreshStockPreview()
 })
 </script>
@@ -440,4 +488,5 @@ input { font-size:28rpx; margin-bottom: 10rpx; }
 .btn { flex:1; height:88rpx; background:#1890ff; color:#fff; border-radius:44rpx; font-size:30rpx; border:none; }
 .btn.ghost { background:#f0f0f0; color:#333; }
 .btn.danger { background:#ff4d4f; }
+.btn.print { background:#52c41a; }
 </style>

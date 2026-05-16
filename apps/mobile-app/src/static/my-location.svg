@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 80 80">
+  <!-- 外圆白色光晕 -->
+  <circle cx="40" cy="40" r="38" fill="white" opacity="0.9"/>
+  <!-- 蓝色填充圆 -->
+  <circle cx="40" cy="40" r="30" fill="#1890ff"/>
+  <!-- 白色导航三角箭头 -->
+  <polygon points="40,10 58,60 40,50 22,60" fill="white"/>
+  <!-- 精度圈（外圈浅蓝） -->
+  <circle cx="40" cy="40" r="38" fill="none" stroke="#1890ff" stroke-width="3" opacity="0.4"/>
+</svg>

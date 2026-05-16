@@ -7,9 +7,10 @@
       :longitude="mapCenter.longitude"
       :scale="mapScale"
       :markers="markers"
-      :show-location="true"
+      :show-location="false"
       :map-key="AMAP_KEY"
       @markertap="onMarkerTap"
+      @regionchange="onRegionChange"
     />
 
     <!-- 搜索栏 -->
@@ -68,6 +69,7 @@
         </view>
         <view class="popup-footer">
           <button class="btn-nav" @tap="navigateToStore">导航到店</button>
+          <button class="btn-history" @tap="goStoreHistory">历史销单</button>
         </view>
       </view>
     </view>
@@ -75,7 +77,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, shallowRef } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
 import { getStores, getStoreSaleQty, getSalespersonAccounts, isOwnedStore, isSameSalespersonId, getSessionSalespersonId } from '@/api'
@@ -95,9 +97,9 @@ const userStore = useUserStore()
 
 const mapCenter = ref({ ...DEFAULT_CENTER })
 const mapScale = ref(13)
-const markers = ref<any[]>([])
-const stores = ref<StoreWithSale[]>([])
-const salespersons = ref<Salesperson[]>([])
+const markers = shallowRef<any[]>([])
+const stores = shallowRef<StoreWithSale[]>([])
+const salespersons = shallowRef<Salesperson[]>([])
 const selectedStore = ref<StoreWithSale | null>(null)
 const locationLoading = ref(false)
 const locationReady = ref(false)
@@ -120,19 +122,26 @@ function markerIconPath(color: string): string {
 
 function updateLocationMarker() {
   if (!currentLat.value || !currentLng.value) return
-  markers.value = [
-    ...markers.value.filter(m => m.id !== CURRENT_LOCATION_MARKER_ID),
-    {
-      id: CURRENT_LOCATION_MARKER_ID,
-      latitude: currentLat.value,
-      longitude: currentLng.value,
-      iconPath: '/static/location-dot.png',
-      width: 100,
-      height: 100,
-      anchor: { x: 0.5, y: 0.5 },
-      zIndex: 999,
-    },
-  ]
+  // 使用新文件名（location-arrow.png）避免 HBuilderX 旧资源缓存命中
+  // 高德地图原生 marker 的 width/height 单位是 px，36px 在主流安卓设备上视觉合适
+  const locMarker = {
+    id: CURRENT_LOCATION_MARKER_ID,
+    latitude: currentLat.value,
+    longitude: currentLng.value,
+    iconPath: '/static/location-arrow.png',
+    width: 36,
+    height: 36,
+    anchor: { x: 0.5, y: 0.5 },
+    zIndex: 1,  // 低于店铺 marker，不遮挡
+  }
+  const arr = markers.value
+  const idx = arr.findIndex(m => m.id === CURRENT_LOCATION_MARKER_ID)
+  if (idx >= 0) {
+    arr[idx] = locMarker
+    markers.value = [...arr]
+  } else {
+    markers.value = [...arr, locMarker]
+  }
 }
 
 const locationMessage = computed(() => {
@@ -175,6 +184,11 @@ async function locateCurrentPosition(showToastOnFail = false) {
     currentLng.value = loc.longitude
     locationReady.value = true
     updateLocationMarker()
+    // 触发地图原生定位点显示
+    try {
+      const mapCtx = uni.createMapContext('storeMap')
+      mapCtx.moveToLocation({ latitude: loc.latitude, longitude: loc.longitude })
+    } catch { /* ignore */ }
     return true
   } catch (e: any) {
     locationReady.value = false
@@ -195,71 +209,135 @@ function updateMarkers(storeList: Store[], saleQty: Record<string, number>) {
   const sessionSpId = getSessionSalespersonId(userStore.currentUser)
   const isAdmin = userStore.isAdmin
   const maxQty = Math.max(...Object.values(saleQty), 1)
-  stores.value = storeList
-    .filter(s => s.lat && s.lng)
-    .map(s => {
-      const qty = saleQty[s.id] || 0
-      const isOwn = isOwnedStore(s, sessionSpId)
-      const color = isAdmin ? gradeColor(qty, maxQty) : ownershipColor(isOwn)
-      const salesperson = salespersons.value.find(item => isSameSalespersonId(item.salespersonId || item.id, s.salespersonId))
-      return {
-        ...s,
-        saleQty: qty,
-        color,
-        salespersonName: salesperson?.displayName,
-      }
+  const builtStores: StoreWithSale[] = []
+  const builtMarkers: any[] = []
+  let mi = 0
+  for (const s of storeList) {
+    if (!s.lat || !s.lng) continue
+    const qty = saleQty[s.id] || 0
+    const isOwn = isOwnedStore(s, sessionSpId)
+    const color = isAdmin ? gradeColor(qty, maxQty) : ownershipColor(isOwn)
+    const salesperson = salespersons.value.find(item => isSameSalespersonId(item.salespersonId || item.id, s.salespersonId))
+    builtStores.push({ ...s, saleQty: qty, color, salespersonName: salesperson?.displayName })
+    builtMarkers.push({
+      id: mi++,
+      latitude: s.lat,
+      longitude: s.lng,
+      iconPath: markerIconPath(color),
+      width: 24,
+      height: 24,
+      anchor: { x: 0.5, y: 0.5 },
+      label: {
+        content: s.name.length > 7 ? s.name.slice(0, 7) + '...' : s.name,
+        color: '#666666',
+        fontSize: 10,
+        anchorX: 14,
+        anchorY: -4,
+        bgColor: '#ffffffcc',
+        padding: 2,
+        borderRadius: 3,
+      },
     })
-
-  markers.value = stores.value.map((s, i) => ({
-    id: i,
-    latitude: s.lat!,
-    longitude: s.lng!,
-    title: s.name,
-    iconPath: markerIconPath(s.color),
-    width: 28,
-    height: 28,
-    anchor: { x: 0.5, y: 0.5 },
-    label: {
-      content: s.name.length > 7 ? s.name.slice(0, 7) + '…' : s.name,
-      color: '#999999',
-      fontSize: 4,
-      anchorX: 20,
-      anchorY: 0,
-      bgColor: '#ffffffaa',
-      padding: 2,
-      borderRadius: 3,
-    },
-    callout: {
-      content: s.name,
-      color: '#333',
-      fontSize: 12,
-      borderRadius: 4,
-      padding: 6,
-      display: 'BYCLICK',
-    },
-  }))
+  }
+  _cachedStores = builtStores
+  _cachedMarkers = builtMarkers  // 不含定位点
+  stores.value = builtStores
+  // markers = 门店 + 定位点
+  markers.value = [...builtMarkers]
   updateLocationMarker()
 }
+
+function onRegionChange(_e: any) { /* unused */ }
+
+let _regionTimer: ReturnType<typeof setTimeout> | null = null
+let _lastLabelVisible = false
 
 function isOwnedStoreItem(store?: Store | null) {
   return isOwnedStore(store, getSessionSalespersonId(userStore.currentUser))
 }
 
-async function loadBusinessData() {
+const MAP_CACHE_TTL = 5 * 60 * 1000 // 5分钟
+let _lastLoadTime = 0
+let _cachedStoreList: any[] = []
+let _cachedSaleQty: Record<string, number> = {}
+let _cachedSalespersons: any[] = []
+let _cachedMarkers: any[] = []  // 缓存构建好的 markers，命中时直接复用
+let _cachedStores: StoreWithSale[] = []
+
+// 监听门店变更事件，强制下次刷新
+uni.$on('store:updated', () => {
+  _lastLoadTime = 0
+  _cachedMarkers = []
+  _cachedStores = []
+})
+
+async function loadBusinessData(force = false) {
+  const now = Date.now()
+  const expired = now - _lastLoadTime > MAP_CACHE_TTL
+  if (!force && !expired && _cachedStoreList.length > 0) {
+    salespersons.value = _cachedSalespersons
+    // 关键优化：如果已有缓存的 markers 数组，直接整个数组赋值（shallowRef 不会做深度 diff）
+    if (_cachedMarkers.length > 0) {
+      stores.value = _cachedStores
+      markers.value = _cachedMarkers
+      // 仅追加定位点，不重建门店 markers
+      updateLocationMarker()
+      return
+    }
+    updateMarkers(_cachedStoreList, _cachedSaleQty)
+    return
+  }
   const [storeList, saleQty, salespersonList] = await Promise.all([
     getStores(),
     getStoreSaleQty(30),
     getSalespersonAccounts(),
   ])
+  _cachedStoreList = storeList
+  _cachedSaleQty = saleQty
+  _cachedSalespersons = salespersonList
+  _lastLoadTime = Date.now()
   salespersons.value = salespersonList
   updateMarkers(storeList, saleQty)
 }
 
 function onMarkerTap(e: any) {
-  const markerId = e.detail?.markerId ?? e.markerId
-  if (markerId !== undefined && markerId !== CURRENT_LOCATION_MARKER_ID && stores.value[markerId]) {
-    selectedStore.value = stores.value[markerId]
+  console.log('[map] onMarkerTap event:', JSON.stringify(e))
+  const markerId = e?.detail?.markerId ?? e?.markerId ?? e?.detail?.id ?? e?.id
+  console.log('[map] markerId:', markerId, 'stores.length:', stores.value.length)
+  if (markerId === undefined || markerId === null) return
+  if (markerId === CURRENT_LOCATION_MARKER_ID) return
+  const store = stores.value[markerId]
+  console.log('[map] store:', store?.name)
+  if (store) {
+    selectedStore.value = store
+    showStoreActions(store)
   }
+}
+
+function showStoreActions(store: StoreWithSale) {
+  console.log('[map] showStoreActions:', store.name)
+  const items = ['导航到店', '历史销单']
+  uni.showActionSheet({
+    title: store.name,
+    itemList: items,
+    success: (res) => {
+      if (res.tapIndex === 0) {
+        navigateToStore()
+      } else if (res.tapIndex === 1) {
+        goStoreHistory()
+      }
+    },
+    fail: () => { selectedStore.value = null },
+  })
+}
+
+function goStoreHistory() {
+  if (!selectedStore.value) return
+  const store = selectedStore.value
+  selectedStore.value = null
+  uni.navigateTo({
+    url: `/pages/sales/store-history?storeId=${store.id}&storeName=${encodeURIComponent(store.name)}`,
+  })
 }
 
 function navigateToStore() {
@@ -304,7 +382,9 @@ onShow(() => {
   }
   selectedStore.value = null
   loadBusinessData()
-  locateCurrentPosition(false)
+  if (!currentLat.value || !currentLng.value) {
+    locateCurrentPosition(false)
+  }
 })
 </script>
 
@@ -506,15 +586,31 @@ onShow(() => {
 
   .popup-footer {
     margin-top: 30rpx;
+    display: flex;
+    gap: 16rpx;
 
     .btn-nav {
-      width: 100%;
+      flex: 1;
       height: 88rpx;
       background: #1890ff;
       color: #fff;
       font-size: 32rpx;
       border-radius: 44rpx;
       border: none;
+
+      &::after {
+        border: none;
+      }
+    }
+
+    .btn-history {
+      flex: 1;
+      height: 88rpx;
+      background: #fff;
+      color: #1890ff;
+      font-size: 32rpx;
+      border-radius: 44rpx;
+      border: 2rpx solid #1890ff;
 
       &::after {
         border: none;

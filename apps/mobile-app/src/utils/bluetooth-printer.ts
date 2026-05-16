@@ -333,9 +333,18 @@ export async function connectPrinter(deviceId: string): Promise<void> {
   appendLog('info', `[2/6] 建立 BLE 连接：${deviceId}...`)
   await new Promise<void>((resolve, reject) => {
     let settled = false
+    // 10秒超时：打印机刚开机BLE初始化可能较慢，给足够时间
+    const timeout = setTimeout(() => {
+      if (!settled) {
+        settled = true
+        appendLog('warn', `[2/6] BLE 连接超时（10s），将在下次重试`)
+        reject(new Error('BLE连接超时'))
+      }
+    }, 10000)
     const handler = (res: any) => {
       if (res.deviceId !== deviceId || settled) return
       settled = true
+      clearTimeout(timeout)
       if (res.connected) {
         appendLog('info', `[2/6] BLE 连接成功`)
         resolve()
@@ -348,6 +357,7 @@ export async function connectPrinter(deviceId: string): Promise<void> {
     createBleConnection(deviceId).catch((e: any) => {
       if (!settled) {
         settled = true
+        clearTimeout(timeout)
         appendLog('error', `[2/6] createBLEConnection 失败：${e?.message || e}`)
         reject(e)
       }
@@ -551,8 +561,14 @@ export function buildReturnReceipt(doc: ReturnDoc, storeName: string, salesperso
   const totalQty = doc.lines.reduce((sum, line) => sum + Number(line.qty || 0), 0)
   const totalAmount = doc.lines.reduce((sum, line) => sum + Number(line.qty || 0) * Number(line.price || 0), 0)
   const returnTypeText = doc.returnType === 'warehouse_return' ? '回仓' : '车库退货'
+  const isWarehouseReturn = doc.returnType === 'warehouse_return'
   return buildReceipt(
-    ['车销系统', '退货单', `类型：${returnTypeText}`, `单号：${doc.code}`, `日期：${doc.date}`, `超市：${storeName || '-'}`, `业务员：${salespersonName || '-'}`],
+    [
+      '车销系统', '退货单', `类型：${returnTypeText}`, `单号：${doc.code}`, `日期：${doc.date}`,
+      // warehouse_return 是给仓管看的，不显示超市
+      ...(isWarehouseReturn ? [] : [`超市：${storeName || '-'}`]),
+      `业务员：${salespersonName || '-'}`,
+    ],
     buildReceiptLines(doc.lines, products),
     [
       `合计数量：${normalizeCount(totalQty)}袋`,
@@ -606,12 +622,13 @@ export async function printReturnA4(
   store: Store | undefined,
   salespersonName: string,
   products: Product[],
+  payType: 'cash' | 'card' = 'card',
   device?: PrinterDevice | null
 ) {
   const { buildReturnPrintData } = await import('./canvas-print')
   const useJournal = isJournalMode()
   const printOptions = getPrinterPrintOptions()
-  const { cpclBuffer, journalSetup } = await buildReturnPrintData(doc, store, salespersonName, products, printOptions)
+  const { cpclBuffer, journalSetup } = await buildReturnPrintData(doc, store, salespersonName, products, payType, printOptions)
   await ensurePrinterConnected(device || null)
 
   if (useJournal) {
@@ -657,6 +674,29 @@ export async function printCombinedA4(
     }
   }
   appendLog('info', `[合并打印] 完成，共 ${pages.length} 页`)
+  resumeDaemonAfterPrint()
+}
+
+export async function printTransferA4(
+  doc: import('@/types').TransferDoc,
+  fromWarehouseName: string,
+  toWarehouseName: string,
+  products: import('@/types').Product[],
+  device?: PrinterDevice | null
+) {
+  const { buildTransferPrintData } = await import('./canvas-print')
+  const useJournal = isJournalMode()
+  const printOptions = getPrinterPrintOptions()
+  const { cpclBuffer, journalSetup } = await buildTransferPrintData(doc, fromWarehouseName, toWarehouseName, products, printOptions)
+  await ensurePrinterConnected(device || null)
+
+  if (useJournal) {
+    appendLog('info', '[A4打印] 出库单 - 发送 JOURNAL+SETFF 配置...')
+    await sendCpcl(journalSetup)
+    await sleep(500)
+  }
+  appendLog('info', '[A4打印] 出库单 - 发送打印指令...')
+  await sendCpcl(cpclBuffer)
   resumeDaemonAfterPrint()
 }
 
@@ -943,11 +983,11 @@ function startMaintenanceHeartbeat() {
   }, 30000)
 }
 
-/** 启动激进重试（每3s重试，直到连接成功后切换为维护心跳） */
+/** 启动激进重试（每5s重试，直到连接成功后切换为维护心跳） */
 function startAggressiveRetry() {
   stopAllTimers()
   if (!_daemonActive) return
-  appendLog('info', '[蓝牙] 启动激进重连（每3s）...')
+  appendLog('info', '[蓝牙] 启动激进重连（每5s）...')
   // 立即尝试一次
   tryConnectOnce().then(ok => {
     if (!_daemonActive) return
@@ -960,7 +1000,7 @@ function startAggressiveRetry() {
         _retryTimer = null
         startMaintenanceHeartbeat()
       }
-    }, 3000)
+    }, 5000)
   })
 }
 
@@ -1048,9 +1088,30 @@ export async function ensurePrinterConnected(deviceOverride?: PrinterDevice | nu
   }
 
   appendLog('info', `[打印] 建立连接: ${target.name}(${target.deviceId})`)
-  await connectPrinter(target.deviceId)
-  _connected = true
-  _currentDeviceId = target.deviceId
+  // 打印机刚开机 BLE 初始化较慢，最多重试 2 次，每次间隔 3 秒
+  let lastErr: any
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await connectPrinter(target.deviceId)
+      _connected = true
+      _currentDeviceId = target.deviceId
+      return
+    } catch (e: any) {
+      lastErr = e
+      if (attempt < 3) {
+        appendLog('warn', `[打印] 连接失败（第${attempt}次），3秒后重试...`)
+        await sleep(3000)
+        // 重试前清理旧 session
+        if (currentSession) {
+          const oldId = currentSession.deviceId
+          currentSession = null
+          closeBleConnection(oldId).catch(() => {})
+          await sleep(300)
+        }
+      }
+    }
+  }
+  throw new Error(`打印机连接失败（已重试3次）：${lastErr?.message || lastErr}`)
 }
 
 /** 打印结束后恢复 daemon 定时器 */

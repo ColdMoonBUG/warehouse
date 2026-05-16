@@ -292,6 +292,7 @@ import type { Store, Product, SaleDoc, SaleLine, ReturnDoc, ReturnLine, Warehous
 import { genId, formatProductQuickPickLabel, formatProductPackageSummary, calcQty, deriveBagQty, normalizeCount, normalizeBoxPackQty, formatStockPreview, getProductStockQty, toStockQtyMap, COMMISSION_RATE, todayLocalDate, debounce } from '@/utils'
 import { printSaleA4, printCombinedA4, checkPrinterConnected, navigateToPrinterSettings } from '@/utils/bluetooth-printer'
 import { CANVAS_ID, PAGE_WIDTH_DOTS, estimateContentHeight } from '@/utils/canvas-print'
+import { guardNetwork } from '@/utils/network'
 import { requestCurrentLocation } from '@/utils/location'
 import { haversineDistance, formatDistance } from '@/utils/geo'
 import { stockPoller } from '@/utils/stock-sync'
@@ -998,6 +999,7 @@ async function doSubmit(docType: 'sale' | 'gift' = 'sale'): Promise<{ saleDoc: S
 
 async function submitAndPrint() {
   if (_submitLock) return
+  if (!(await guardNetwork('提交销单'))) return
   const printer = checkPrinterConnected()
   if (!printer) {
     uni.showModal({
@@ -1080,6 +1082,7 @@ async function submitOnly() {
     setTimeout(() => { uni.redirectTo({ url: '/pages/sales/index' }) }, 400)
     return
   }
+  if (!(await guardNetwork('提交销单'))) return
   _submitLock = true
   submitting.value = true
   const result = await doSubmit()
@@ -1095,6 +1098,7 @@ async function submitOnly() {
 
 async function submitGift() {
   if (_submitLock) return
+  if (!(await guardNetwork('提交赠送单'))) return
   // 计算按进价扣除的总额
   const giftDeduction = selectedProducts.value.reduce((sum, p) => {
     const qty = normalizeCount(qtyMap.value[p.id]?.qty)

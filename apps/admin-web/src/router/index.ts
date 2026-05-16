@@ -17,6 +17,11 @@ const router = createRouter({
           meta: { title: '首页看板' }
         },
         {
+          path: 'search',
+          component: () => import('@/pages/DocSearch.vue'),
+          meta: { title: '单据查询' }
+        },
+        {
           path: 'basic',
           redirect: '/basic/supplier',
           meta: { title: '基础资料', adminOnly: true },
@@ -51,6 +56,8 @@ const router = createRouter({
             { path: 'finance', component: () => import('@/pages/system/Finance.vue'), meta: { title: '财务结清', adminOnly: true } },
             { path: 'store-finance', component: () => import('@/pages/system/StoreFinance.vue'), meta: { title: '超市流水', adminOnly: true } },
             { path: 'unsettled', component: () => import('@/pages/system/UnsettledDocs.vue'), meta: { title: '未收款管理', adminOnly: true } },
+            { path: 'stats', component: () => import('@/pages/system/Stats.vue'), meta: { title: '进退货统计', adminOnly: true } },
+            { path: 'sales-stats', component: () => import('@/pages/system/SalesStats.vue'), meta: { title: '销售额统计', adminOnly: true } },
             { path: 'maintenance', component: () => import('@/pages/system/Maintenance.vue'), meta: { title: '系统维护', adminOnly: true } }
           ]
         }
@@ -71,7 +78,7 @@ router.beforeEach((to) => {
   if (needAdmin && session.role !== 'admin') return '/stock/overview'
 
   if (session.role === 'salesperson') {
-    const allow = to.path === '/dashboard' || to.path === '/stock/overview' || to.path.startsWith('/stock/sale') || to.path.startsWith('/stock/return')
+    const allow = to.path === '/dashboard' || to.path === '/search' || to.path === '/stock/overview' || to.path.startsWith('/stock/sale') || to.path.startsWith('/stock/return')
     if (!allow) return '/stock/overview'
   }
   return true

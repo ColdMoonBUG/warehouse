@@ -1,59 +1,80 @@
 <template>
   <div class="store-finance-page">
-    <el-card>
-      <template #header>
-        <div class="page-header">
-          <span class="page-title">收益流水</span>
+    <!-- 筛选栏 -->
+    <el-card class="filter-card">
+      <div class="filter-row">
+        <span class="filter-label">统计周期</span>
+        <el-radio-group v-model="periodMode" @change="onPeriodChange">
+          <el-radio-button value="today">今天</el-radio-button>
+          <el-radio-button value="week">本周</el-radio-button>
+          <el-radio-button value="month">本月</el-radio-button>
+          <el-radio-button value="year">本年</el-radio-button>
+          <el-radio-button value="custom">自定义</el-radio-button>
+        </el-radio-group>
+        <template v-if="periodMode === 'custom'">
           <el-date-picker
-            v-model="queryDate"
-            type="date"
+            v-model="customRange"
+            type="daterange"
+            range-separator="至"
+            start-placeholder="开始"
+            end-placeholder="结束"
             value-format="YYYY-MM-DD"
-            placeholder="选择日期"
-            style="width:150px"
+            style="width:260px"
             @change="loadData"
           />
-          <el-button type="primary" size="small" @click="loadData">刷新</el-button>
-        </div>
-      </template>
-
-      <!-- 顶部汇总 -->
-      <div class="summary-bar" v-if="summaries.length > 0">
-        <span>共 <b>{{ totalDocCount }}</b> 笔</span>
-        <span>净提成合计：<b class="amount-green">+¥{{ totalNetCommission.toFixed(2) }}</b></span>
+        </template>
+        <span class="period-label">{{ periodLabel }}</span>
+        <el-button :loading="loading" @click="loadData" style="margin-left:auto">刷新</el-button>
       </div>
+    </el-card>
 
+    <!-- 顶部汇总 -->
+    <div class="summary-bar" v-if="rows.length > 0">
+      <span>共 <b>{{ rows.length }}</b> 家超市</span>
+      <span>销售额合计：<b class="amount-blue">¥{{ totalSale.toFixed(2) }}</b></span>
+      <span>退货额合计：<b class="amount-red">-¥{{ totalReturn.toFixed(2) }}</b></span>
+      <span>净销售额：<b class="amount-green">¥{{ totalNet.toFixed(2) }}</b></span>
+    </div>
+
+    <!-- 表格 -->
+    <el-card>
       <div v-loading="loading">
-        <div v-if="summaries.length === 0 && !loading" class="empty-tip">暂无数据</div>
+        <div v-if="rows.length === 0 && !loading" class="empty-tip">{{ periodLabel }} 暂无销售数据</div>
 
-        <div v-for="row in summaries" :key="row.storeId" class="store-item">
-          <!-- 超市行：点击展开 -->
-          <div class="store-row" @click="toggleStore(row)">
-            <span class="store-name">{{ row.storeName }}</span>
-            <span class="store-right">
-              <span class="commission-amount">+¥{{ Number(row.netCommission || 0).toFixed(2) }}</span>
-              <span class="doc-count">{{ getDocCount(row.storeId) }}笔</span>
-              <el-icon class="expand-icon" :class="{ rotated: expandedStoreId === row.storeId }">
-                <ArrowRight />
-              </el-icon>
-            </span>
-          </div>
-
-          <!-- 展开：该超市当日各张销单 -->
-          <div v-if="expandedStoreId === row.storeId" class="doc-list">
-            <div v-if="detailLoading" class="doc-loading">加载中...</div>
-            <div v-else-if="filteredDocList.length === 0" class="doc-loading">暂无明细</div>
-            <div v-for="doc in filteredDocList" :key="doc.docId" class="doc-row">
-              <span class="doc-code">{{ doc.docCode }}</span>
-              <span class="doc-type-tag" :class="doc.bizType === 'gift' ? 'tag-gift' : 'tag-sale'">
-                {{ doc.bizType === 'gift' ? '赠送' : '销售' }}
+        <el-table
+          v-if="rows.length > 0"
+          :data="rows"
+          border
+          stripe
+          :default-sort="{ prop: 'netAmount', order: 'descending' }"
+        >
+          <el-table-column type="index" label="#" width="55" />
+          <el-table-column prop="storeName" label="超市名称" min-width="160" show-overflow-tooltip />
+          <el-table-column prop="saleAmount" label="销售额" width="130" sortable>
+            <template #default="{ row }">
+              <span class="amount-blue">¥{{ Number(row.saleAmount).toFixed(2) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="returnAmount" label="退货额" width="130" sortable>
+            <template #default="{ row }">
+              <span v-if="Number(row.returnAmount) > 0" class="amount-red">
+                -¥{{ Number(row.returnAmount).toFixed(2) }}
               </span>
-              <span class="doc-amount">¥{{ doc.amount.toFixed(2) }}</span>
-              <span class="doc-commission" :class="doc.commissionAmount >= 0 ? 'amount-green' : 'amount-red'">
-                {{ doc.commissionAmount >= 0 ? '+' : '' }}¥{{ doc.commissionAmount.toFixed(2) }}
-              </span>
-            </div>
-          </div>
-        </div>
+              <span v-else class="amount-muted">-</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="netAmount" label="净销售额" width="140" sortable>
+            <template #default="{ row }">
+              <b class="amount-green">¥{{ Number(row.netAmount).toFixed(2) }}</b>
+            </template>
+          </el-table-column>
+          <el-table-column prop="saleDocCount" label="销单数" width="90" sortable />
+          <el-table-column label="占比" width="100">
+            <template #default="{ row }">
+              <span class="pct">{{ totalNet > 0 ? (Number(row.netAmount) / totalNet * 100).toFixed(1) + '%' : '-' }}</span>
+            </template>
+          </el-table-column>
+        </el-table>
       </div>
     </el-card>
   </div>
@@ -61,94 +82,81 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { ArrowRight } from '@element-plus/icons-vue'
-import { getStoreCommissionSummaries, getStoreCommissionDetail } from '@/api/finance'
-import type { StoreCommissionSummary, CommissionLedger } from '@/types'
+import request from '@/utils/request'
 
-const today = new Date().toISOString().slice(0, 10)
-const queryDate = ref(today)
-
-const summaries = ref<StoreCommissionSummary[]>([])
+type PeriodMode = 'today' | 'week' | 'month' | 'year' | 'custom'
+const periodMode = ref<PeriodMode>('month')
+const customRange = ref<[string, string] | null>(null)
 const loading = ref(false)
-const expandedStoreId = ref<string | null>(null)
-// 原始流水 → 前端按 queryDate 过滤 + 按 docId 聚合
-const rawLedgers = ref<CommissionLedger[]>([])
-const detailLoading = ref(false)
 
-// 按 docId 聚合，过滤出当天数据
-const filteredDocList = computed(() => {
-  const dateStr = queryDate.value  // "2026-04-17"
-  const filtered = rawLedgers.value.filter(l => {
-    if (!l.docDate) return true  // 无日期不过滤
-    const d = typeof l.docDate === 'string' ? l.docDate : new Date(l.docDate).toISOString()
-    return d.startsWith(dateStr)
-  })
+interface StoreRow {
+  storeId: string
+  storeName: string
+  saleAmount: number
+  returnAmount: number
+  netAmount: number
+  saleDocCount: number
+}
+const rows = ref<StoreRow[]>([])
 
-  const groups = new Map<string, { docId: string; docCode: string; bizType: string; amount: number; commissionAmount: number }>()
-  for (const l of filtered) {
-    const key = l.docId || 'unknown'
-    if (!groups.has(key)) {
-      groups.set(key, {
-        docId: key,
-        docCode: l.docCode || key,
-        bizType: l.bizType || 'sale',
-        amount: 0,
-        commissionAmount: 0,
-      })
-    }
-    const g = groups.get(key)!
-    g.amount += Number(l.amount || 0)
-    g.commissionAmount += Number(l.commissionAmount || 0)
+function todayStr() { return new Date().toISOString().slice(0, 10) }
+
+function getDateRange(): { start: string; end: string } {
+  const today = todayStr()
+  const d = new Date()
+  if (periodMode.value === 'today') return { start: today, end: today }
+  if (periodMode.value === 'week') {
+    const day = d.getDay() || 7
+    const mon = new Date(d)
+    mon.setDate(d.getDate() - day + 1)
+    return { start: mon.toISOString().slice(0, 10), end: today }
   }
-  return Array.from(groups.values())
-})
-
-// 缓存：每个 storeId 展开后的 docCount（从已加载数据中算）
-const docCountCache = ref<Record<string, number>>({})
-
-function getDocCount(storeId: string): number {
-  if (storeId === expandedStoreId.value) return filteredDocList.value.length
-  return docCountCache.value[storeId] ?? '?'
+  if (periodMode.value === 'month') {
+    return {
+      start: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`,
+      end: today
+    }
+  }
+  if (periodMode.value === 'year') {
+    return { start: `${d.getFullYear()}-01-01`, end: today }
+  }
+  if (periodMode.value === 'custom' && customRange.value) {
+    return { start: customRange.value[0], end: customRange.value[1] }
+  }
+  return { start: today, end: today }
 }
 
-const totalDocCount = computed(() =>
-  summaries.value.reduce((s, r) => {
-    const cached = docCountCache.value[r.storeId]
-    return s + (cached ?? 0)
-  }, 0)
-)
+const periodLabel = computed(() => {
+  const { start, end } = getDateRange()
+  return start === end ? start : `${start} ~ ${end}`
+})
 
-const totalNetCommission = computed(() =>
-  summaries.value.reduce((s, r) => s + Number(r.netCommission || 0), 0)
-)
+function onPeriodChange() {
+  if (periodMode.value !== 'custom') loadData()
+}
+
+const totalSale = computed(() => rows.value.reduce((s, r) => s + Number(r.saleAmount), 0))
+const totalReturn = computed(() => rows.value.reduce((s, r) => s + Number(r.returnAmount), 0))
+const totalNet = computed(() => rows.value.reduce((s, r) => s + Number(r.netAmount), 0))
 
 async function loadData() {
   loading.value = true
-  expandedStoreId.value = null
-  rawLedgers.value = []
-  docCountCache.value = {}
+  rows.value = []
   try {
-    summaries.value = await getStoreCommissionSummaries(queryDate.value)
+    const { start, end } = getDateRange()
+    const res = await request.get('/sale/storeRangeSummary', {
+      params: { startDate: start, endDate: end }
+    })
+    rows.value = (res.data || []).map((r: any) => ({
+      storeId: r.storeId,
+      storeName: r.storeName,
+      saleAmount: Number(r.saleAmount || 0),
+      returnAmount: Number(r.returnAmount || 0),
+      netAmount: Number(r.netAmount || 0),
+      saleDocCount: Number(r.saleDocCount || 0),
+    }))
   } finally {
     loading.value = false
-  }
-}
-
-async function toggleStore(row: StoreCommissionSummary) {
-  if (expandedStoreId.value === row.storeId) {
-    expandedStoreId.value = null
-    rawLedgers.value = []
-    return
-  }
-  expandedStoreId.value = row.storeId
-  rawLedgers.value = []
-  detailLoading.value = true
-  try {
-    rawLedgers.value = await getStoreCommissionDetail(row.storeId)
-    // 缓存 docCount 供顶部汇总显示
-    docCountCache.value[row.storeId] = filteredDocList.value.length
-  } finally {
-    detailLoading.value = false
   }
 }
 
@@ -156,95 +164,30 @@ onMounted(loadData)
 </script>
 
 <style scoped>
-.store-finance-page { padding: 20px; }
+.store-finance-page { display: flex; flex-direction: column; gap: 16px; }
 
-.page-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.page-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: #303133;
-}
+.filter-card :deep(.el-card__body) { padding: 14px 20px; }
+.filter-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.filter-label { font-weight: 600; color: #94a3b8; font-size: 13px; }
+.period-label { font-size: 13px; color: #64748b; }
 
 .summary-bar {
   display: flex;
   gap: 24px;
   align-items: center;
-  padding: 10px 16px;
-  margin-bottom: 12px;
-  background: #f5f7fa;
-  border-radius: 6px;
+  padding: 12px 20px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
   font-size: 14px;
-  color: #606266;
+  flex-wrap: wrap;
 }
 
-.amount-green { color: #67c23a; font-weight: 600; }
+.amount-blue  { color: #409eff; font-weight: 700; }
 .amount-red   { color: #f56c6c; font-weight: 600; }
+.amount-green { color: #67c23a; font-weight: 700; }
+.amount-muted { color: #c0c4cc; }
+.pct { color: #909399; font-size: 13px; }
 
-.store-item { border-bottom: 1px solid #ebeef5; }
-
-.store-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 16px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.store-row:hover { background: #f5f7fa; }
-
-.store-name { font-size: 15px; font-weight: 500; color: #303133; }
-
-.store-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.commission-amount { font-size: 16px; font-weight: 700; color: #67c23a; }
-
-.doc-count {
-  font-size: 13px;
-  color: #909399;
-  background: #f0f0f0;
-  padding: 2px 8px;
-  border-radius: 10px;
-}
-
-.expand-icon { color: #c0c4cc; transition: transform 0.2s; }
-.expand-icon.rotated { transform: rotate(90deg); }
-
-.doc-list {
-  background: #fafafa;
-  border-top: 1px solid #ebeef5;
-  padding: 4px 0;
-}
-
-.doc-loading { padding: 12px 32px; font-size: 13px; color: #909399; }
-
-.doc-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 32px;
-  border-bottom: 1px solid #f0f0f0;
-  font-size: 13px;
-  color: #606266;
-}
-.doc-row:last-child { border-bottom: none; }
-
-.doc-code { flex: 1; font-family: monospace; color: #303133; }
-
-.doc-type-tag { padding: 2px 8px; border-radius: 4px; font-size: 12px; }
-.tag-sale { background: #ecf5ff; color: #409eff; }
-.tag-gift { background: #fdf6ec; color: #e6a23c; }
-
-.doc-amount { color: #606266; min-width: 80px; text-align: right; }
-.doc-commission { min-width: 80px; text-align: right; font-weight: 600; }
-
-.empty-tip { text-align: center; padding: 40px; color: #c0c4cc; font-size: 14px; }
+.empty-tip { text-align: center; padding: 60px; color: #c0c4cc; font-size: 14px; }
 </style>

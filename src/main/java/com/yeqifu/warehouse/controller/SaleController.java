@@ -54,6 +54,10 @@ public class SaleController {
     private CommissionLedgerMapper commissionLedgerMapper;
     @Autowired
     private AccountMapper accountMapper;
+    @Autowired
+    private com.yeqifu.warehouse.mapper.ReturnDocMapper returnDocMapper;
+    @Autowired
+    private com.yeqifu.warehouse.mapper.StoreMapper storeMapper;
 
     @Autowired
     private RuntimeModeManager runtimeModeManager;
@@ -65,23 +69,37 @@ public class SaleController {
             @RequestParam(defaultValue = "1") Integer page,
             @RequestParam(defaultValue = "20") Integer limit,
             @RequestParam(required = false) String storeId) {
-        Page<SaleDoc> pageObj = new Page<>(page, limit);
-        LambdaQueryWrapper<SaleDoc> qw = new LambdaQueryWrapper<SaleDoc>()
-                .orderByDesc(SaleDoc::getCreatedAt);
-        if (storeId != null && !storeId.isEmpty()) {
-            qw.eq(SaleDoc::getStoreId, storeId);
+        try {
+            Page<SaleDoc> pageObj = new Page<>(page, limit);
+            LambdaQueryWrapper<SaleDoc> qw = new LambdaQueryWrapper<SaleDoc>()
+                    .orderByDesc(SaleDoc::getCreatedAt);
+            if (storeId != null && !storeId.isEmpty()) {
+                qw.eq(SaleDoc::getStoreId, storeId);
+            }
+            IPage<SaleDoc> result = saleDocMapper.selectPage(pageObj, qw);
+            List<SaleDoc> records = result.getRecords();
+            java.util.logging.Logger.getLogger("SaleController").info(
+                "[sale/list] page=" + page + " limit=" + limit + " total=" + result.getTotal() + " records=" + records.size());
+            for (SaleDoc doc : records) {
+                try {
+                    List<SaleLine> lines = saleLineMapper.selectList(
+                        new LambdaQueryWrapper<SaleLine>()
+                            .eq(SaleLine::getDocId, doc.getId())
+                            .orderByDesc(SaleLine::getId)
+                    );
+                    doc.setLines(lines);
+                } catch (Exception lineEx) {
+                    java.util.logging.Logger.getLogger("SaleController").severe(
+                        "[sale/list] ERROR loading lines for doc " + doc.getId() + ": " + lineEx.getMessage());
+                    doc.setLines(java.util.Collections.emptyList());
+                }
+            }
+            return Result.ok(records, result.getTotal());
+        } catch (Exception e) {
+            java.util.logging.Logger.getLogger("SaleController").severe("[sale/list] FATAL: " + e.getMessage() + " | " + e.getClass().getName());
+            e.printStackTrace();
+            return Result.error("查询失败: " + e.getMessage());
         }
-        IPage<SaleDoc> result = saleDocMapper.selectPage(pageObj, qw);
-        List<SaleDoc> records = result.getRecords();
-        for (SaleDoc doc : records) {
-            List<SaleLine> lines = saleLineMapper.selectList(
-                new LambdaQueryWrapper<SaleLine>()
-                    .eq(SaleLine::getDocId, doc.getId())
-                    .orderByDesc(SaleLine::getId)
-            );
-            doc.setLines(lines);
-        }
-        return Result.ok(records, result.getTotal());
     }
 
     @GetMapping("/detail/{id}")
@@ -99,7 +117,10 @@ public class SaleController {
     @PostMapping("/save")
     @Transactional
     public Result<SaleDoc> save(@RequestBody SaleDocVO vo) {
+        java.util.logging.Logger log = java.util.logging.Logger.getLogger("SaleController");
+        try {
         SaleDoc doc = vo.getDoc();
+        log.info("[sale/save] salespersonId=" + (doc != null ? doc.getSalespersonId() : "null") + " storeId=" + (doc != null ? doc.getStoreId() : "null"));
         List<SaleLine> lines = vo.getLines();
         if (lines == null) {
             lines = java.util.Collections.emptyList();
@@ -160,20 +181,39 @@ public class SaleController {
         }
 
         return Result.ok(doc);
+        } catch (Exception e) {
+            java.util.logging.Logger.getLogger("SaleController").severe("[sale/save] ERROR: " + e.getMessage() + " | " + e.getClass().getName());
+            e.printStackTrace();
+            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+            return Result.error("保存失败: " + e.getMessage());
+        }
     }
 
     private String generateSaleCode(SaleDoc doc) {
         Date docDate = doc.getDocDate() == null ? new Date() : doc.getDocDate();
         String datePart = new SimpleDateFormat("yyyy-MM-dd").format(docDate);
         String vehicleNo = resolveVehicleNo(doc.getSalespersonId());
-        LambdaQueryWrapper<SaleDoc> query = new LambdaQueryWrapper<SaleDoc>()
+        String prefix = "XS-" + datePart + "-" + vehicleNo + "-";
+        // 查出当天同业务员所有单（排除当前单），取编号最大值，避免 count 因删除/作废导致偏差
+        List<SaleDoc> existing = saleDocMapper.selectList(
+            new LambdaQueryWrapper<SaleDoc>()
                 .eq(SaleDoc::getSalespersonId, doc.getSalespersonId())
-                .eq(SaleDoc::getDocDate, docDate);
-        if (doc.getId() != null && !doc.getId().isEmpty()) {
-            query.ne(SaleDoc::getId, doc.getId());
+                .eq(SaleDoc::getDocDate, docDate)
+                .likeRight(SaleDoc::getCode, prefix)
+                .ne(doc.getId() != null && !doc.getId().isEmpty(), SaleDoc::getId,
+                    doc.getId() != null ? doc.getId() : "")
+        );
+        long maxSeq = 0;
+        for (SaleDoc d : existing) {
+            String code = d.getCode();
+            if (code != null && code.startsWith(prefix)) {
+                try {
+                    long seq = Long.parseLong(code.substring(prefix.length()));
+                    if (seq > maxSeq) maxSeq = seq;
+                } catch (NumberFormatException ignored) {}
+            }
         }
-        long count = saleDocMapper.selectCount(query);
-        return "XS" + datePart + "-" + vehicleNo + "-" + (count + 1);
+        return prefix + (maxSeq + 1);
     }
 
     private String resolveVehicleNo(String salespersonId) {
@@ -220,7 +260,7 @@ public class SaleController {
                 applyStockDelta(fromWarehouseId, line.getProductId(), -qty);
                 insertLedger("sale", id, fromWarehouseId, line.getProductId(), -qty);
 
-                // 赠送单按进价扣工资
+                // 赠送单按进价从工资中扣除（相当于业务员自购赠出）
                 boolean isGift = "gift".equals(doc.getDocType());
                 if (!isGift) {
                     BigDecimal commissionAmount = amount.multiply(COMMISSION_RATE).setScale(2, RoundingMode.HALF_UP);
@@ -429,6 +469,85 @@ public class SaleController {
             map.put(doc.getStoreId(), map.getOrDefault(doc.getStoreId(), 0) + sum);
         }
         return Result.ok(map);
+    }
+
+    /**
+     * 按超市统计区间内净销售额（销售额 - 退货额），前端超市流水排行用
+     * GET /api/sale/storeRangeSummary?startDate=2026-01-01&endDate=2026-05-31
+     */
+    @GetMapping("/storeRangeSummary")
+    public Result<java.util.List<java.util.Map<String, Object>>> storeRangeSummary(
+            @RequestParam String startDate,
+            @RequestParam String endDate) {
+        java.time.LocalDate start = java.time.LocalDate.parse(startDate);
+        java.time.LocalDate end = java.time.LocalDate.parse(endDate);
+        java.sql.Date sqlStart = java.sql.Date.valueOf(start);
+        java.sql.Date sqlEnd = java.sql.Date.valueOf(end);
+
+        // 1. 查区间内所有已过账销单
+        java.util.List<SaleDoc> saleDocs = saleDocMapper.selectList(
+            new LambdaQueryWrapper<SaleDoc>()
+                .eq(SaleDoc::getStatus, "posted")
+                .ge(SaleDoc::getDocDate, sqlStart)
+                .le(SaleDoc::getDocDate, sqlEnd)
+        );
+
+        // 按超市聚合销售额
+        java.util.Map<String, java.math.BigDecimal> saleMap = new java.util.LinkedHashMap<>();
+        java.util.Map<String, Integer> saleDocCountMap = new java.util.LinkedHashMap<>();
+        for (SaleDoc doc : saleDocs) {
+            String sid = doc.getStoreId() != null ? doc.getStoreId() : "";
+            java.math.BigDecimal amt = doc.getTotalAmount() != null ? doc.getTotalAmount() : java.math.BigDecimal.ZERO;
+            saleMap.put(sid, saleMap.getOrDefault(sid, java.math.BigDecimal.ZERO).add(amt));
+            saleDocCountMap.put(sid, saleDocCountMap.getOrDefault(sid, 0) + 1);
+        }
+
+        // 2. 查区间内所有已过账退单（vehicle_return，按超市扣除）
+        java.util.Map<String, java.math.BigDecimal> returnMap = new java.util.LinkedHashMap<>();
+        if (returnDocMapper != null) {
+            java.util.List<com.yeqifu.warehouse.entity.ReturnDoc> rets = returnDocMapper.selectList(
+                new LambdaQueryWrapper<com.yeqifu.warehouse.entity.ReturnDoc>()
+                    .eq(com.yeqifu.warehouse.entity.ReturnDoc::getStatus, "posted")
+                    .eq(com.yeqifu.warehouse.entity.ReturnDoc::getReturnType, "vehicle_return")
+                    .ge(com.yeqifu.warehouse.entity.ReturnDoc::getDocDate, sqlStart)
+                    .le(com.yeqifu.warehouse.entity.ReturnDoc::getDocDate, sqlEnd)
+            );
+            for (com.yeqifu.warehouse.entity.ReturnDoc ret : rets) {
+                String sid = ret.getStoreId() != null ? ret.getStoreId() : "";
+                java.math.BigDecimal amt = ret.getTotalAmount() != null ? ret.getTotalAmount() : java.math.BigDecimal.ZERO;
+                returnMap.put(sid, returnMap.getOrDefault(sid, java.math.BigDecimal.ZERO).add(amt));
+            }
+        }
+
+        // 查超市名称
+        java.util.Set<String> storeIds = new java.util.LinkedHashSet<>(saleMap.keySet());
+        java.util.Map<String, String> storeNameMap = new java.util.LinkedHashMap<>();
+        if (!storeIds.isEmpty()) {
+            com.yeqifu.warehouse.mapper.StoreMapper sm = storeMapper;
+            if (sm != null) {
+                for (com.yeqifu.warehouse.entity.Store s : sm.selectBatchIds(storeIds)) {
+                    storeNameMap.put(s.getId(), s.getName());
+                }
+            }
+        }
+
+        // 组装结果，按净销售额倒序
+        java.util.List<java.util.Map<String, Object>> result = new java.util.ArrayList<>();
+        for (String sid : saleMap.keySet()) {
+            java.math.BigDecimal saleAmt = saleMap.getOrDefault(sid, java.math.BigDecimal.ZERO);
+            java.math.BigDecimal retAmt = returnMap.getOrDefault(sid, java.math.BigDecimal.ZERO);
+            java.math.BigDecimal netAmt = saleAmt.subtract(retAmt);
+            java.util.Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("storeId", sid);
+            row.put("storeName", storeNameMap.getOrDefault(sid, sid.isEmpty() ? "未知门店" : sid));
+            row.put("saleAmount", saleAmt);
+            row.put("returnAmount", retAmt);
+            row.put("netAmount", netAmt);
+            row.put("saleDocCount", saleDocCountMap.getOrDefault(sid, 0));
+            result.add(row);
+        }
+        result.sort((a, b) -> ((java.math.BigDecimal) b.get("netAmount")).compareTo((java.math.BigDecimal) a.get("netAmount")));
+        return Result.ok(result);
     }
 
     @GetMapping("/productSaleQty")

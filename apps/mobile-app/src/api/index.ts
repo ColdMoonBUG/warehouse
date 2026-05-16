@@ -105,7 +105,9 @@ async function requestAllUnsettledSales(): Promise<SaleDoc[]> {
 }
 
 async function requestAllReturns(): Promise<ReturnDoc[]> {
-  return requestAllPagedLegacy<ReturnDoc>('/api/return/list')
+  // 退货列表后端已支持分页，用足够大的 limit 一次取完
+  const { list } = await requestListPage<ReturnDoc>('/api/return/list?page=1&limit=5000')
+  return list
 }
 
 async function requestAllTransfers(): Promise<TransferDoc[]> {
@@ -380,6 +382,7 @@ function request<T>(url: string, method: 'GET' | 'POST', data?: any): Promise<T>
       url: fullUrl,
       method,
       data,
+      timeout: 10000,
       header: headers,
       success: (res) => {
         const resHeader = (res.header || {}) as Record<string, string>
@@ -396,7 +399,14 @@ function request<T>(url: string, method: 'GET' | 'POST', data?: any): Promise<T>
       },
       fail: (err) => {
         console.error('[API] 失败:', fullUrl, err)
-        reject(new Error(err?.errMsg || '网络异常'))
+        const msg = err?.errMsg || ''
+        if (msg.includes('timeout') || msg.includes('timed out')) {
+          reject(new Error('网络超时，请检查网络连接'))
+        } else if (msg.includes('fail') || msg.includes('连接') || msg.includes('connect')) {
+          reject(new Error('无法连接服务器，请检查网络'))
+        } else {
+          reject(new Error(msg || '网络异常'))
+        }
       },
     })
   })
@@ -441,9 +451,11 @@ function normalizeSaleDoc(doc: SaleDoc): SaleDoc {
 
 function normalizeReturnDoc(doc: ReturnDoc): ReturnDoc {
   const salespersonId = getDocSalespersonId(doc)
+  const payType = normalizeReturnPayType(doc)
   return {
     ...doc,
     salespersonId,
+    payType,
   }
 }
 
@@ -465,10 +477,18 @@ function toPersistedSaleDoc(doc: SaleDoc): SaleDoc {
 
 function toPersistedReturnDoc(doc: ReturnDoc): ReturnDoc {
   const salespersonId = getDocSalespersonId(doc)
+  const payType = normalizeReturnPayType(doc)
   return {
     ...doc,
     salespersonId,
+    payType,
   }
+}
+
+function normalizeReturnPayType(doc: Partial<ReturnDoc> & { payType?: string; paymentType?: string }): 'cash' | 'card' {
+  const raw = (doc.payType || (doc as any).paymentType || '').toString().trim().toLowerCase()
+  if (raw === 'cash') return 'cash'
+  return 'card'
 }
 
 function toPersistedOutboundDoc(doc: OutboundDoc): OutboundDoc {
@@ -857,8 +877,9 @@ export async function getTransferDetail(id: string): Promise<TransferDoc | null>
   return request<TransferDoc>(`/api/transfer/detail/${id}`, 'GET')
 }
 
-export async function saveTransfer(doc: TransferDoc, lines: TransferLine[]) {
-  await request<void>('/api/transfer/save', 'POST', { doc, lines: toPersistedPackLines(lines) })
+export async function saveTransfer(doc: TransferDoc, lines: TransferLine[]): Promise<TransferDoc> {
+  const result = await request<TransferDoc>('/api/transfer/save', 'POST', { doc, lines: toPersistedPackLines(lines) })
+  return result || doc
 }
 
 export async function postTransfer(id: string) {

@@ -268,3 +268,18 @@ export interface ReturnDoc {
   lines: ReturnLine[]
   createdAt: string
 }
+
+export interface UnsettledDocVO {
+  docId: string
+  docType: 'sale' | 'return' | 'unknown'
+  docCode: string
+  docDate?: string
+  storeName?: string
+  docStatus?: string
+  returnDocId?: string
+  saleCommission: number
+  returnCommission: number
+  netCommission: number
+  totalQty: number
+  ledgers: CommissionLedger[]
+}

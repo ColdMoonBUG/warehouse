@@ -12,6 +12,8 @@ public class IdUtils {
     }
     
     public static String genCode(String prefix) {
-        return prefix + System.currentTimeMillis();
+        // 时间戳 + 3位随机数，防止同一毫秒内并发冲突
+        int rand = (int)(Math.random() * 900) + 100;
+        return prefix + System.currentTimeMillis() + rand;
     }
 }

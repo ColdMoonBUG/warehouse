@@ -65,11 +65,14 @@ public class TransferController {
 
         if (doc.getId() == null || doc.getId().isEmpty()) {
             doc.setId(IdUtils.randomId());
-            doc.setCode(IdUtils.genCode("TR"));
+            doc.setCode(generateTransferCode(doc));
             transferDocMapper.insert(doc);
         } else {
             transferDocMapper.updateById(doc);
-            transferLineMapper.delete(new LambdaQueryWrapper<TransferLine>().eq(TransferLine::getDocId, doc.getId()));
+            // 仅当前端传入了明细时才更新明细，避免只更新单头字段时意外清空明细
+            if (!lines.isEmpty()) {
+                transferLineMapper.delete(new LambdaQueryWrapper<TransferLine>().eq(TransferLine::getDocId, doc.getId()));
+            }
         }
         for (TransferLine line : lines) {
             line.setId(IdUtils.randomId());
@@ -125,6 +128,30 @@ public class TransferController {
             TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
             return Result.error(e.getMessage());
         }
+    }
+
+    private String generateTransferCode(TransferDoc doc) {
+        Date docDate = doc.getDocDate() == null ? new Date() : doc.getDocDate();
+        String datePart = new java.text.SimpleDateFormat("yyyy-MM-dd").format(docDate);
+        String prefix = "CK-" + datePart + "-";
+        java.util.List<TransferDoc> existing = transferDocMapper.selectList(
+            new LambdaQueryWrapper<TransferDoc>()
+                .eq(TransferDoc::getDocDate, docDate)
+                .likeRight(TransferDoc::getCode, prefix)
+                .ne(doc.getId() != null && !doc.getId().isEmpty(), TransferDoc::getId,
+                    doc.getId() != null ? doc.getId() : "")
+        );
+        long maxSeq = 0;
+        for (TransferDoc d : existing) {
+            String code = d.getCode();
+            if (code != null && code.startsWith(prefix)) {
+                try {
+                    long seq = Long.parseLong(code.substring(prefix.length()));
+                    if (seq > maxSeq) maxSeq = seq;
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+        return prefix + (maxSeq + 1);
     }
 
     private void normalizeLines(List<TransferLine> lines) {

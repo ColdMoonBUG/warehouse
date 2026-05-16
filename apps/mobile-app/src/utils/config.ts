@@ -4,11 +4,15 @@
 export const USE_MOCK = false
 
 const PUBLIC_BASE_URL = 'http://home.lyhc.top:8888'
+const LOCAL_BASE_URL = 'http://192.168.31.85:8888'
+
+// ⚠️ 测试模式：切换到本地后端（false=连服务器，true=连本地）
+const USE_LOCAL = true
 
 // 后端API地址 - H5 走代理，App 真机/打包走公网 DDNS 地址
 let baseUrl = ''
 // #ifndef H5
-baseUrl = PUBLIC_BASE_URL
+baseUrl = USE_LOCAL ? LOCAL_BASE_URL : PUBLIC_BASE_URL
 // #endif
 export const BASE_URL = baseUrl
 
