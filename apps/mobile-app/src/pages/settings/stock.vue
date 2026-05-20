@@ -32,15 +32,20 @@
         <view class="search-bar">
           <input v-model="keyword" placeholder="搜索商品名称" class="search-input" />
         </view>
+        <view class="unit-toggle">
+          <text class="unit-label">显示单位：</text>
+          <view class="unit-btn" :class="{ active: unitMode === 'bag' }" @tap="unitMode = 'bag'">袋</view>
+          <view class="unit-btn" :class="{ active: unitMode === 'box' }" @tap="unitMode = 'box'">箱袋</view>
+        </view>
         <view v-for="item in filteredItems" :key="item.productId" class="card">
           <text class="name">{{ item.name }}</text>
           <view class="stock-row">
             <text class="stock-label">当前仓</text>
-            <text class="stock-value" :class="{ 'low-stock': item.qty < 10 }">{{ formatQty(item.qty, item.boxQty) }}</text>
+            <text class="stock-value" :class="{ 'low-stock': item.qty < 10 }">{{ displayQty(item.qty, item.boxQty) }}</text>
           </view>
           <view class="stock-row">
             <text class="stock-label">总仓</text>
-            <text class="stock-value">{{ formatQty(item.mainQty, item.boxQty) }}</text>
+            <text class="stock-value">{{ displayQty(item.mainQty, item.boxQty) }}</text>
           </view>
           <text v-if="compareText(item)" class="compare-text">{{ compareText(item) }}</text>
         </view>
@@ -74,6 +79,7 @@ const list = ref<StockItem[]>([])
 const mainStockMap = ref<Record<string, number>>({})
 const loading = ref(false)
 const keyword = ref('')
+const unitMode = ref<'bag' | 'box'>('box')
 let unsubscribeStock: (() => void) | null = null
 
 const filteredItems = computed(() => {
@@ -135,6 +141,12 @@ function formatQty(qty: number, boxQty: number): string {
   if (boxes > 0 && bags > 0) return `${boxes}箱${bags}袋`
   if (boxes > 0) return `${boxes}箱`
   return `${bags}袋`
+}
+
+// 根据单位模式显示
+function displayQty(qty: number, boxQty: number): string {
+  if (unitMode.value === 'bag' || !boxQty || boxQty <= 1) return `${qty}袋`
+  return formatQty(qty, boxQty)
 }
 
 function compareText(item: { productId: string; qty: number; mainQty: number; boxQty: number }) {
@@ -315,6 +327,35 @@ onShow(() => {
 
 .low-stock {
   color: #dc2626;
+  font-weight: 600;
+}
+
+.unit-toggle {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  margin-bottom: 16rpx;
+  padding: 0 4rpx;
+}
+
+.unit-label {
+  font-size: 24rpx;
+  color: #64748b;
+}
+
+.unit-btn {
+  padding: 8rpx 28rpx;
+  border-radius: 999rpx;
+  font-size: 24rpx;
+  color: #666;
+  background: #f0f0f0;
+  border: 2rpx solid transparent;
+}
+
+.unit-btn.active {
+  background: #e8f4ff;
+  color: #1890ff;
+  border-color: #1890ff;
   font-weight: 600;
 }
 </style>

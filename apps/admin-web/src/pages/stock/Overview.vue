@@ -16,6 +16,12 @@
           <el-radio-button value="card">卡片</el-radio-button>
           <el-radio-button value="table">表格</el-radio-button>
         </el-radio-group>
+        <el-divider direction="vertical" />
+        <span style="font-size:13px;color:#606266">单位：</span>
+        <el-radio-group v-model="unitMode" size="small">
+          <el-radio-button value="bag">袋</el-radio-button>
+          <el-radio-button value="box">箱袋</el-radio-button>
+        </el-radio-group>
         <el-tag v-if="currentWarehouse" type="info">{{ currentWarehouse.name }}</el-tag>
       </div>
     </el-card>
@@ -75,8 +81,7 @@
         <div class="stock-name">{{ item.productName }}</div>
         <div class="stock-code">{{ item.productCode }}</div>
         <div class="stock-qty">
-          <span class="qty-num">{{ item.qty }}</span>
-          <span class="qty-unit">袋</span>
+          <span class="qty-num">{{ displayQty(item.qty, item.boxQty) }}</span>
         </div>
         <el-progress
           :percentage="calcPct(item.qty)"
@@ -99,11 +104,11 @@
       <el-table :data="tableData" border stripe>
         <el-table-column prop="productCode" label="商品编码" width="120" />
         <el-table-column prop="productName" label="商品名称" />
-        <el-table-column label="库存袋数" width="200">
+        <el-table-column label="库存" width="200">
           <template #default="{row}">
             <div style="display:flex;align-items:center;gap:8px">
-              <span :style="{color:row.qty===0?'#f56c6c':row.qty<=10?'#e6a23c':'#67c23a',fontWeight:700,minWidth:'40px'}">
-                {{ row.qty }}
+              <span :style="{color:row.qty===0?'#f56c6c':row.qty<=10?'#e6a23c':'#67c23a',fontWeight:700,minWidth:'60px'}">
+                {{ displayQty(row.qty, row.boxQty) }}
               </span>
               <el-progress :percentage="calcPct(row.qty)" :color="progressColor(row.qty)"
                 :stroke-width="8" :show-text="false" style="flex:1" />
@@ -140,6 +145,7 @@ const products = ref<Product[]>([])
 const tableData = ref<any[]>([])
 const viewMode = ref<'card'|'table'>('card')
 const sortKey = ref<'qty_desc'|'time_desc'|'time_asc'>('qty_desc')
+const unitMode = ref<'bag'|'box'>('box')
 
 const productIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <rect x="8" y="10" width="48" height="44" rx="8" fill="#e0f2fe" />
@@ -222,6 +228,20 @@ function fmtTime(t?: string) {
   return t ? t.slice(0, 19).replace('T', ' ') : '-'
 }
 
+function formatQty(qty: number, boxQty: number): string {
+  if (!boxQty || boxQty <= 1) return `${qty}袋`
+  const boxes = Math.floor(qty / boxQty)
+  const bags = qty % boxQty
+  if (boxes > 0 && bags > 0) return `${boxes}箱${bags}袋`
+  if (boxes > 0) return `${boxes}箱`
+  return `${bags}袋`
+}
+
+function displayQty(qty: number, boxQty?: number): string {
+  if (unitMode.value === 'bag' || !boxQty || boxQty <= 1) return `${qty}袋`
+  return formatQty(qty, boxQty)
+}
+
 async function loadAll() {
   ;[warehouses.value, products.value] = await Promise.all([getWarehouses(), getProducts()])
   await loadStock()
@@ -236,6 +256,7 @@ async function loadStock() {
       productCode: p?.code || s.productId,
       productName: p?.name || '-',
       imageUrl: p?.imageUrl || '',
+      boxQty: p?.boxQty || 1,
       qty: s.qty,
       updatedAt: s.updatedAt
     }
