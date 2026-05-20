@@ -12,6 +12,7 @@
             <el-button @click="saveDraft" :disabled="doc.status!=='draft'">保存草稿</el-button>
             <el-button type="primary" @click="post" :disabled="doc.status!=='draft'">过账</el-button>
             <el-button type="danger" @click="voidDoc" :disabled="doc.status!=='posted'">作废</el-button>
+            <el-button type="warning" @click="voidAndRebuild" :disabled="doc.status!=='posted'">作废并重建</el-button>
           </div>
         </div>
       </template>
@@ -175,6 +176,38 @@ async function voidDoc() {
   const u = list.find(d => d.id === doc.value.id)
   if (u) applyDoc(u)
   ElMessage.success('已作废并反冲库存')
+}
+
+async function voidAndRebuild() {
+  await ElMessageBox.confirm(
+    '将作废当前单据（库存反冲），并以相同内容新建一张草稿单，方便修改后重新过账。确认继续？',
+    '作废并重建',
+    { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' }
+  )
+  // 1. 保存当前明细（作废后内容还在 doc.value 里）
+  const oldLines = doc.value.lines.map(l => ({ ...l }))
+  const oldFrom = doc.value.fromWarehouseId
+  const oldTo = doc.value.toWarehouseId
+  const oldRemark = doc.value.remark
+  // 2. 作废原单
+  await voidTransfer(doc.value.id)
+  ElMessage.success('原单已作废，正在创建新草稿…')
+  // 3. 新建草稿
+  const newDoc: TransferDoc = {
+    id: '', code: '',
+    fromWarehouseId: oldFrom,
+    toWarehouseId: oldTo,
+    date: dayjs().format('YYYY-MM-DD'),
+    remark: oldRemark ? `[重建自 ${doc.value.code}] ${oldRemark}` : `[重建自 ${doc.value.code}]`,
+    status: 'draft',
+    lines: oldLines.map(l => ({ ...l, id: gId() })),
+    createdAt: new Date().toISOString()
+  }
+  const saved = await saveTransfer(newDoc, newDoc.lines)
+  if (saved) {
+    applyDoc(saved as TransferDoc)
+    ElMessage.success('新草稿已创建，请确认后过账')
+  }
 }
 
 async function loadDetail(id: string) {

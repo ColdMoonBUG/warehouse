@@ -18,7 +18,7 @@
       </view>
       <view class="section">
         <text class="label">调入仓库</text>
-        <picker mode="selector" :range="warehouses" range-key="name" @change="onToWhChange">
+        <picker mode="selector" :range="toWarehouses" range-key="name" @change="onToWhChange">
           <view class="picker"><text>{{ toWhName || '请选择调入仓库' }}</text></view>
         </picker>
       </view>
@@ -81,6 +81,7 @@
       <view class="actions">
         <button class="btn ghost" :disabled="!form.id || form.status !== 'draft'" @tap="post">过账</button>
         <button class="btn danger" :disabled="!form.id || form.status !== 'posted'" @tap="voidDoc">作废</button>
+        <button v-if="form.id && form.status === 'posted'" class="btn warning" @tap="voidAndRebuild">作废重建</button>
         <button class="btn print" :disabled="!form.id || form.status !== 'posted'" @tap="printDoc">打印</button>
       </view>
     </view>
@@ -132,6 +133,8 @@ const pageLoading = ref(false)
 const fromWhName = computed(() => warehouses.value.find(w => w.id === form.value.fromWarehouseId)?.name || '')
 const toWhName = computed(() => warehouses.value.find(w => w.id === form.value.toWarehouseId)?.name || '')
 const fromWarehouse = computed(() => warehouses.value.find(w => w.id === form.value.fromWarehouseId) || null)
+// 调入仓库排除已选的调出仓
+const toWarehouses = computed(() => warehouses.value.filter(w => w.id !== form.value.fromWarehouseId))
 const stockHint = computed(() => {
   if (stockLoading.value) return '库存加载中'
   return fromWarehouse.value ? `${fromWhName.value}库存已加载` : ''
@@ -316,13 +319,17 @@ function removeLine(index: number) {
 function onFromWhChange(e: any) {
   const index = Number(e.detail.value)
   form.value.fromWarehouseId = warehouses.value[index]?.id || ''
+  // 如果调入仓和新选调出仓相同，清空调入仓
+  if (form.value.toWarehouseId === form.value.fromWarehouseId) {
+    form.value.toWarehouseId = ''
+  }
   refreshStockPreview()
   triggerAutoSave()
 }
 
 function onToWhChange(e: any) {
   const index = Number(e.detail.value)
-  form.value.toWarehouseId = warehouses.value[index]?.id || ''
+  form.value.toWarehouseId = toWarehouses.value[index]?.id || ''
   triggerAutoSave()
 }
 
@@ -380,6 +387,14 @@ function triggerAutoSave() {
 
 async function post() {
   if (!form.value.id) return
+  if (!form.value.fromWarehouseId || !form.value.toWarehouseId) {
+    uni.showToast({ title: '请选择调出和调入仓库', icon: 'none' })
+    return
+  }
+  if (form.value.fromWarehouseId === form.value.toWarehouseId) {
+    uni.showToast({ title: '调出仓库和调入仓库不能相同', icon: 'none' })
+    return
+  }
   await postTransfer(form.value.id)
   const doc = await getTransferDetail(form.value.id)
   if (doc) await applyDoc(doc)
@@ -388,10 +403,55 @@ async function post() {
 
 async function voidDoc() {
   if (!form.value.id) return
-  await voidTransfer(form.value.id)
-  const doc = await getTransferDetail(form.value.id)
-  if (doc) await applyDoc(doc)
-  uni.showToast({ title: '已作废', icon: 'success' })
+  uni.showModal({
+    title: '确认作废',
+    content: '作废后库存将自动反冲，此操作不可撤销。',
+    confirmText: '确认作废',
+    confirmColor: '#ff4d4f',
+    success: async (res) => {
+      if (!res.confirm) return
+      await voidTransfer(form.value.id!)
+      const doc = await getTransferDetail(form.value.id!)
+      if (doc) await applyDoc(doc)
+      uni.showToast({ title: '已作废', icon: 'success' })
+    },
+  })
+}
+
+async function voidAndRebuild() {
+  if (!form.value.id) return
+  uni.showModal({
+    title: '作废并重建',
+    content: '将作废当前单据（库存反冲），并以相同内容新建一张草稿单，方便修改后重新过账。',
+    confirmText: '确认',
+    success: async (res) => {
+      if (!res.confirm) return
+      const oldFrom = form.value.fromWarehouseId
+      const oldTo = form.value.toWarehouseId
+      const oldRemark = form.value.remark
+      const oldCode = form.value.code
+      const oldLines = lines.value.map(l => ({ id: '', productId: l.productId, boxQty: l.boxQty || 0, qty: l.qty || 0 }))
+      await voidTransfer(form.value.id!)
+      uni.showToast({ title: '原单已作废，正在创建草稿…', icon: 'none' })
+      try {
+        const newDoc = {
+          fromWarehouseId: oldFrom,
+          toWarehouseId: oldTo,
+          date: formatDate(new Date(), 'YYYY-MM-DD'),
+          remark: oldRemark ? `[重建自${oldCode}] ${oldRemark}` : `[重建自${oldCode}]`,
+          status: 'draft',
+          lines: [],
+        } as any
+        const saved = await saveTransfer(newDoc, oldLines as any)
+        if (saved) {
+          await applyDoc(saved as any)
+          uni.showToast({ title: '草稿已创建，请确认后过账', icon: 'success' })
+        }
+      } catch (e: any) {
+        uni.showToast({ title: `创建草稿失败: ${e.message || ''}`, icon: 'none' })
+      }
+    },
+  })
 }
 
 async function printDoc() {

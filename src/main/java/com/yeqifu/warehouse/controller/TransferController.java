@@ -90,11 +90,19 @@ public class TransferController {
             if (doc == null || !"draft".equals(doc.getStatus())) {
                 return Result.error("单据状态异常");
             }
+            if (doc.getFromWarehouseId() != null && doc.getFromWarehouseId().equals(doc.getToWarehouseId())) {
+                return Result.error("调出仓库和调入仓库不能相同");
+            }
             List<TransferLine> lines = transferLineMapper.selectList(new LambdaQueryWrapper<TransferLine>().eq(TransferLine::getDocId, id));
+            boolean initMode = runtimeModeManager.isInitMode();
             for (TransferLine line : lines) {
-                applyStockDelta(doc.getFromWarehouseId(), line.getProductId(), -line.getQty());
+                if (!initMode) {
+                    // 正常模式：来源仓扣减
+                    applyStockDelta(doc.getFromWarehouseId(), line.getProductId(), -line.getQty());
+                    insertLedger("transfer", id, doc.getFromWarehouseId(), line.getProductId(), -line.getQty());
+                }
+                // 两种模式都给目标仓加库存
                 applyStockDelta(doc.getToWarehouseId(), line.getProductId(), line.getQty());
-                insertLedger("transfer", id, doc.getFromWarehouseId(), line.getProductId(), -line.getQty());
                 insertLedger("transfer", id, doc.getToWarehouseId(), line.getProductId(), line.getQty());
             }
             doc.setStatus("posted");

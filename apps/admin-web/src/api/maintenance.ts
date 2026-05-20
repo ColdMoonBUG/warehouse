@@ -6,6 +6,7 @@ export interface MaintenanceState {
   updatedBy?: string
   lastResetAt?: string
   lastResetBy?: string
+  initMode?: boolean
 }
 
 export interface ResetBusinessResult {
@@ -32,5 +33,20 @@ export async function switchToLiveMode(): Promise<MaintenanceState> {
 
 export async function resetBusinessData(): Promise<ResetBusinessResult> {
   const res = await request.post('/maintenance/reset')
+  return res.data
+}
+
+export async function resetStockOnly(): Promise<ResetBusinessResult> {
+  const res = await request.post('/maintenance/reset-stock-only')
+  return res.data
+}
+
+export async function enableInitMode(): Promise<MaintenanceState> {
+  const res = await request.post('/maintenance/mode/init/enable')
+  return res.data
+}
+
+export async function disableInitMode(): Promise<MaintenanceState> {
+  const res = await request.post('/maintenance/mode/init/disable')
   return res.data
 }

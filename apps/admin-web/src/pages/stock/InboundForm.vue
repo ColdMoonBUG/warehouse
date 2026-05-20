@@ -43,7 +43,7 @@
         <el-table-column label="商品" min-width="180">
           <template #default="{row}">
             <el-select v-model="row.productId" placeholder="选择商品" :disabled="doc.status!=='draft'" style="width:100%" @change="onProductChange(row)">
-              <el-option v-for="p in products" :key="p.id" :label="p.name" :value="p.id" />
+              <el-option v-for="p in filteredProducts" :key="p.id" :label="p.name" :value="p.id" />
             </el-select>
             <div class="pack-hint">{{ productPackLabel(getProduct(row.productId)) }}</div>
           </template>
@@ -89,7 +89,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getInboundById, getInbounds, saveInbound, postInbound, voidInbound } from '@/api/stock'
@@ -116,6 +116,12 @@ function genLineId() {
 function getProduct(productId: string) {
   return products.value.find(p => p.id === productId)
 }
+
+// 只显示当前选中厂家的商品，未选厂家时显示全部
+const filteredProducts = computed(() => {
+  if (!doc.value.supplierId) return products.value
+  return products.value.filter(p => p.supplierId === doc.value.supplierId)
+})
 
 function normalizeLines(lines: InboundLine[] = []) {
   return lines.map(line => normalizePackLine({ ...line }, getProduct(line.productId)))

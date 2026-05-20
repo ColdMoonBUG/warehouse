@@ -69,6 +69,30 @@ public class RuntimeModeManager {
         return isTestMode() && warehouseId != null && !warehouseId.trim().isEmpty();
     }
 
+    /** 初始化模式：出库单过账只给目标仓加库存，不扣来源仓（用于盘点初始化） */
+    public boolean isInitMode() {
+        RuntimeState state = getState();
+        return Boolean.TRUE.equals(state.getInitMode());
+    }
+
+    public RuntimeState enableInitMode(String updatedBy) {
+        RuntimeState state = getState();
+        state.setInitMode(true);
+        state.setUpdatedAt(nowText());
+        state.setUpdatedBy(updatedBy);
+        saveState(state);
+        return state;
+    }
+
+    public RuntimeState disableInitMode(String updatedBy) {
+        RuntimeState state = getState();
+        state.setInitMode(false);
+        state.setUpdatedAt(nowText());
+        state.setUpdatedBy(updatedBy);
+        saveState(state);
+        return state;
+    }
+
     public int getUnlimitedQty() {
         return UNLIMITED_QTY;
     }
@@ -113,5 +137,6 @@ public class RuntimeModeManager {
         private String updatedBy;
         private String lastResetAt;
         private String lastResetBy;
+        private Boolean initMode;  // 初始化模式：出库只加目标仓，不扣来源仓
     }
 }

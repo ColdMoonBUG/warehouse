@@ -37,6 +37,26 @@
       </div>
     </el-card>
 
+    <!-- 初始化模式 -->
+    <el-card shadow="hover" class="init-card">
+      <template #header>
+        <div class="card-head init">
+          <i class="ri-loader-line" />
+          <span>初始化模式（盘点专用）</span>
+          <el-tag :type="state.initMode ? 'warning' : 'info'" style="margin-left:8px">
+            {{ state.initMode ? '已开启' : '已关闭' }}
+          </el-tag>
+        </div>
+      </template>
+      <p class="desc">开启后，出库单过账时<b>只给目标仓库增加库存，不扣来源仓库</b>。</p>
+      <p class="keep" style="color:#e6a23c">专用于初始盘点：主仓库已初始化完毕，直接把车库货物数量通过出库单写入车库，不影响主仓库存。</p>
+      <p class="keep">完成后务必关闭，否则所有出库单都会只加不扣！</p>
+      <div class="action-row">
+        <el-button type="warning" :loading="togglingInit" @click="doEnableInit" :disabled="!!state.initMode">开启初始化模式</el-button>
+        <el-button type="success" :loading="togglingInit" @click="doDisableInit" :disabled="!state.initMode">关闭初始化模式</el-button>
+      </div>
+    </el-card>
+
     <el-card shadow="hover" class="danger-card">
       <template #header>
         <div class="card-head danger">
@@ -59,6 +79,31 @@
         </el-collapse>
       </div>
     </el-card>
+
+    <!-- 仅清库存（保留销单退单） -->
+    <el-card shadow="hover" class="danger-card">
+      <template #header>
+        <div class="card-head warning">
+          <i class="ri-archive-line" />
+          <span>仅清库存（保留销退单）</span>
+        </div>
+      </template>
+      <p class="desc">清除：入库单、出库单（调拨）、台账、库存数据。</p>
+      <p class="keep">保留：销单 / 退单 / 提成记录 / 结清记录 / 超市 / 商品 / 账户</p>
+      <p class="keep" style="color:#e6a23c">适合盘点重置库存，不影响历史销售记录。</p>
+      <el-button type="warning" :loading="resetStockOnlyLoading" @click="doResetStockOnly" size="large">仅清库存并重置</el-button>
+      <div v-if="resetStockOnlyResult" class="result">
+        <div>共删除：<b>{{ resetStockOnlyResult.deletedRows }}</b> 行</div>
+        <div style="color:#67c23a">{{ resetStockOnlyResult.note }}</div>
+        <el-collapse style="margin-top:8px">
+          <el-collapse-item title="各表删除明细">
+            <div v-for="(rows, tbl) in resetStockOnlyResult.tableRows" :key="tbl" class="row-detail">
+              <span>{{ tbl }}</span><span>{{ rows }}</span>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
+      </div>
+    </el-card>
   </div>
 </template>
 
@@ -68,6 +113,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getMaintenanceState,
   resetBusinessData,
+  resetStockOnly,
+  enableInitMode,
+  disableInitMode,
   switchToLiveMode,
   switchToTestMode,
   type MaintenanceState,
@@ -78,7 +126,10 @@ const state = reactive<MaintenanceState>({ mode: 'LIVE' })
 const resetting = ref(false)
 const switchingTest = ref(false)
 const switchingLive = ref(false)
+const togglingInit = ref(false)
 const resetResult = ref<ResetBusinessResult | null>(null)
+const resetStockOnlyLoading = ref(false)
+const resetStockOnlyResult = ref<any>(null)
 
 async function loadState() {
   const next = await getMaintenanceState()
@@ -151,6 +202,57 @@ async function doReset() {
   }
 }
 
+async function doEnableInit() {
+  try {
+    togglingInit.value = true
+    Object.assign(state, await enableInitMode())
+    ElMessage.warning('初始化模式已开启，出库单过账只加目标仓，不扣来源仓')
+  } catch (e: any) {
+    ElMessage.error(e?.message || '操作失败')
+  } finally {
+    togglingInit.value = false
+  }
+}
+
+async function doDisableInit() {
+  try {
+    togglingInit.value = true
+    Object.assign(state, await disableInitMode())
+    ElMessage.success('初始化模式已关闭，出库单恢复正常双向扣减')
+  } catch (e: any) {
+    ElMessage.error(e?.message || '操作失败')
+  } finally {
+    togglingInit.value = false
+  }
+}
+
+async function doResetStockOnly() {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      '将清除入库单、出库单、台账、库存数据，销单退单提成记录保留。\n\n请输入"确认清库存"继续：',
+      '确认仅清库存',
+      {
+        type: 'warning',
+        confirmButtonText: '执行',
+        cancelButtonText: '取消',
+        inputPlaceholder: '请输入 确认清库存',
+      }
+    )
+    if (value !== '确认清库存') { ElMessage.error('确认词不正确'); return }
+  } catch { return }
+  try {
+    resetStockOnlyLoading.value = true
+    const res = await resetStockOnly()
+    resetStockOnlyResult.value = res
+    Object.assign(state, res.state)
+    ElMessage.success(`已清库存 ${res.deletedRows} 行，销退单记录已保留`)
+  } catch (e: any) {
+    ElMessage.error(e?.message || '操作失败')
+  } finally {
+    resetStockOnlyLoading.value = false
+  }
+}
+
 onMounted(loadState)
 </script>
 
@@ -161,6 +263,9 @@ onMounted(loadState)
 .card-head { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 .card-head i { font-size: 18px; }
 .card-head.danger { color: #f56c6c; }
+.card-head.warning { color: #e6a23c; }
+.card-head.init { color: #409eff; }
+.init-card { margin-bottom: 16px; }
 .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .status-item { padding: 12px; background: var(--el-fill-color-light); border-radius: 6px; }
 .label { color: #909399; font-size: 12px; margin-bottom: 6px; }
