@@ -2,12 +2,18 @@
   <div>
     <el-card>
       <template #header>
-        <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
           <span>门店管理</span>
+          <el-input
+            v-model="tableSearch"
+            placeholder="搜索名称/地址/业务员"
+            clearable
+            style="width:220px"
+          />
           <el-button type="primary" @click="openForm()">+ 新增门店</el-button>
         </div>
       </template>
-      <el-table :data="list" border stripe>
+      <el-table :data="filteredList" border stripe>
         <el-table-column prop="code" label="编码" width="100" />
         <el-table-column prop="name" label="名称" />
         <el-table-column prop="address" label="地址" />
@@ -22,15 +28,39 @@
             <el-tag :type="row.status==='active'?'success':'info'">{{ row.status==='active'?'启用':'停用' }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="160">
+        <el-table-column label="操作" width="200">
           <template #default="{row}">
             <el-button link type="primary" @click="openForm(row)">编辑</el-button>
             <el-button link @click="toggle(row)">{{ row.status==='active'?'停用':'启用' }}</el-button>
+            <el-button link type="warning" @click="openMerge(row)">合并</el-button>
             <el-button link type="danger" @click="del(row.id)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
+
+    <!-- 合并门店弹窗 -->
+    <el-dialog v-model="mergeDlg" title="合并门店" width="500px">
+      <p style="color:#606266;margin-bottom:16px">
+        将 <b>{{ mergeSource?.name }}</b> 合并到另一家门店，合并后该门店将被删除，历史销单归属到目标门店。
+      </p>
+      <el-form label-width="90px">
+        <el-form-item label="合并到">
+          <el-select v-model="mergeTargetId" filterable placeholder="选择目标门店" style="width:100%">
+            <el-option
+              v-for="s in list.filter(x => x.id !== mergeSource?.id)"
+              :key="s.id"
+              :label="`${s.name}（${salespersonName(s.salespersonId)}）`"
+              :value="s.id"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="mergeDlg=false">取消</el-button>
+        <el-button type="warning" :loading="merging" @click="doMerge">确认合并</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="dlg" :title="form.id?'编辑门店':'新增门店'" width="800px" @open="initDlgMap">
       <el-row :gutter="16">
@@ -74,7 +104,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getStores, saveStore, toggleStore, deleteStore } from '@/api/store'
 import { getSalespersonAccounts } from '@/api/auth'
@@ -82,6 +112,18 @@ import type { Store, Account } from '@/types'
 
 const list = ref<Store[]>([])
 const salespersonAccounts = ref<Account[]>([])
+const tableSearch = ref('')
+
+const filteredList = computed(() => {
+  const kw = tableSearch.value.trim().toLowerCase()
+  if (!kw) return list.value
+  return list.value.filter(s => {
+    const spName = salespersonName(s.salespersonId).toLowerCase()
+    return (s.name || '').toLowerCase().includes(kw)
+      || (s.address || '').toLowerCase().includes(kw)
+      || spName.includes(kw)
+  })
+})
 const dlg = ref(false)
 const formRef = ref()
 const form = ref<Partial<Store>>({})
@@ -208,6 +250,40 @@ async function submit() {
   if (dlgMap) { dlgMap.destroy(); dlgMap = null }
   ElMessage.success('保存成功')
   load()
+}
+
+const mergeDlg = ref(false)
+const mergeSource = ref<Store | null>(null)
+const mergeTargetId = ref<string>('')
+const merging = ref(false)
+
+function openMerge(row: Store) {
+  mergeSource.value = row
+  mergeTargetId.value = ''
+  mergeDlg.value = true
+}
+
+async function doMerge() {
+  if (!mergeSource.value || !mergeTargetId.value) {
+    ElMessage.warning('请选择目标门店')
+    return
+  }
+  await ElMessageBox.confirm(
+    `确认将「${mergeSource.value.name}」合并到目标门店？合并后该门店将被删除，历史销单将归属到目标门店。`,
+    '确认合并',
+    { type: 'warning', confirmButtonText: '确认合并', cancelButtonText: '取消' }
+  )
+  merging.value = true
+  try {
+    await import('@/api/store').then(m => m.mergeStore(mergeSource.value!.id, mergeTargetId.value))
+    mergeDlg.value = false
+    ElMessage.success('合并成功')
+    load()
+  } catch (e: any) {
+    ElMessage.error(e?.message || '合并失败')
+  } finally {
+    merging.value = false
+  }
 }
 
 async function toggle(row: Store) { await toggleStore(row.id); load() }

@@ -15,6 +15,9 @@ public class StoreController {
     @Autowired
     private StoreMapper storeMapper;
 
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
     @GetMapping("/list")
     public Result<List<Store>> list() {
         List<Store> list = storeMapper.selectList(
@@ -56,6 +59,34 @@ public class StoreController {
     @PostMapping("/delete/{id}")
     public Result<Void> delete(@PathVariable String id) {
         storeMapper.deleteById(id);
+        return Result.ok();
+    }
+
+    /**
+     * 合并门店：将 sourceId 的历史销单/退单归属到 targetId，然后删除 sourceId
+     */
+    @PostMapping("/merge")
+    @org.springframework.transaction.annotation.Transactional
+    public Result<Void> merge(@RequestBody java.util.Map<String, String> body) {
+        String sourceId = body.get("sourceId");
+        String targetId = body.get("targetId");
+        if (sourceId == null || targetId == null || sourceId.equals(targetId)) {
+            return Result.error("参数错误");
+        }
+        Store source = storeMapper.selectById(sourceId);
+        Store target = storeMapper.selectById(targetId);
+        if (source == null || target == null) {
+            return Result.error("门店不存在");
+        }
+        org.springframework.jdbc.core.JdbcTemplate jdbc = jdbcTemplate;
+        // 将销单的 store_id 更新到目标门店
+        jdbc.update("UPDATE wh_sale_doc SET store_id = ? WHERE store_id = ?", targetId, sourceId);
+        // 将退单的 store_id 更新到目标门店
+        jdbc.update("UPDATE wh_return_doc SET store_id = ? WHERE store_id = ?", targetId, sourceId);
+        // 将提成流水的 store_id 更新到目标门店
+        jdbc.update("UPDATE wh_commission_ledger SET store_id = ? WHERE store_id = ?", targetId, sourceId);
+        // 删除源门店
+        storeMapper.deleteById(sourceId);
         return Result.ok();
     }
 }

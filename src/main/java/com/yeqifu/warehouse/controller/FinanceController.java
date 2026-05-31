@@ -519,16 +519,20 @@ public class FinanceController {
         LocalDate today = LocalDate.now(BUSINESS_ZONE);
         java.sql.Date docDate = java.sql.Date.valueOf(today);
 
+        // 只取已过账的销单（不含草稿，不含作废单——作废单的 sale+void_sale 相互抵消，
+        // 但为了让今日流水只显示"有效"单据，直接排除 voided 状态）
         Set<String> saleDocIds = saleDocMapper.selectList(
             new LambdaQueryWrapper<SaleDoc>()
                 .eq(SaleDoc::getSalespersonId, salespersonId)
                 .eq(SaleDoc::getDocDate, docDate)
+                .eq(SaleDoc::getStatus, "posted")
         ).stream().map(SaleDoc::getId).collect(Collectors.toCollection(LinkedHashSet::new));
 
         Set<String> returnDocIds = returnDocMapper.selectList(
             new LambdaQueryWrapper<ReturnDoc>()
                 .eq(ReturnDoc::getSalespersonId, salespersonId)
                 .eq(ReturnDoc::getDocDate, docDate)
+                .eq(ReturnDoc::getStatus, "posted")
         ).stream().map(ReturnDoc::getId).collect(Collectors.toCollection(LinkedHashSet::new));
 
         if (saleDocIds.isEmpty() && returnDocIds.isEmpty()) {

@@ -758,11 +758,11 @@ export { PRINTER_PRESETS as PRESET_PRINTERS }
 /** 获取当前账户的显示名标签（用于绑定打印机） */
 function getAccountLabel(): string {
   try {
-    const raw = uni.getStorageSync('wh_current_user')
+    const raw = uni.getStorageSync('wh_session')
     if (!raw) return ''
     const user = typeof raw === 'string' ? JSON.parse(raw) : raw
     // 管理员不参与绑定
-    if (user.role === 'admin') return ''
+    if (user.role === 'admin') return '管理员'
     const name = (user.displayName || '').trim()
     if (!name) return ''
     return name

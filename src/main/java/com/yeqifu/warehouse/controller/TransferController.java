@@ -44,7 +44,11 @@ public class TransferController {
     public Result<TransferDoc> detail(@PathVariable String id) {
         TransferDoc doc = transferDocMapper.selectById(id);
         if (doc != null) {
-            List<TransferLine> lines = transferLineMapper.selectList(new LambdaQueryWrapper<TransferLine>().eq(TransferLine::getDocId, id));
+            List<TransferLine> lines = transferLineMapper.selectList(
+                new LambdaQueryWrapper<TransferLine>()
+                    .eq(TransferLine::getDocId, id)
+                    .orderByAsc(TransferLine::getId)
+            );
             doc.setLines(lines);
         }
         return Result.ok(doc);
@@ -74,8 +78,10 @@ public class TransferController {
                 transferLineMapper.delete(new LambdaQueryWrapper<TransferLine>().eq(TransferLine::getDocId, doc.getId()));
             }
         }
-        for (TransferLine line : lines) {
-            line.setId(IdUtils.randomId());
+        for (int i = 0; i < lines.size(); i++) {
+            TransferLine line = lines.get(i);
+            // ID 前缀加序号，保证 ORDER BY id 时顺序与前端一致
+            line.setId(String.format("%04d", i) + IdUtils.randomId().substring(4));
             line.setDocId(doc.getId());
             transferLineMapper.insert(line);
         }

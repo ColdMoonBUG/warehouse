@@ -7,6 +7,8 @@ const CANVAS_ID = 'printCanvas'
 const DPI = 300
 const PAGE_WIDTH_DOTS = Math.floor(210 * DPI / 25.4)
 const PAGE_HEIGHT_DOTS = Math.floor(297 * DPI / 25.4)
+// A5 短边宽度（153mm = 148+5），用于 A4mini 旋转打印模式
+const A5_SHORT_DOTS = Math.floor(153 * DPI / 25.4)
 const PAGE_MARGIN_DOTS = mmToDots(8)
 const SIGNATURE_AREA_GAP_DOTS = mmToDots(8)
 const SIGNATURE_AREA_WIDTH_DOTS = mmToDots(38)
@@ -101,6 +103,7 @@ interface PrintItem {
   price: number
   amount: number
   shelfDays?: number
+  boxPackQty?: number  // 每箱袋数，出库单显示 X箱(X袋) 用
 }
 
 interface PrintDocData {
@@ -1493,7 +1496,7 @@ function buildCpclCommand(imageData: any, taskId: string, options: PrintBuildOpt
   try {
     appendLog('info', `[A5打印] 开始构建CPCL指令：taskId=${taskId}，原始图片 ${imageData.width}x${imageData.height}`)
 
-    const shouldRotate = options.rotateImage ?? true
+    const shouldRotate = options.rotateImage ?? false
     const printData = shouldRotate ? rotateImageData90CCW(imageData) : imageData
     appendLog('info', shouldRotate
       ? `[A5打印] 图片旋转90°完成：${printData.width}x${printData.height}`
@@ -1920,11 +1923,13 @@ async function drawTransferContent(ctx: any, data: TransferPrintData, width: num
   ctx.setFillStyle('white')
   ctx.fillRect(0, 0, width, height)
 
-  const left = CONTENT_LEFT_DOTS
-  const right = CONTENT_RIGHT_DOTS
-  const contentWidth = CONTENT_WIDTH_DOTS
+  // 动态计算内容区域（适配不同纸宽）
+  const margin = PAGE_MARGIN_DOTS
+  const left = margin
+  const right = width - margin
+  const contentWidth = right - left
   const mid = left + Math.floor(contentWidth / 2)
-  let y = PAGE_MARGIN_DOTS
+  let y = margin
   const ll = 1
 
   const colSeq = left
@@ -1978,7 +1983,19 @@ async function drawTransferContent(ctx: any, data: TransferPrintData, width: num
     ctx.fillText(`${seqNo}`, colSeq, y + 44)
     ctx.fillText((item.barcode || '-').slice(0, 13), colBarcode, y + 44)
     ctx.fillText(item.name, colName, y + 44)
-    ctx.fillText(`${normalizeCount(item.qty)}`, colQty, y + 44)
+    // 显示 X箱(X袋) 格式
+    const packQty = item.boxPackQty || 0
+    let qtyText: string
+    if (packQty > 1) {
+      const boxes = Math.floor(normalizeCount(item.qty) / packQty)
+      const bags = normalizeCount(item.qty) % packQty
+      if (boxes > 0 && bags > 0) qtyText = `${boxes}箱(${bags}袋)`
+      else if (boxes > 0) qtyText = `${boxes}箱`
+      else qtyText = `${bags}袋`
+    } else {
+      qtyText = `${normalizeCount(item.qty)}袋`
+    }
+    ctx.fillText(qtyText, colQty, y + 44)
     y += 64
   }
 
@@ -2004,7 +2021,7 @@ async function drawTransferContent(ctx: any, data: TransferPrintData, width: num
   ctx.lineTo(right, y)
   ctx.stroke()
 
-  drawSignatureNoteArea(ctx, height)
+  // 出库单不需要签名区（给仓管看，A5 纸宽度下签名区会超出）
 
   await new Promise<void>((resolve) => {
     ctx.draw(false, () => { setTimeout(resolve, 200) })
@@ -2027,6 +2044,7 @@ export async function buildTransferPrintData(
       qty: line.qty,
       price: 0,
       amount: 0,
+      boxPackQty: product?.boxQty || 0,
     }
   })
 
@@ -2042,13 +2060,16 @@ export async function buildTransferPrintData(
     remark: doc.remark,
   }
 
+  // A4mini 旋转模式：画布宽度用 A5 短边（148mm），旋转后正好适配 A5 纸宽
+  // A4Pro 正常模式：画布宽度用 A4 宽（210mm）
+  const canvasWidth = options.rotateImage ? A5_SHORT_DOTS : PAGE_WIDTH_DOTS
   const height = options.fillFullPage ? PAGE_HEIGHT_DOTS : estimateTransferPageHeight(items.length)
   const ctx = uni.createCanvasContext(CANVAS_ID)
-  await drawTransferContent(ctx, data, PAGE_WIDTH_DOTS, height)
-  const imageData = await getCanvasImageData(PAGE_WIDTH_DOTS, height)
+  await drawTransferContent(ctx, data, canvasWidth, height)
+  const imageData = await getCanvasImageData(canvasWidth, height)
   const { cpclBuffer, journalSetup } = buildCpclCommand(imageData, doc.id || doc.code, options)
 
-  appendLog('info', `[A4打印] 出库单打印数据生成完成：${items.length} 种，高度 ${height}`)
+  appendLog('info', `[A4打印] 出库单打印数据生成完成：${items.length} 种，画布 ${canvasWidth}x${height}，旋转=${!!options.rotateImage}`)
   return { imageData, cpclBuffer, journalSetup }
 }
 

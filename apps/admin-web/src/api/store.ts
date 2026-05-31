@@ -17,3 +17,7 @@ export async function toggleStore(id: string) {
 export async function deleteStore(id: string) {
   await request.post(`/store/delete/${id}`)
 }
+
+export async function mergeStore(sourceId: string, targetId: string) {
+  await request.post(`/store/merge`, { sourceId, targetId })
+}

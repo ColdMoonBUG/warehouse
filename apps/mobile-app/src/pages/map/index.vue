@@ -47,6 +47,7 @@
         <view class="popup-header">
           <view class="popup-title-wrap">
             <text class="store-name" :class="{ owned: isOwnedStoreItem(selectedStore) }">{{ selectedStore.name }}</text>
+            <text v-if="selectedStore.salespersonName" class="salesperson-tag">（业务员：{{ selectedStore.salespersonName }}）</text>
             <text v-if="isOwnedStoreItem(selectedStore)" class="owner-tag">我的店</text>
           </view>
           <view class="close-btn" @tap="selectedStore = null">×</view>
@@ -78,7 +79,7 @@
 
 <script setup lang="ts">
 import { computed, ref, shallowRef } from 'vue'
-import { onShow } from '@dcloudio/uni-app'
+import { onShow, onHide } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
 import { getStores, getStoreSaleQty, getSalespersonAccounts, isOwnedStore, isSameSalespersonId, getSessionSalespersonId } from '@/api'
 import { AMAP_KEY } from '@/utils/config'
@@ -107,6 +108,7 @@ const locationErrorMessage = ref('')
 const currentLat = ref(0)
 const currentLng = ref(0)
 const CURRENT_LOCATION_MARKER_ID = 9999
+let _locationTimer: ReturnType<typeof setInterval> | null = null
 
 const COLOR_ICON_MAP: Record<string, string> = {
   '#22c55e': '/static/marker-green.png',
@@ -217,7 +219,11 @@ function updateMarkers(storeList: Store[], saleQty: Record<string, number>) {
     const qty = saleQty[s.id] || 0
     const isOwn = isOwnedStore(s, sessionSpId)
     const color = isAdmin ? gradeColor(qty, maxQty) : ownershipColor(isOwn)
-    const salesperson = salespersons.value.find(item => isSameSalespersonId(item.salespersonId || item.id, s.salespersonId))
+    const salesperson = salespersons.value.find(item =>
+      item.id === s.salespersonId ||
+      item.salespersonId === s.salespersonId ||
+      isSameSalespersonId(item.salespersonId || item.id, s.salespersonId)
+    )
     builtStores.push({ ...s, saleQty: qty, color, salespersonName: salesperson?.displayName })
     builtMarkers.push({
       id: mi++,
@@ -315,10 +321,12 @@ function onMarkerTap(e: any) {
 }
 
 function showStoreActions(store: StoreWithSale) {
-  console.log('[map] showStoreActions:', store.name)
+  // 标题拼入业务员名，因为地图组件会盖住普通弹窗，只能用 ActionSheet
+  const titleParts = [store.name]
+  if (store.salespersonName) titleParts.push(`业务员：${store.salespersonName}`)
   const items = ['导航到店', '历史销单']
   uni.showActionSheet({
-    title: store.name,
+    title: titleParts.join('\n'),
     itemList: items,
     success: (res) => {
       if (res.tapIndex === 0) {
@@ -374,6 +382,13 @@ function navigateToStore() {
   })
 }
 
+onHide(() => {
+  if (_locationTimer) {
+    clearInterval(_locationTimer)
+    _locationTimer = null
+  }
+})
+
 onShow(() => {
   userStore.init()
   if (!userStore.isLoggedIn) {
@@ -385,6 +400,11 @@ onShow(() => {
   if (!currentLat.value || !currentLng.value) {
     locateCurrentPosition(false)
   }
+  // 每10秒自动刷新位置
+  if (_locationTimer) clearInterval(_locationTimer)
+  _locationTimer = setInterval(() => {
+    locateCurrentPosition(false)
+  }, 30000)
 })
 </script>
 
@@ -533,6 +553,12 @@ onShow(() => {
 
     .store-name.owned {
       color: #ff4d4f;
+    }
+
+    .salesperson-tag {
+      font-size: 24rpx;
+      color: #64748b;
+      font-weight: 400;
     }
 
     .owner-tag {

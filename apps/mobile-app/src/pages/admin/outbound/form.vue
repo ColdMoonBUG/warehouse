@@ -121,7 +121,7 @@ const referenceStore = useReferenceStore()
 const warehouses = ref<Warehouse[]>([])
 const products = ref<Product[]>([])
 const keyword = ref('')
-const sortMode = ref<SortMode>('custom')
+const sortMode = ref<SortMode>('stock-desc')
 const customSortIds = ref<string[]>([])
 const lines = ref<FormLine[]>([])
 const form = ref<Partial<TransferDoc>>({ fromWarehouseId: 'main', date: formatDate(new Date(), 'YYYY-MM-DD'), status: 'draft' })
@@ -470,7 +470,9 @@ async function printDoc() {
     uni.showLoading({ title: '打印中...' })
     const fromName = fromWhName.value || form.value.fromWarehouseId || '-'
     const toName = toWhName.value || form.value.toWarehouseId || '-'
-    await printTransferA4(form.value as TransferDoc, fromName, toName, products.value)
+    // 用当前页面显示的顺序打印，不重新从后端拉（避免顺序乱）
+    const docWithCurrentLines = { ...form.value, lines: lines.value.map(toSubmitLine) } as any
+    await printTransferA4(docWithCurrentLines, fromName, toName, products.value)
     uni.hideLoading()
     uni.showToast({ title: '打印指令已发送', icon: 'success' })
   } catch (e: any) {

@@ -57,6 +57,8 @@ public class SaleController {
     @Autowired
     private com.yeqifu.warehouse.mapper.ReturnDocMapper returnDocMapper;
     @Autowired
+    private com.yeqifu.warehouse.mapper.ReturnLineMapper returnLineMapper;
+    @Autowired
     private com.yeqifu.warehouse.mapper.StoreMapper storeMapper;
 
     @Autowired
@@ -446,6 +448,64 @@ public class SaleController {
         doc.setSettledBy(null);
         saleDocMapper.updateById(doc);
         return Result.ok();
+    }
+
+    /**
+     * 按超市统计区间内净销售袋数（销售袋数 - 退货袋数），首页看板颜色分级用
+     * GET /api/sale/storeNetQty?startDate=2026-05-01&endDate=2026-05-31
+     */
+    @GetMapping("/storeNetQty")
+    public Result<java.util.Map<String, Integer>> storeNetQty(
+            @RequestParam String startDate,
+            @RequestParam String endDate) {
+        java.time.LocalDate start = java.time.LocalDate.parse(startDate);
+        java.time.LocalDate end = java.time.LocalDate.parse(endDate);
+        java.sql.Date sqlStart = java.sql.Date.valueOf(start);
+        java.sql.Date sqlEnd = java.sql.Date.valueOf(end);
+
+        // 销售袋数
+        java.util.Map<String, Integer> saleMap = new java.util.HashMap<>();
+        List<SaleDoc> saleDocs = saleDocMapper.selectList(
+            new LambdaQueryWrapper<SaleDoc>()
+                .eq(SaleDoc::getStatus, "posted")
+                .ge(SaleDoc::getDocDate, sqlStart)
+                .le(SaleDoc::getDocDate, sqlEnd)
+        );
+        for (SaleDoc doc : saleDocs) {
+            List<SaleLine> lines = saleLineMapper.selectList(
+                new LambdaQueryWrapper<SaleLine>().eq(SaleLine::getDocId, doc.getId()));
+            int qty = lines.stream().mapToInt(l -> l.getQty() == null ? 0 : l.getQty()).sum();
+            String sid = doc.getStoreId() != null ? doc.getStoreId() : "";
+            saleMap.put(sid, saleMap.getOrDefault(sid, 0) + qty);
+        }
+
+        // 退货袋数（vehicle_return，按超市扣除）
+        java.util.Map<String, Integer> returnMap = new java.util.HashMap<>();
+        if (returnDocMapper != null) {
+            java.util.List<com.yeqifu.warehouse.entity.ReturnDoc> rets = returnDocMapper.selectList(
+                new LambdaQueryWrapper<com.yeqifu.warehouse.entity.ReturnDoc>()
+                    .eq(com.yeqifu.warehouse.entity.ReturnDoc::getStatus, "posted")
+                    .eq(com.yeqifu.warehouse.entity.ReturnDoc::getReturnType, "vehicle_return")
+                    .ge(com.yeqifu.warehouse.entity.ReturnDoc::getDocDate, sqlStart)
+                    .le(com.yeqifu.warehouse.entity.ReturnDoc::getDocDate, sqlEnd)
+            );
+            for (com.yeqifu.warehouse.entity.ReturnDoc ret : rets) {
+                String sid = ret.getStoreId() != null ? ret.getStoreId() : "";
+                java.util.List<com.yeqifu.warehouse.entity.ReturnLine> retLines = returnLineMapper.selectList(
+                    new LambdaQueryWrapper<com.yeqifu.warehouse.entity.ReturnLine>()
+                        .eq(com.yeqifu.warehouse.entity.ReturnLine::getDocId, ret.getId()));
+                int qty = retLines.stream().mapToInt(l -> l.getQty() == null ? 0 : l.getQty()).sum();
+                returnMap.put(sid, returnMap.getOrDefault(sid, 0) + qty);
+            }
+        }
+
+        // 净销售袋数 = 销售 - 退货
+        java.util.Map<String, Integer> result = new java.util.HashMap<>();
+        for (String sid : saleMap.keySet()) {
+            int net = saleMap.getOrDefault(sid, 0) - returnMap.getOrDefault(sid, 0);
+            result.put(sid, Math.max(0, net));
+        }
+        return Result.ok(result);
     }
 
     @GetMapping("/storeSaleQty")
