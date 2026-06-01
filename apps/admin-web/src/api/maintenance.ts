@@ -1,7 +1,7 @@
 import request from '@/utils/request'
 
 export interface MaintenanceState {
-  mode: 'TEST' | 'LIVE'
+  mode: 'TEST' | 'LIVE' | 'VEHICLE_UNLIMITED'
   updatedAt?: string
   updatedBy?: string
   lastResetAt?: string
@@ -28,6 +28,11 @@ export async function switchToTestMode(): Promise<MaintenanceState> {
 
 export async function switchToLiveMode(): Promise<MaintenanceState> {
   const res = await request.post('/maintenance/mode/live')
+  return res.data
+}
+
+export async function switchToVehicleUnlimitedMode(): Promise<MaintenanceState> {
+  const res = await request.post('/maintenance/mode/vehicle-unlimited')
   return res.data
 }
 

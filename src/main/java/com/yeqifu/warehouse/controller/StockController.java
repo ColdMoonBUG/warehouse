@@ -43,10 +43,18 @@ public class StockController {
         String salespersonId = "salesperson".equals(role) && accountId instanceof String ? (String) accountId : "";
 
         List<Warehouse> visibleWarehouses = resolveVisibleWarehouses(warehouseId, role, salespersonId);
+        
+        // 测试模式：所有仓库显示无限库存
         if (runtimeModeManager.isTestMode()) {
             return Result.ok(buildUnlimitedStocks(visibleWarehouses));
         }
+        
+        // 车库无限模式：仅车库显示无限库存
+        if (runtimeModeManager.isVehicleUnlimitedMode()) {
+            return Result.ok(buildMixedStocks(visibleWarehouses, salespersonId));
+        }
 
+        // 正常模式：查询真实库存
         LambdaQueryWrapper<Stock> query = new LambdaQueryWrapper<>();
         if (warehouseId != null && !warehouseId.isEmpty()) {
             query.eq(Stock::getWarehouseId, warehouseId);
@@ -120,6 +128,69 @@ public class StockController {
                 stocks.add(stock);
             }
         }
+        return stocks;
+    }
+
+    /**
+     * 车库无限模式：车库显示无限库存，主仓/退货仓显示真实库存
+     */
+    private List<Stock> buildMixedStocks(List<Warehouse> warehouses, String salespersonId) {
+        List<Stock> stocks = new ArrayList<>();
+        if (warehouses.isEmpty()) {
+            return stocks;
+        }
+        
+        List<Product> products = productMapper.selectList(new LambdaQueryWrapper<Product>()
+                .eq(Product::getStatus, "active")
+                .orderByAsc(Product::getCreatedAt));
+        Date now = new Date();
+        
+        // 分离车库和非车库仓库
+        List<Warehouse> vehicleWarehouses = new ArrayList<>();
+        List<Warehouse> normalWarehouses = new ArrayList<>();
+        for (Warehouse wh : warehouses) {
+            if ("vehicle".equals(wh.getType())) {
+                vehicleWarehouses.add(wh);
+            } else {
+                normalWarehouses.add(wh);
+            }
+        }
+        
+        // 车库：显示无限库存
+        for (Warehouse warehouse : vehicleWarehouses) {
+            for (Product product : products) {
+                Stock stock = new Stock();
+                stock.setWarehouseId(warehouse.getId());
+                stock.setProductId(product.getId());
+                stock.setQty(runtimeModeManager.getUnlimitedQty());
+                stock.setUpdatedAt(now);
+                stocks.add(stock);
+            }
+        }
+        
+        // 非车库（主仓/退货仓）：查询真实库存
+        for (Warehouse warehouse : normalWarehouses) {
+            List<Stock> realStocks = stockMapper.selectList(
+                new LambdaQueryWrapper<Stock>().eq(Stock::getWarehouseId, warehouse.getId())
+            );
+            for (Product product : products) {
+                Stock stock = new Stock();
+                stock.setWarehouseId(warehouse.getId());
+                stock.setProductId(product.getId());
+                // 查找真实库存，没有则显示0
+                int qty = 0;
+                for (Stock s : realStocks) {
+                    if (product.getId().equals(s.getProductId())) {
+                        qty = s.getQty();
+                        break;
+                    }
+                }
+                stock.setQty(qty);
+                stock.setUpdatedAt(now);
+                stocks.add(stock);
+            }
+        }
+        
         return stocks;
     }
 }

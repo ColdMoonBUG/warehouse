@@ -15,6 +15,7 @@ public class RuntimeModeManager {
 
     public static final String MODE_TEST = "TEST";
     public static final String MODE_LIVE = "LIVE";
+    public static final String MODE_VEHICLE_UNLIMITED = "VEHICLE_UNLIMITED"; // 车库无限模式：车库无限库存，主仓/退货仓正常校验
     public static final int UNLIMITED_QTY = 999999;
     private static final String CONFIG_KEY = "warehouseRuntimeConfig";
     private static final String DATETIME_PATTERN = "yyyy-MM-dd HH:mm:ss";
@@ -65,8 +66,43 @@ public class RuntimeModeManager {
         return MODE_TEST.equalsIgnoreCase(getState().getMode());
     }
 
+    public boolean isVehicleUnlimitedMode() {
+        return MODE_VEHICLE_UNLIMITED.equalsIgnoreCase(getState().getMode());
+    }
+
+    /**
+     * 判断是否使用无限库存
+     * TEST模式：所有仓库无限库存
+     * VEHICLE_UNLIMITED模式：仅车库（vehicle类型）无限库存，主仓/退货仓正常校验
+     */
     public boolean useUnlimitedInventory(String warehouseId) {
-        return isTestMode() && warehouseId != null && !warehouseId.trim().isEmpty();
+        if (warehouseId == null || warehouseId.trim().isEmpty()) {
+            return false;
+        }
+        String mode = getState().getMode();
+        // 测试模式：所有仓库无限
+        if (MODE_TEST.equalsIgnoreCase(mode)) {
+            return true;
+        }
+        // 车库无限模式：仅车库无限
+        if (MODE_VEHICLE_UNLIMITED.equalsIgnoreCase(mode)) {
+            return isVehicleWarehouse(warehouseId);
+        }
+        return false;
+    }
+
+    @Autowired
+    private com.yeqifu.warehouse.mapper.WarehouseMapper warehouseMapper;
+
+    /**
+     * 判断仓库是否为车库类型
+     */
+    public boolean isVehicleWarehouse(String warehouseId) {
+        if (warehouseId == null || warehouseId.trim().isEmpty()) {
+            return false;
+        }
+        com.yeqifu.warehouse.entity.Warehouse warehouse = warehouseMapper.selectById(warehouseId);
+        return warehouse != null && "vehicle".equals(warehouse.getType());
     }
 
     /** 初始化模式：出库单过账只给目标仓加库存，不扣来源仓（用于盘点初始化） */
@@ -123,7 +159,9 @@ public class RuntimeModeManager {
     }
 
     private String normalizeMode(String mode) {
-        return MODE_TEST.equalsIgnoreCase(mode) ? MODE_TEST : MODE_LIVE;
+        if (MODE_TEST.equalsIgnoreCase(mode)) return MODE_TEST;
+        if (MODE_VEHICLE_UNLIMITED.equalsIgnoreCase(mode)) return MODE_VEHICLE_UNLIMITED;
+        return MODE_LIVE;
     }
 
     private String nowText() {

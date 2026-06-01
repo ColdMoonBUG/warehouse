@@ -72,6 +72,12 @@ public class MaintenanceController {
         return Result.ok(runtimeModeManager.switchMode(RuntimeModeManager.MODE_LIVE, currentOperator(session)));
     }
 
+    @PostMapping("/mode/vehicle-unlimited")
+    public Result<RuntimeModeManager.RuntimeState> switchToVehicleUnlimited(HttpSession session) {
+        if (!isAdmin(session)) return Result.error("仅管理员可操作");
+        return Result.ok(runtimeModeManager.switchMode(RuntimeModeManager.MODE_VEHICLE_UNLIMITED, currentOperator(session)));
+    }
+
     @PostMapping("/mode/init/enable")
     public Result<RuntimeModeManager.RuntimeState> enableInitMode(HttpSession session) {
         if (!isAdmin(session)) return Result.error("仅管理员可操作");

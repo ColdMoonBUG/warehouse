@@ -5,7 +5,7 @@
       :closable="false"
       show-icon
       title="系统维护"
-      description="测试模式下所有仓库按无限库存处理，仅用于联调和试单。进入正式模式前，请先清库并重建标准仓库。"
+      description="测试模式下所有仓库按无限库存处理；车库无限模式下仅车库无限库存，主仓/退货仓正常校验。进入正式模式前，请先清库并重建标准仓库。"
       style="margin-bottom: 16px"
     />
 
@@ -19,7 +19,9 @@
       <div class="status-grid">
         <div class="status-item">
           <div class="label">当前模式</div>
-          <el-tag :type="state.mode === 'TEST' ? 'warning' : 'success'">{{ state.mode === 'TEST' ? '测试模式' : '正式模式' }}</el-tag>
+          <el-tag :type="state.mode === 'TEST' ? 'warning' : state.mode === 'VEHICLE_UNLIMITED' ? '' : 'success'">
+            {{ state.mode === 'TEST' ? '测试模式' : state.mode === 'VEHICLE_UNLIMITED' ? '车库无限模式' : '正式模式' }}
+          </el-tag>
         </div>
         <div class="status-item">
           <div class="label">最近切换</div>
@@ -33,6 +35,7 @@
       <div class="action-row">
         <el-button @click="loadState">刷新状态</el-button>
         <el-button type="warning" :loading="switchingTest" @click="doSwitchTest">开启测试模式</el-button>
+        <el-button type="primary" :loading="switchingVehicle" @click="doSwitchVehicleUnlimited">车库无限模式</el-button>
         <el-button type="success" :loading="switchingLive" @click="doSwitchLive">进入正式模式</el-button>
       </div>
     </el-card>
@@ -118,6 +121,7 @@ import {
   disableInitMode,
   switchToLiveMode,
   switchToTestMode,
+  switchToVehicleUnlimitedMode,
   type MaintenanceState,
   type ResetBusinessResult,
 } from '@/api/maintenance'
@@ -126,6 +130,7 @@ const state = reactive<MaintenanceState>({ mode: 'LIVE' })
 const resetting = ref(false)
 const switchingTest = ref(false)
 const switchingLive = ref(false)
+const switchingVehicle = ref(false)
 const togglingInit = ref(false)
 const resetResult = ref<ResetBusinessResult | null>(null)
 const resetStockOnlyLoading = ref(false)
@@ -166,6 +171,18 @@ async function doSwitchLive() {
     ElMessage.error(e?.message || '切换失败')
   } finally {
     switchingLive.value = false
+  }
+}
+
+async function doSwitchVehicleUnlimited() {
+  try {
+    switchingVehicle.value = true
+    Object.assign(state, await switchToVehicleUnlimitedMode())
+    ElMessage.success('已切换为车库无限模式：车库无限库存，主仓/退货仓正常校验')
+  } catch (e: any) {
+    ElMessage.error(e?.message || '切换失败')
+  } finally {
+    switchingVehicle.value = false
   }
 }
 
