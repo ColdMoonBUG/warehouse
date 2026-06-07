@@ -390,11 +390,16 @@ function request<T>(url: string, method: 'GET' | 'POST', data?: any): Promise<T>
         if (newSid) {
           saveJsessionid(newSid)
         }
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          const bodyText = typeof res.data === 'string' ? res.data : JSON.stringify(res.data || {})
+          reject(new Error(`HTTP ${res.statusCode}: ${bodyText.slice(0, 120) || '请求失败'}`))
+          return
+        }
         const body = res.data as ApiResult<T>
         if (body && body.code === 200) {
           resolve(body.data)
         } else {
-          reject(new Error(body?.msg || '请求失败'))
+          reject(new Error(body?.msg || `请求失败(${res.statusCode})`))
         }
       },
       fail: (err) => {

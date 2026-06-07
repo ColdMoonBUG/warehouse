@@ -27,7 +27,6 @@
       </view>
 
       <view v-if="loading" class="empty">正在加载库存...</view>
-      <view v-else-if="filteredItems.length === 0" class="empty">{{ keyword ? '无匹配商品' : '暂无库存' }}</view>
       <view v-else>
         <view class="search-bar">
           <input v-model="keyword" placeholder="搜索商品名称" class="search-input" />
@@ -37,17 +36,20 @@
           <view class="unit-btn" :class="{ active: unitMode === 'bag' }" @tap="unitMode = 'bag'">袋</view>
           <view class="unit-btn" :class="{ active: unitMode === 'box' }" @tap="unitMode = 'box'">箱袋</view>
         </view>
-        <view v-for="item in filteredItems" :key="item.productId" class="card">
-          <text class="name">{{ item.name }}</text>
-          <view class="stock-row">
-            <text class="stock-label">当前仓</text>
-            <text class="stock-value" :class="{ 'low-stock': item.qty < 10 }">{{ displayQty(item.qty, item.boxQty) }}</text>
+        <view v-if="filteredItems.length === 0" class="empty">{{ keyword ? '无匹配商品' : '暂无库存' }}</view>
+        <view v-else>
+          <view v-for="item in filteredItems" :key="item.productId" class="card">
+            <text class="name">{{ item.name }}</text>
+            <view class="stock-row">
+              <text class="stock-label">当前仓</text>
+              <text class="stock-value" :class="{ 'low-stock': item.qty < 10 }">{{ displayQty(item.qty, item.boxQty) }}</text>
+            </view>
+            <view class="stock-row">
+              <text class="stock-label">总仓</text>
+              <text class="stock-value">{{ displayQty(item.mainQty, item.boxQty) }}</text>
+            </view>
+            <text v-if="compareText(item)" class="compare-text">{{ compareText(item) }}</text>
           </view>
-          <view class="stock-row">
-            <text class="stock-label">总仓</text>
-            <text class="stock-value">{{ displayQty(item.mainQty, item.boxQty) }}</text>
-          </view>
-          <text v-if="compareText(item)" class="compare-text">{{ compareText(item) }}</text>
         </view>
       </view>
     </view>
@@ -119,13 +121,16 @@ const items = computed(() => {
     if (!orderedIds.includes(id)) orderedIds.push(id)
   })
 
-  return orderedIds.map(productId => ({
+  const result = orderedIds.map(productId => ({
     productId,
     name: products.value.find(product => product.id === productId)?.name || productId,
     boxQty: products.value.find(product => product.id === productId)?.boxQty || 1,
     qty: list.value.find(item => item.productId === productId)?.qty || 0,
     mainQty: mainStockMap.value[productId] || 0,
   }))
+
+  // 按当前仓库库存量从多到少排序
+  return result.sort((a, b) => b.qty - a.qty)
 })
 
 function warehouseLabel(warehouse?: Warehouse | null) {

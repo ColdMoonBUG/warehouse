@@ -57,35 +57,54 @@ public class TransferController {
     @PostMapping("/save")
     @Transactional
     public Result<TransferDoc> save(@RequestBody TransferDocVO vo) {
-        TransferDoc doc = vo.getDoc();
-        List<TransferLine> lines = vo.getLines();
-        if (lines == null) {
-            lines = java.util.Collections.emptyList();
-        }
-        vo.setLines(lines);
-        normalizeLines(lines);
-        if (doc.getStatus() == null || doc.getStatus().isEmpty()) doc.setStatus("draft");
-        if (doc.getDocDate() == null) doc.setDocDate(new Date());
+        try {
+            TransferDoc doc = vo.getDoc();
+            List<TransferLine> lines = vo.getLines();
+            boolean linesProvided = lines != null;
+            if (lines == null) {
+                lines = java.util.Collections.emptyList();
+            }
+            vo.setLines(lines);
+            normalizeLines(lines);
+            if (doc.getStatus() == null || doc.getStatus().isEmpty()) doc.setStatus("draft");
+            if (doc.getDocDate() == null) doc.setDocDate(new Date());
 
-        if (doc.getId() == null || doc.getId().isEmpty()) {
-            doc.setId(IdUtils.randomId());
-            doc.setCode(generateTransferCode(doc));
-            transferDocMapper.insert(doc);
-        } else {
-            transferDocMapper.updateById(doc);
-            // 仅当前端传入了明细时才更新明细，避免只更新单头字段时意外清空明细
-            if (!lines.isEmpty()) {
+            TransferDoc existing = null;
+            if (doc.getId() != null && !doc.getId().isEmpty()) {
+                existing = transferDocMapper.selectById(doc.getId());
+            }
+
+            if (doc.getId() == null || doc.getId().isEmpty()) {
+                doc.setId(IdUtils.randomId());
+            }
+
+            if (existing == null) {
+                if (doc.getCode() == null || doc.getCode().isEmpty()) {
+                    doc.setCode(generateTransferCode(doc));
+                }
+                transferDocMapper.insert(doc);
+            } else {
+                if (doc.getCode() == null || doc.getCode().isEmpty()) {
+                    doc.setCode(existing.getCode());
+                }
+                transferDocMapper.updateById(doc);
+            }
+
+            if (linesProvided) {
                 transferLineMapper.delete(new LambdaQueryWrapper<TransferLine>().eq(TransferLine::getDocId, doc.getId()));
             }
+            for (int i = 0; i < lines.size(); i++) {
+                TransferLine line = lines.get(i);
+                // ID 前缀加序号，保证 ORDER BY id 时顺序与前端一致
+                line.setId(String.format("%04d", i) + IdUtils.randomId().substring(4));
+                line.setDocId(doc.getId());
+                transferLineMapper.insert(line);
+            }
+            return Result.ok(doc);
+        } catch (RuntimeException e) {
+            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+            return Result.error(e.getMessage());
         }
-        for (int i = 0; i < lines.size(); i++) {
-            TransferLine line = lines.get(i);
-            // ID 前缀加序号，保证 ORDER BY id 时顺序与前端一致
-            line.setId(String.format("%04d", i) + IdUtils.randomId().substring(4));
-            line.setDocId(doc.getId());
-            transferLineMapper.insert(line);
-        }
-        return Result.ok(doc);
     }
 
     @PostMapping("/post/{id}")
@@ -145,27 +164,7 @@ public class TransferController {
     }
 
     private String generateTransferCode(TransferDoc doc) {
-        Date docDate = doc.getDocDate() == null ? new Date() : doc.getDocDate();
-        String datePart = new java.text.SimpleDateFormat("yyyy-MM-dd").format(docDate);
-        String prefix = "CK-" + datePart + "-";
-        java.util.List<TransferDoc> existing = transferDocMapper.selectList(
-            new LambdaQueryWrapper<TransferDoc>()
-                .eq(TransferDoc::getDocDate, docDate)
-                .likeRight(TransferDoc::getCode, prefix)
-                .ne(doc.getId() != null && !doc.getId().isEmpty(), TransferDoc::getId,
-                    doc.getId() != null ? doc.getId() : "")
-        );
-        long maxSeq = 0;
-        for (TransferDoc d : existing) {
-            String code = d.getCode();
-            if (code != null && code.startsWith(prefix)) {
-                try {
-                    long seq = Long.parseLong(code.substring(prefix.length()));
-                    if (seq > maxSeq) maxSeq = seq;
-                } catch (NumberFormatException ignored) {}
-            }
-        }
-        return prefix + (maxSeq + 1);
+        return IdUtils.genCode("TR");
     }
 
     private void normalizeLines(List<TransferLine> lines) {

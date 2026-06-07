@@ -95,12 +95,13 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { onLoad, onBackPress } from '@dcloudio/uni-app'
+import { onLoad, onHide, onShow, onUnload } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
 import { useReferenceStore } from '@/store/reference'
 import { getTransferDetail, saveTransfer, postTransfer, voidTransfer, getStock, getProductDetail } from '@/api'
 import type { TransferDoc, TransferLine, Product, Warehouse } from '@/types'
-import { formatDate, getPageQueryParam, calcQty, deriveBagQty, normalizeBoxPackQty, normalizeCount, formatProductPackageSummary, formatStockPreview, getProductStockQty, toStockQtyMap, formatProductQuickPickLabel } from '@/utils'
+import { genId, formatDate, getPageQueryParam, calcQty, deriveBagQty, normalizeBoxPackQty, normalizeCount, formatProductPackageSummary, formatStockPreview, getProductStockQty, toStockQtyMap, formatProductQuickPickLabel } from '@/utils'
+import { guardNetwork, serverReachable } from '@/utils/network'
 import { printTransferA4, checkPrinterConnected, navigateToPrinterSettings } from '@/utils/bluetooth-printer'
 import { CANVAS_ID, PAGE_WIDTH_DOTS } from '@/utils/canvas-print'
 
@@ -129,6 +130,27 @@ const queryId = ref('')
 const sourceStockMap = ref<Record<string, number>>({})
 const stockLoading = ref(false)
 const pageLoading = ref(false)
+const activeDraftId = ref('')
+
+interface OutboundDraftPayload {
+  version: 1
+  savedAt: number
+  draftId: string
+  form: Partial<TransferDoc>
+  lines: FormLine[]
+  keyword: string
+  sortMode: SortMode
+  customSortIds: string[]
+}
+
+const OUTBOUND_DRAFT_STORAGE_KEY = 'wh_admin_outbound_draft'
+const OUTBOUND_DRAFT_VERSION: OutboundDraftPayload['version'] = 1
+
+let draftHydrating = false
+let serverSyncTimer: ReturnType<typeof setTimeout> | null = null
+let serverSyncInFlight = false
+let serverSyncQueued = false
+let lastSyncedSignature = ''
 
 const fromWhName = computed(() => warehouses.value.find(w => w.id === form.value.fromWarehouseId)?.name || '')
 const toWhName = computed(() => warehouses.value.find(w => w.id === form.value.toWarehouseId)?.name || '')
@@ -142,6 +164,185 @@ const stockHint = computed(() => {
 
 const currentSortLabel = computed(() => sortModeOptions.find(option => option.value === sortMode.value)?.label || '排序')
 const sortModeIndex = computed(() => sortModeOptions.findIndex(option => option.value === sortMode.value))
+
+function getDraftOwnerScope() {
+  return userStore.currentUser?.accountId || userStore.currentUser?.username || 'guest'
+}
+
+function getDraftStorageKey() {
+  return `${OUTBOUND_DRAFT_STORAGE_KEY}:${getDraftOwnerScope()}:current`
+}
+
+function ensureDraftId() {
+  if (!activeDraftId.value) {
+    activeDraftId.value = genId()
+  }
+  return activeDraftId.value
+}
+
+function hasMeaningfulDraftContent() {
+  const today = formatDate(new Date(), 'YYYY-MM-DD')
+  if (activeDraftId.value || form.value.id) return true
+  if (form.value.fromWarehouseId && form.value.fromWarehouseId !== 'main') return true
+  if (form.value.toWarehouseId) return true
+  if ((form.value.date || '') !== today) return true
+  if (form.value.remark) return true
+  if (keyword.value.trim()) return true
+  return lines.value.some(line => {
+    return !!line.productId || normalizeCount(line.boxQty) > 0 || normalizeCount(line.bagQty) > 0 || normalizeCount(line.qty) > 0
+  })
+}
+
+function buildDraftPayload(): OutboundDraftPayload | null {
+  if (form.value.status && form.value.status !== 'draft') return null
+  if (!hasMeaningfulDraftContent()) return null
+  const draftId = ensureDraftId()
+  return {
+    version: OUTBOUND_DRAFT_VERSION,
+    savedAt: Date.now(),
+    draftId,
+    form: {
+      ...form.value,
+      id: form.value.id || '',
+      status: form.value.status || 'draft',
+    },
+    lines: lines.value.map(line => ({
+      id: line.id || '',
+      productId: line.productId || '',
+      boxQty: normalizeCount(line.boxQty),
+      bagQty: normalizeCount(line.bagQty),
+      qty: normalizeCount(line.qty),
+    })),
+    keyword: keyword.value,
+    sortMode: sortMode.value,
+    customSortIds: [...customSortIds.value],
+  }
+}
+
+function clearDraftCache() {
+  try {
+    uni.removeStorageSync(getDraftStorageKey())
+  } catch {
+    // ignore
+  }
+  activeDraftId.value = ''
+  lastSyncedSignature = ''
+  if (serverSyncTimer) {
+    clearTimeout(serverSyncTimer)
+    serverSyncTimer = null
+  }
+  serverSyncQueued = false
+  serverSyncInFlight = false
+}
+
+function persistDraftLocally() {
+  if (draftHydrating) return
+  const payload = buildDraftPayload()
+  if (!payload) {
+    clearDraftCache()
+    return
+  }
+  try {
+    uni.setStorageSync(getDraftStorageKey(), JSON.stringify(payload))
+  } catch (e) {
+    console.error('[outbound] 本地草稿保存失败:', e)
+  }
+}
+
+function draftSignature(payload: OutboundDraftPayload) {
+  return JSON.stringify({
+    draftId: payload.draftId,
+    fromWarehouseId: payload.form.fromWarehouseId || '',
+    toWarehouseId: payload.form.toWarehouseId || '',
+    date: payload.form.date || '',
+    remark: payload.form.remark || '',
+    status: payload.form.status || 'draft',
+    keyword: payload.keyword || '',
+    sortMode: payload.sortMode,
+    customSortIds: payload.customSortIds,
+    lines: payload.lines.map(line => ({
+      id: line.id || '',
+      productId: line.productId || '',
+      boxQty: normalizeCount(line.boxQty),
+      bagQty: normalizeCount(line.bagQty),
+      qty: normalizeCount(line.qty),
+    })),
+  })
+}
+
+function scheduleServerSync() {
+  if (draftHydrating) return
+  if (serverSyncTimer) {
+    clearTimeout(serverSyncTimer)
+  }
+  serverSyncTimer = setTimeout(() => {
+    serverSyncTimer = null
+    void syncDraftToServer()
+  }, 700)
+}
+
+async function syncDraftToServer(): Promise<boolean> {
+  if (serverSyncInFlight) {
+    serverSyncQueued = true
+    return false
+  }
+  if (serverReachable.value === false) {
+    return false
+  }
+
+  const payload = buildDraftPayload()
+  if (!payload) return false
+  if (!payload.form.fromWarehouseId || !payload.form.toWarehouseId) return false
+  if (payload.form.fromWarehouseId === payload.form.toWarehouseId) return false
+
+  const submitLines = payload.lines.map(line => toSubmitLine(line))
+  if (!submitLines.some(line => line.productId)) return false
+
+  const signature = draftSignature(payload)
+  if (signature === lastSyncedSignature) return true
+
+  serverSyncInFlight = true
+  try {
+    const serverDoc = {
+      id: payload.draftId,
+      code: payload.form.code || '',
+      fromWarehouseId: payload.form.fromWarehouseId || '',
+      toWarehouseId: payload.form.toWarehouseId || '',
+      date: payload.form.date || formatDate(new Date(), 'YYYY-MM-DD'),
+      remark: payload.form.remark || '',
+      status: 'draft',
+      lines: [],
+    }
+    const saved = await saveTransfer({ ...serverDoc, lines: submitLines } as TransferDoc, submitLines)
+
+    if (saved?.id) {
+      form.value = {
+        ...form.value,
+        id: saved.id,
+        code: saved.code || form.value.code || '',
+      }
+      activeDraftId.value = saved.id
+    }
+
+    lastSyncedSignature = signature
+    persistDraftLocally()
+    return true
+  } catch (e) {
+    console.warn('[outbound] 草稿同步失败，保留本地缓存:', e)
+    return false
+  } finally {
+    serverSyncInFlight = false
+    if (serverSyncQueued) {
+      serverSyncQueued = false
+      void syncDraftToServer()
+    }
+  }
+}
+
+function triggerAutoSave() {
+  persistDraftLocally()
+  scheduleServerSync()
+}
 
 function productById(id: string) {
   return products.value.find(product => product.id === id)
@@ -193,11 +394,20 @@ function lineStockPreview(productId?: string) {
 }
 
 async function refreshStockPreview() {
-  if (!fromWarehouse.value) { sourceStockMap.value = {}; return }
+  const warehouseId = form.value.fromWarehouseId
+  if (!warehouseId) { sourceStockMap.value = {}; return }
+  
   stockLoading.value = true
   try {
-    const stockList = await getStock(fromWarehouse.value.id)
+    const stockList = await getStock(warehouseId)
     sourceStockMap.value = toStockQtyMap(stockList)
+  } catch (e: any) {
+    console.error('[outbound] 加载库存失败:', e)
+    sourceStockMap.value = {}
+    // 如果主仓库加载失败，尝试重新加载
+    if (warehouseId === 'main') {
+      uni.showToast({ title: '主仓库库存加载失败，请稍后重试', icon: 'none' })
+    }
   } finally {
     stockLoading.value = false
   }
@@ -211,9 +421,13 @@ async function ensureProductsLoaded(ids: string[]) {
 }
 
 async function applyDoc(doc: TransferDoc) {
+  activeDraftId.value = doc.id || activeDraftId.value
   form.value = { ...doc }
   await ensureProductsLoaded((doc.lines || []).map(line => line.productId))
   lines.value = (doc.lines || []).map(line => normalizeLine(line))
+  if (doc.status !== 'draft') {
+    clearDraftCache()
+  }
 }
 
 function guard() {
@@ -323,7 +537,11 @@ function onFromWhChange(e: any) {
   if (form.value.toWarehouseId === form.value.fromWarehouseId) {
     form.value.toWarehouseId = ''
   }
-  refreshStockPreview()
+  // 立即加载新仓库的库存
+  uni.showLoading({ title: '加载库存中...' })
+  refreshStockPreview().finally(() => {
+    uni.hideLoading()
+  })
   triggerAutoSave()
 }
 
@@ -355,38 +573,59 @@ function productName(id: string) {
   return productById(id)?.name || ''
 }
 
-async function loadEdit(id: string) {
-  const doc = await getTransferDetail(id)
-  if (doc) await applyDoc(doc)
-}
-
-async function save() {
-  if (!form.value.fromWarehouseId || !form.value.toWarehouseId) return
-  if (form.value.fromWarehouseId === form.value.toWarehouseId) return
-  if (lines.value.length === 0) return
-  const hasProduct = lines.value.some(l => l.productId)
-  if (!hasProduct) return
+function restoreDraftFromStorage(expectedDraftId = '') {
   try {
-    const submitLines = lines.value.map(toSubmitLine)
-    const saved = await saveTransfer(form.value as TransferDoc, submitLines)
-    if (saved && !form.value.id) {
-      form.value = { ...form.value, id: (saved as any).id, code: (saved as any).code }
+    const raw = uni.getStorageSync(getDraftStorageKey())
+    if (!raw) return false
+    const payload = JSON.parse(raw) as OutboundDraftPayload
+    if (!payload || payload.version !== OUTBOUND_DRAFT_VERSION) return false
+    if (payload.form?.status && payload.form.status !== 'draft') {
+      clearDraftCache()
+      return false
     }
-  } catch {
-    // 自动保存失败静默处理
+    const draftId = payload.draftId || payload.form?.id || ''
+    if (expectedDraftId && draftId !== expectedDraftId && payload.form?.id !== expectedDraftId) {
+      return false
+    }
+
+    draftHydrating = true
+    activeDraftId.value = draftId || expectedDraftId || ''
+    form.value = {
+      ...form.value,
+      ...payload.form,
+      id: payload.form?.id || payload.draftId || '',
+      status: payload.form?.status || 'draft',
+    }
+    keyword.value = payload.keyword || ''
+    if (sortModeOptions.some(option => option.value === payload.sortMode)) {
+      sortMode.value = payload.sortMode
+    }
+    customSortIds.value = Array.isArray(payload.customSortIds) ? [...payload.customSortIds] : []
+    lines.value = Array.isArray(payload.lines) ? payload.lines.map(line => normalizeLine(line)) : []
+    return true
+  } catch (e) {
+    console.warn('[outbound] 读取本地草稿失败:', e)
+    clearDraftCache()
+    return false
+  } finally {
+    draftHydrating = false
   }
 }
 
-// 防抖自动保存
-let _autoSaveTimer: ReturnType<typeof setTimeout> | null = null
-function triggerAutoSave() {
-  if (form.value.status && form.value.status !== 'draft') return
-  if (_autoSaveTimer) clearTimeout(_autoSaveTimer)
-  _autoSaveTimer = setTimeout(save, 800)
+async function loadEdit(id: string) {
+  if (restoreDraftFromStorage(id)) return
+  const doc = await getTransferDetail(id)
+  if (doc) {
+    await applyDoc(doc)
+    if (doc.status === 'draft') {
+      persistDraftLocally()
+    }
+  }
 }
 
 async function post() {
-  if (!form.value.id) return
+  if (!(await guardNetwork('过账出库单'))) return
+  persistDraftLocally()
   if (!form.value.fromWarehouseId || !form.value.toWarehouseId) {
     uni.showToast({ title: '请选择调出和调入仓库', icon: 'none' })
     return
@@ -395,14 +634,68 @@ async function post() {
     uni.showToast({ title: '调出仓库和调入仓库不能相同', icon: 'none' })
     return
   }
-  await postTransfer(form.value.id)
-  const doc = await getTransferDetail(form.value.id)
-  if (doc) await applyDoc(doc)
-  uni.showToast({ title: '已过账', icon: 'success' })
+  // 校验是否有商品明细
+  const validLines = lines.value.filter(l => l.productId)
+  if (validLines.length === 0) {
+    uni.showToast({ title: '请添加商品明细', icon: 'none' })
+    return
+  }
+  // 校验商品数量是否都大于0
+  const zeroQtyLines = validLines.filter(l => !l.qty || l.qty <= 0)
+  if (zeroQtyLines.length > 0) {
+    const names = zeroQtyLines.map(l => productName(l.productId)).filter(Boolean).join('、')
+    uni.showToast({ title: `商品数量不能为0：${names || '部分商品'}`, icon: 'none', duration: 3000 })
+    return
+  }
+  // 校验库存是否充足
+  for (const line of validLines) {
+    const stock = sourceStockMap.value[line.productId] || 0
+    if (stock < (line.qty || 0)) {
+      const name = productName(line.productId) || line.productId
+      uni.showModal({
+        title: '库存不足',
+        content: `商品「${name}」调出仓库存不足（当前: ${stock}袋，需: ${line.qty}袋）`,
+        showCancel: false,
+      })
+      return
+    }
+  }
+
+  if (!(await syncDraftToServer())) {
+    uni.showToast({ title: '草稿尚未同步到服务器，请稍后重试', icon: 'none' })
+    return
+  }
+  if (!form.value.id) {
+    uni.showToast({ title: '请先保存单据', icon: 'none' })
+    return
+  }
+  
+  uni.showLoading({ title: '正在过账...' })
+  try {
+    await postTransfer(form.value.id)
+    const doc = await getTransferDetail(form.value.id).catch(() => null)
+    if (doc) {
+      await applyDoc(doc)
+    } else {
+      form.value = { ...form.value, status: 'posted' }
+      clearDraftCache()
+    }
+    uni.hideLoading()
+    uni.showToast({ title: '已过账', icon: 'success' })
+  } catch (e: any) {
+    uni.hideLoading()
+    const msg = e?.message || '过账失败'
+    uni.showModal({
+      title: '过账失败',
+      content: msg,
+      showCancel: false,
+    })
+  }
 }
 
 async function voidDoc() {
   if (!form.value.id) return
+  if (!(await guardNetwork('作废出库单'))) return
   uni.showModal({
     title: '确认作废',
     content: '作废后库存将自动反冲，此操作不可撤销。',
@@ -411,8 +704,13 @@ async function voidDoc() {
     success: async (res) => {
       if (!res.confirm) return
       await voidTransfer(form.value.id!)
-      const doc = await getTransferDetail(form.value.id!)
-      if (doc) await applyDoc(doc)
+      const doc = await getTransferDetail(form.value.id!).catch(() => null)
+      if (doc) {
+        await applyDoc(doc)
+      } else {
+        form.value = { ...form.value, status: 'voided' }
+        clearDraftCache()
+      }
       uni.showToast({ title: '已作废', icon: 'success' })
     },
   })
@@ -420,6 +718,7 @@ async function voidDoc() {
 
 async function voidAndRebuild() {
   if (!form.value.id) return
+  if (!(await guardNetwork('作废并重建出库单'))) return
   uni.showModal({
     title: '作废并重建',
     content: '将作废当前单据（库存反冲），并以相同内容新建一张草稿单，方便修改后重新过账。',
@@ -482,8 +781,46 @@ async function printDoc() {
 }
 
 function goBack() {
+  persistDraftLocally()
   uni.navigateBack()
 }
+
+function flushDraftState() {
+  persistDraftLocally()
+  if (serverSyncTimer) {
+    clearTimeout(serverSyncTimer)
+    serverSyncTimer = null
+  }
+}
+
+watch(
+  [form, lines, keyword, sortMode, customSortIds],
+  () => {
+    if (draftHydrating) return
+    triggerAutoSave()
+  },
+  { deep: true }
+)
+
+watch(serverReachable, (reachable) => {
+  if (reachable && !draftHydrating && hasMeaningfulDraftContent()) {
+    scheduleServerSync()
+  }
+})
+
+onShow(() => {
+  if (!draftHydrating && hasMeaningfulDraftContent()) {
+    triggerAutoSave()
+  }
+})
+
+onHide(() => {
+  flushDraftState()
+})
+
+onUnload(() => {
+  flushDraftState()
+})
 
 onLoad((query) => {
   queryId.value = query?.id || getPageQueryParam('id')
@@ -508,8 +845,28 @@ onMounted(async () => {
     pageLoading.value = false
   }
 
-  if (queryId.value) await loadEdit(queryId.value)
-  await refreshStockPreview()
+  if (queryId.value) {
+    await loadEdit(queryId.value)
+  } else {
+    restoreDraftFromStorage()
+  }
+  
+  // 加载库存时增加重试机制
+  const maxRetries = 3
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      await refreshStockPreview()
+      break // 成功则跳出循环
+    } catch (e) {
+      if (i === maxRetries - 1) {
+        console.error('[outbound] 库存加载失败，重试结束')
+        uni.showToast({ title: '库存加载失败，请稍后重试', icon: 'none' })
+      } else {
+        console.log(`[outbound] 库存加载失败，第${i + 1}次重试`)
+        await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1))) // 指数退避
+      }
+    }
+  }
 })
 </script>
 
