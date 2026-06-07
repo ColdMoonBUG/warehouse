@@ -120,6 +120,14 @@ interface PrintDocData {
   remark?: string
 }
 
+function sortLinesByLineNo<T extends { lineNo?: number }>(lines: T[] = []): T[] {
+  return [...lines].sort((a, b) => {
+    const aNo = typeof a.lineNo === 'number' && Number.isFinite(a.lineNo) ? a.lineNo : Number.MAX_SAFE_INTEGER
+    const bNo = typeof b.lineNo === 'number' && Number.isFinite(b.lineNo) ? b.lineNo : Number.MAX_SAFE_INTEGER
+    return aNo - bNo
+  })
+}
+
 function estimateContentHeight(data: PrintDocData, fillFullPage: boolean = false): number {
   if (fillFullPage) return PAGE_HEIGHT_DOTS
   const headerH = 72
@@ -1532,7 +1540,7 @@ export async function buildSalePrintData(
   payType: 'cash' | 'card' = 'card',
   options: PrintBuildOptions = {}
 ): Promise<{ imageData: any; cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer; data: PrintDocData }> {
-  const items: PrintItem[] = doc.lines.map((line) => {
+  const items: PrintItem[] = sortLinesByLineNo(doc.lines).map((line) => {
     const product = products.find((p) => p.id === line.productId)
     return {
       productId: line.productId,
@@ -1577,7 +1585,7 @@ export async function buildReturnPrintData(
   payType: 'cash' | 'card' = 'card',
   options: PrintBuildOptions = {}
 ): Promise<{ imageData: any; cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer; data: PrintDocData }> {
-  const items: PrintItem[] = doc.lines.map((line) => {
+  const items: PrintItem[] = sortLinesByLineNo(doc.lines).map((line) => {
     const product = products.find((p) => p.id === line.productId)
     return {
       productId: line.productId,
@@ -1839,7 +1847,7 @@ export async function buildCombinedPrintData(
   payType: 'cash' | 'card' = 'card',
   options: PrintBuildOptions = {}
 ): Promise<{ pages: Array<{ cpclBuffer: ArrayBuffer; journalSetup: ArrayBuffer }> }> {
-  const saleItems: PrintItem[] = saleDoc.lines.map((line) => {
+  const saleItems: PrintItem[] = sortLinesByLineNo(saleDoc.lines).map((line) => {
     const product = products.find((p) => p.id === line.productId)
     return {
       productId: line.productId,
@@ -1852,7 +1860,7 @@ export async function buildCombinedPrintData(
     }
   })
 
-  const returnItems: PrintItem[] = returnDoc.lines.map((line) => {
+  const returnItems: PrintItem[] = sortLinesByLineNo(returnDoc.lines).map((line) => {
     const product = products.find((p) => p.id === line.productId)
     return {
       productId: line.productId,

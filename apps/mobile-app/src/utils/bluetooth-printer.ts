@@ -528,11 +528,19 @@ function buildReceipt(header: string[], lines: string[], footer: string[]) {
   return [...header, '------------------------------', ...lines, '------------------------------', ...footer].join('\n')
 }
 
+function sortLinesByLineNo<T extends { lineNo?: number }>(lines: T[] = []): T[] {
+  return [...lines].sort((a, b) => {
+    const aNo = typeof a.lineNo === 'number' && Number.isFinite(a.lineNo) ? a.lineNo : Number.MAX_SAFE_INTEGER
+    const bNo = typeof b.lineNo === 'number' && Number.isFinite(b.lineNo) ? b.lineNo : Number.MAX_SAFE_INTEGER
+    return aNo - bNo
+  })
+}
+
 function buildReceiptLines(
   docLines: Array<{ productId: string; qty: number; price: number }>,
   products: Product[]
 ) {
-  return docLines.map(line => {
+  return sortLinesByLineNo(docLines).map(line => {
     const product = products.find(p => p.id === line.productId)
     const name = product?.name || '未知商品'
     const barcode = product?.barcode || '-'

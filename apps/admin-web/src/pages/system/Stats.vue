@@ -71,6 +71,16 @@
         <div class="card-label">退货总金额</div>
         <div class="card-sub">按销售价计算</div>
       </el-card>
+      <el-card v-if="selectedProductId" class="summary-card">
+        <div class="card-value transfer-color">{{ transferSummary.totalQty.toLocaleString() }}</div>
+        <div class="card-label">出库总袋数</div>
+        <div class="card-sub">{{ transferSummary.docCount }} 张出库单</div>
+      </el-card>
+      <el-card v-if="selectedProductId" class="summary-card">
+        <div class="card-value transfer-color">{{ transferSummary.toWarehouseCount.toLocaleString() }}</div>
+        <div class="card-label">涉及目标仓库</div>
+        <div class="card-sub">按每天出库去向统计</div>
+      </el-card>
     </div>
 
     <!-- 进货统计 -->
@@ -98,6 +108,30 @@
                 type="info"
               >{{ p.name }} ×{{ p.qty }}</el-tag>
               <span v-if="row.products.length > 6" class="more-tag">+{{ row.products.length - 6 }}种</span>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <!-- 出库统计（按日期/仓库） -->
+    <el-card v-if="selectedProductId" class="table-card">
+      <template #header>
+        <div class="table-header">
+          <span>🚚 出库统计（按日期 / 目标仓库）</span>
+          <span class="header-sub">商品：{{ productMap[selectedProductId] }}</span>
+        </div>
+      </template>
+      <el-table :data="transferByDateWarehouse" border stripe max-height="400" v-loading="loading">
+        <el-table-column prop="date" label="日期" width="130" sortable />
+        <el-table-column prop="toWarehouseName" label="目标仓库" width="150" />
+        <el-table-column prop="docCount" label="出库单数" width="100" sortable />
+        <el-table-column prop="totalQty" label="总袋数" width="100" sortable />
+        <el-table-column label="出库单号" min-width="260">
+          <template #default="{ row }">
+            <div class="product-chips">
+              <el-tag v-for="code in row.codes.slice(0, 4)" :key="code" size="small" type="info">{{ code }}</el-tag>
+              <span v-if="row.codes.length > 4" class="more-tag">+{{ row.codes.length - 4 }}张</span>
             </div>
           </template>
         </el-table-column>
@@ -196,7 +230,8 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { getAllInbounds, getAllReturns, getAllAccounts } from '@/api/stats'
 import { getProducts } from '@/api/product'
-import type { InboundDoc, ReturnDoc } from '@/types'
+import { getTransfers, getWarehouses } from '@/api/stock'
+import type { InboundDoc, ReturnDoc, TransferDoc, Warehouse } from '@/types'
 
 const router = useRouter()
 const loading = ref(false)
@@ -247,8 +282,10 @@ function onPeriodChange() {
 // ---- 数据 ----
 const allInbounds = ref<InboundDoc[]>([])
 const allReturns = ref<ReturnDoc[]>([])
+const allTransfers = ref<TransferDoc[]>([])
 const accountMap = ref<Record<string, string>>({})
 const productMap = ref<Record<string, string>>({}) // productId -> name
+const warehouseMap = ref<Record<string, string>>({})
 
 // 商品筛选
 const selectedProductId = ref<string>('')
@@ -259,6 +296,10 @@ function inRange(date: string, start: string, end: string) {
   // 兼容 "2026-05-14T00:00:00" 和 "2026-05-14" 两种格式
   const d = (date || '').slice(0, 10)
   return d >= start && d <= end
+}
+
+function matchesSelectedProduct(line: { productId?: string }) {
+  return !selectedProductId.value || line.productId === selectedProductId.value
 }
 
 const filteredInbounds = computed(() => {
@@ -289,7 +330,7 @@ const inboundSummary = computed(() => {
   let totalQty = 0, totalAmount = 0
   for (const d of docs) {
     for (const l of d.lines) {
-      if (selectedProductId.value && l.productId !== selectedProductId.value) continue
+      if (!matchesSelectedProduct(l)) continue
       totalQty += l.qty
       totalAmount += l.qty * l.price
     }
@@ -303,12 +344,37 @@ const returnSummary = computed(() => {
   let totalQty = 0, totalAmount = 0
   for (const d of docs) {
     for (const l of d.lines) {
-      if (selectedProductId.value && l.productId !== selectedProductId.value) continue
+      if (!matchesSelectedProduct(l)) continue
       totalQty += l.qty
       totalAmount += l.qty * l.price
     }
   }
   return { docCount: docs.length, totalQty, totalAmount }
+})
+
+const filteredTransfers = computed(() => {
+  const { start, end } = getDateRange()
+  return allTransfers.value.filter(d => {
+    if (d.status !== 'posted' || !inRange(d.date, start, end)) return false
+    if (selectedProductId.value) {
+      return d.lines.some(l => l.productId === selectedProductId.value)
+    }
+    return true
+  })
+})
+
+const transferSummary = computed(() => {
+  const docs = filteredTransfers.value
+  let totalQty = 0
+  const warehouseSet = new Set<string>()
+  for (const d of docs) {
+    for (const l of d.lines) {
+      if (!matchesSelectedProduct(l)) continue
+      totalQty += l.qty
+    }
+    warehouseSet.add(d.toWarehouseId)
+  }
+  return { docCount: docs.length, totalQty, toWarehouseCount: warehouseSet.size }
 })
 
 // ---- 进货按日期 ----
@@ -322,6 +388,7 @@ const inboundByDate = computed(() => {
     const entry = map.get(dateKey)!
     entry.docCount++
     for (const line of doc.lines) {
+      if (!matchesSelectedProduct(line)) continue
       entry.totalQty += line.qty
       entry.totalAmount += line.qty * line.price
       const existing = entry.products.get(line.productId)
@@ -335,6 +402,44 @@ const inboundByDate = computed(() => {
   return [...map.values()]
     .map(e => ({ ...e, products: [...e.products.values()] }))
     .sort((a, b) => b.date.localeCompare(a.date))
+})
+
+// ---- 出库按日期 / 目标仓库 ----
+const transferByDateWarehouse = computed(() => {
+  const map = new Map<string, {
+    date: string
+    toWarehouseId: string
+    toWarehouseName: string
+    docCount: number
+    totalQty: number
+    codes: string[]
+  }>()
+
+  for (const doc of filteredTransfers.value) {
+    const dateKey = (doc.date || '').slice(0, 10)
+    const warehouseId = doc.toWarehouseId || ''
+    const key = `${dateKey}__${warehouseId}`
+    if (!map.has(key)) {
+      map.set(key, {
+        date: dateKey,
+        toWarehouseId: warehouseId,
+        toWarehouseName: warehouseMap.value[warehouseId] || warehouseId || '-',
+        docCount: 0,
+        totalQty: 0,
+        codes: [],
+      })
+    }
+    const entry = map.get(key)!
+    const matchedQty = doc.lines.reduce((sum, line) => sum + (matchesSelectedProduct(line) ? line.qty : 0), 0)
+    if (matchedQty <= 0) continue
+    entry.docCount++
+    entry.totalQty += matchedQty
+    entry.codes.push(doc.code)
+  }
+
+  return [...map.values()]
+    .map(e => ({ ...e, codes: [...e.codes] }))
+    .sort((a, b) => b.date.localeCompare(a.date) || a.toWarehouseName.localeCompare(b.toWarehouseName, 'zh-CN'))
 })
 
 // ---- 退货按业务员 ----
@@ -399,14 +504,17 @@ function openReturnDetail(row: { salespersonId: string; salespersonName: string 
 async function loadData() {
   loading.value = true
   try {
-    const [inbounds, returns, accounts, products] = await Promise.all([
+    const [inbounds, returns, transfers, accounts, products, warehouses] = await Promise.all([
       getAllInbounds(),
       getAllReturns(),
+      getTransfers(),
       getAllAccounts(),
       getProducts(),
+      getWarehouses(),
     ])
     allInbounds.value = inbounds
     allReturns.value = returns
+    allTransfers.value = transfers
     // 建立 id -> displayName 映射
     const map: Record<string, string> = {}
     for (const acc of accounts) {
@@ -421,6 +529,11 @@ async function loadData() {
     productMap.value = pmap
     productOptions.value = products.map((p: any) => ({ id: p.id, name: p.name }))
       .sort((a: ProductOption, b: ProductOption) => a.name.localeCompare(b.name, 'zh-CN'))
+    const wmap: Record<string, string> = {}
+    for (const w of warehouses as Warehouse[]) {
+      wmap[w.id] = w.name
+    }
+    warehouseMap.value = wmap
   } catch (e: any) {
     if (e?.message === '未登录') { router.replace('/login'); return }
   } finally {
@@ -455,6 +568,7 @@ onMounted(loadData)
 .card-sub { font-size: 12px; color: #64748b; margin-top: 4px; }
 .inbound-color { color: #3b82f6; }
 .return-color { color: #f59e0b; }
+.transfer-color { color: #10b981; }
 
 .table-card { }
 .table-header { display: flex; align-items: center; gap: 12px; }

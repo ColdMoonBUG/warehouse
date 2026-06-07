@@ -67,6 +67,7 @@ export interface OutboundLine {
   boxQty?: number
   qty: number
   price: number
+  lineNo?: number
 }
 
 export interface OutboundDoc {
@@ -100,6 +101,7 @@ export interface SaleLine {
   boxQty?: number
   qty: number
   price: number
+  lineNo?: number
 }
 
 export interface SaleDoc {
@@ -187,6 +189,7 @@ export interface ReturnLine {
   boxQty?: number
   qty: number
   price: number
+  lineNo?: number
 }
 
 export interface ReturnDoc {

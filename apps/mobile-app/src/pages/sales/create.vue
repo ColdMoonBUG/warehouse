@@ -919,12 +919,13 @@ async function doSubmit(docType: 'sale' | 'gift' = 'sale'): Promise<{ saleDoc: S
   }
 
   const lines: SaleLine[] = selectedProducts.value
-    .map(p => ({
+    .map((p, index) => ({
       id: genId(),
       productId: p.id,
       boxQty: normalizeCount(qtyMap.value[p.id]?.boxQty),
       qty: normalizeCount(qtyMap.value[p.id]?.qty),
       price: p.salePrice || 0,
+      lineNo: index + 1,
     }))
     .filter(line => line.qty > 0)
 
@@ -959,12 +960,13 @@ async function doSubmit(docType: 'sale' | 'gift' = 'sale'): Promise<{ saleDoc: S
     let postedReturn: ReturnDoc | null = null
     if (showReturnSection.value && returnTotalQty.value > 0) {
       const returnLines: ReturnLine[] = returnSelectedProducts.value
-        .map(p => ({
+        .map((p, index) => ({
           id: genId(),
           productId: p.id,
           boxQty: normalizeCount(returnQtyMap.value[p.id]?.boxQty),
           qty: normalizeCount(returnQtyMap.value[p.id]?.qty),
           price: p.salePrice || 0,
+          lineNo: index + 1,
         }))
         .filter(line => line.qty > 0)
 

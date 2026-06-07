@@ -27,15 +27,64 @@ function extractJsessionid(header: Record<string, string>): string {
 
 type PersistablePackLine = {
   bagQty?: number
+  lineNo?: number
 }
 
-function toPersistedPackLine<T extends PersistablePackLine>(line: T): Omit<T, 'bagQty'> {
-  const { bagQty, ...rest } = line
-  return rest as Omit<T, 'bagQty'>
+function toPersistedPackLine<T extends PersistablePackLine>(line: T): Omit<T, 'bagQty' | 'lineNo'> {
+  const { bagQty, lineNo, ...rest } = line
+  return rest as Omit<T, 'bagQty' | 'lineNo'>
 }
 
-function toPersistedPackLines<T extends PersistablePackLine>(lines: T[] = []): Array<Omit<T, 'bagQty'>> {
+function toPersistedPackLines<T extends PersistablePackLine>(lines: T[] = []): Array<Omit<T, 'bagQty' | 'lineNo'>> {
   return lines.map(line => toPersistedPackLine(line))
+}
+
+function sortLinesByLineNo<T extends { lineNo?: number }>(lines: T[] = []): T[] {
+  return [...lines].sort((a, b) => {
+    const aNo = typeof a.lineNo === 'number' && Number.isFinite(a.lineNo) ? a.lineNo : Number.MAX_SAFE_INTEGER
+    const bNo = typeof b.lineNo === 'number' && Number.isFinite(b.lineNo) ? b.lineNo : Number.MAX_SAFE_INTEGER
+    return aNo - bNo
+  })
+}
+
+const LINE_ORDER_STORAGE_PREFIX = 'wh_doc_line_order:'
+
+function docLineOrderKey(docType: 'sale' | 'return', docId: string) {
+  return `${LINE_ORDER_STORAGE_PREFIX}${docType}:${docId}`
+}
+
+function saveDocLineOrder(docType: 'sale' | 'return', docId: string, lines: Array<{ id: string }>) {
+  if (!docId) return
+  try {
+    const order = lines.map(line => line.id).filter(Boolean)
+    uni.setStorageSync(docLineOrderKey(docType, docId), JSON.stringify(order))
+  } catch {
+    // ignore
+  }
+}
+
+function loadDocLineOrder(docType: 'sale' | 'return', docId: string): string[] {
+  if (!docId) return []
+  try {
+    const raw = uni.getStorageSync(docLineOrderKey(docType, docId))
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed.filter((id: unknown): id is string => typeof id === 'string' && !!id) : []
+  } catch {
+    return []
+  }
+}
+
+function sortLinesByStoredOrder<T extends { id: string; lineNo?: number }>(docType: 'sale' | 'return', docId: string, lines: T[] = []): T[] {
+  const storedOrder = loadDocLineOrder(docType, docId)
+  if (!storedOrder.length) return sortLinesByLineNo(lines)
+  const orderMap = new Map(storedOrder.map((lineId, index) => [lineId, index]))
+  return [...lines].sort((a, b) => {
+    const aNo = orderMap.has(a.id) ? orderMap.get(a.id)! : Number.MAX_SAFE_INTEGER
+    const bNo = orderMap.has(b.id) ? orderMap.get(b.id)! : Number.MAX_SAFE_INTEGER
+    if (aNo !== bNo) return aNo - bNo
+    return sortLinesByLineNo([a, b])[0] === a ? -1 : 1
+  })
 }
 
 interface ApiResult<T> {
@@ -448,19 +497,23 @@ function normalizeWarehouse(warehouse: Warehouse): Warehouse {
 
 function normalizeSaleDoc(doc: SaleDoc): SaleDoc {
   const salespersonId = getDocSalespersonId(doc)
+  const docId = doc.id || doc.code || ''
   return {
     ...doc,
     salespersonId,
+    lines: Array.isArray(doc.lines) ? sortLinesByStoredOrder('sale', docId, doc.lines) : doc.lines,
   }
 }
 
 function normalizeReturnDoc(doc: ReturnDoc): ReturnDoc {
   const salespersonId = getDocSalespersonId(doc)
   const payType = normalizeReturnPayType(doc)
+  const docId = doc.id || doc.code || ''
   return {
     ...doc,
     salespersonId,
     payType,
+    lines: Array.isArray(doc.lines) ? sortLinesByStoredOrder('return', docId, doc.lines) : doc.lines,
   }
 }
 
@@ -1069,9 +1122,11 @@ export async function saveSale(doc: SaleDoc): Promise<SaleDoc> {
       list.push(nextDoc)
     }
     saleDb.save(list)
+    saveDocLineOrder('sale', nextDoc.id, nextDoc.lines || [])
     return normalizeSaleDoc(nextDoc)
   }
   const saved = await request<SaleDoc>('/api/sale/save', 'POST', { doc: nextDoc, lines: nextDoc.lines })
+  saveDocLineOrder('sale', saved.id, nextDoc.lines || [])
   return normalizeSaleDoc(saved)
 }
 
@@ -1178,9 +1233,11 @@ export async function saveReturn(doc: ReturnDoc, lines: ReturnDoc['lines']): Pro
     if (idx >= 0) list[idx] = normalizeReturnDoc(nextDoc)
     else list.push(normalizeReturnDoc(nextDoc))
     localStorage.setItem(RETURN_STORAGE_KEY, JSON.stringify(list.map(toPersistedReturnDoc)))
+    saveDocLineOrder('return', nextDoc.id, nextDoc.lines || [])
     return normalizeReturnDoc(nextDoc)
   }
   const saved = await request<ReturnDoc>('/api/return/save', 'POST', { doc: nextDoc, lines: nextDoc.lines })
+  saveDocLineOrder('return', saved.id, nextDoc.lines || [])
   return normalizeReturnDoc(saved)
 }
 
