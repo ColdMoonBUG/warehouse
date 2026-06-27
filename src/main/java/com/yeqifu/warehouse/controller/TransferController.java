@@ -11,8 +11,10 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.interceptor.TransactionAspectSupport;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Date;
-import java.util.List;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/transfer")
@@ -30,12 +32,23 @@ public class TransferController {
     @Autowired
     private RuntimeModeManager runtimeModeManager;
 
+    @Autowired
+    private ProductMapper productMapper;
+
     @GetMapping("/list")
     public Result<List<TransferDoc>> list() {
         List<TransferDoc> docs = transferDocMapper.selectList(new LambdaQueryWrapper<TransferDoc>().orderByDesc(TransferDoc::getCreatedAt));
-        for (TransferDoc doc : docs) {
-            List<TransferLine> lines = transferLineMapper.selectList(new LambdaQueryWrapper<TransferLine>().eq(TransferLine::getDocId, doc.getId()));
-            doc.setLines(lines);
+        if (!docs.isEmpty()) {
+            List<String> allDocIds = docs.stream().map(TransferDoc::getId).collect(Collectors.toList());
+            List<TransferLine> allLines = transferLineMapper.selectList(
+                new LambdaQueryWrapper<TransferLine>().in(TransferLine::getDocId, allDocIds)
+            );
+            Map<String, List<TransferLine>> linesByDocId = allLines.stream()
+                .collect(Collectors.groupingBy(TransferLine::getDocId));
+            for (TransferDoc doc : docs) {
+                doc.setLines(linesByDocId.getOrDefault(doc.getId(), Collections.emptyList()));
+            }
+            batchFillRemainingQty(docs);
         }
         return Result.ok(docs);
     }
@@ -50,6 +63,7 @@ public class TransferController {
                     .orderByAsc(TransferLine::getId)
             );
             doc.setLines(lines);
+            fillDocRemainingQty(doc);
         }
         return Result.ok(doc);
     }
@@ -210,6 +224,193 @@ public class TransferController {
         ledger.setProductId(productId);
         ledger.setQty(qty);
         ledgerMapper.insert(ledger);
+    }
+
+    private void batchFillRemainingQty(List<TransferDoc> docs) {
+        Map<String, List<TransferDoc>> byWarehouseAndDay = new LinkedHashMap<>();
+        for (TransferDoc doc : docs) {
+            if (!"posted".equals(doc.getStatus()) || doc.getFromWarehouseId() == null || doc.getDocDate() == null) {
+                nullifyRemainingQty(doc);
+                continue;
+            }
+            String key = doc.getFromWarehouseId() + "|" + toLocalDate(doc.getDocDate());
+            byWarehouseAndDay.computeIfAbsent(key, k -> new ArrayList<>()).add(doc);
+        }
+
+        for (Map.Entry<String, List<TransferDoc>> entry : byWarehouseAndDay.entrySet()) {
+            String[] parts = entry.getKey().split("\\|", 2);
+            String warehouseId = parts[0];
+            LocalDate day = LocalDate.parse(parts[1]);
+            List<TransferDoc> group = entry.getValue();
+
+            group.sort(Comparator
+                .comparing((TransferDoc d) -> d.getCreatedAt() == null ? new Date(0) : d.getCreatedAt())
+                .thenComparing(TransferDoc::getId));
+
+            Set<String> allProductIds = new HashSet<>();
+            for (TransferDoc doc : group) {
+                if (doc.getLines() != null) {
+                    for (TransferLine line : doc.getLines()) {
+                        if (line.getProductId() != null && !line.getProductId().isEmpty()) {
+                            allProductIds.add(line.getProductId());
+                        }
+                    }
+                }
+            }
+            if (allProductIds.isEmpty()) continue;
+
+            Map<String, Integer> stockAtDayStart = loadStockAtDayStart(warehouseId, allProductIds, day);
+
+            Map<String, Integer> running = new HashMap<>();
+            for (TransferDoc doc : group) {
+                if (doc.getLines() == null) continue;
+                for (TransferLine line : doc.getLines()) {
+                    if (line.getProductId() == null || line.getProductId().isEmpty()) continue;
+                    int cur = running.computeIfAbsent(line.getProductId(), pid -> stockAtDayStart.getOrDefault(pid, 0));
+                    int next = Math.max(cur - safeQty(line.getQty()), 0);
+                    running.put(line.getProductId(), next);
+                    line.setRemainingQty(next);
+                }
+            }
+        }
+    }
+
+    private void nullifyRemainingQty(TransferDoc doc) {
+        if (doc.getLines() == null) return;
+        for (TransferLine line : doc.getLines()) {
+            line.setRemainingQty(null);
+        }
+    }
+
+    private Map<String, Integer> loadStockBatch(String warehouseId, Set<String> productIds) {
+        if (runtimeModeManager.useUnlimitedInventory(warehouseId)) {
+            int unlimited = runtimeModeManager.getUnlimitedQty();
+            Map<String, Integer> map = new HashMap<>();
+            for (String pid : productIds) {
+                map.put(pid, unlimited);
+            }
+            return map;
+        }
+        List<Stock> stocks = stockMapper.selectList(
+            new LambdaQueryWrapper<Stock>()
+                .eq(Stock::getWarehouseId, warehouseId)
+                .in(Stock::getProductId, productIds)
+        );
+        Map<String, Integer> map = new HashMap<>();
+        for (Stock s : stocks) {
+            map.put(s.getProductId(), s.getQty() == null ? 0 : s.getQty());
+        }
+        return map;
+    }
+
+    private Map<String, Integer> loadStockAtDayStart(String warehouseId, Set<String> productIds, LocalDate day) {
+        if (runtimeModeManager.useUnlimitedInventory(warehouseId)) {
+            int unlimited = runtimeModeManager.getUnlimitedQty();
+            Map<String, Integer> map = new HashMap<>();
+            for (String pid : productIds) {
+                map.put(pid, unlimited);
+            }
+            return map;
+        }
+        Map<String, Integer> currentStock = loadStockBatch(warehouseId, productIds);
+
+        Date dayStart = Date.from(day.atStartOfDay(ZoneId.systemDefault()).toInstant());
+        List<Ledger> ledgers = ledgerMapper.selectList(
+            new LambdaQueryWrapper<Ledger>()
+                .eq(Ledger::getWarehouseId, warehouseId)
+                .in(Ledger::getProductId, productIds)
+                .ge(Ledger::getCreatedAt, dayStart)
+        );
+
+        Map<String, Integer> deltaMap = new HashMap<>();
+        for (Ledger l : ledgers) {
+            deltaMap.merge(l.getProductId(), safeQty(l.getQty()), Integer::sum);
+        }
+
+        Map<String, Integer> result = new HashMap<>();
+        for (String pid : productIds) {
+            int cur = currentStock.getOrDefault(pid, 0);
+            int delta = deltaMap.getOrDefault(pid, 0);
+            result.put(pid, Math.max(cur - delta, 0));
+        }
+        return result;
+    }
+
+    private LocalDate toLocalDate(Date date) {
+        return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
+    }
+
+    private void fillDocRemainingQty(TransferDoc doc) {
+        if (doc == null || doc.getLines() == null || doc.getLines().isEmpty()) {
+            return;
+        }
+        if (!"posted".equals(doc.getStatus()) || doc.getFromWarehouseId() == null || doc.getFromWarehouseId().isEmpty() || doc.getDocDate() == null) {
+            nullifyRemainingQty(doc);
+            return;
+        }
+
+        LocalDate docDay = toLocalDate(doc.getDocDate());
+        List<TransferDoc> sameDayDocs = transferDocMapper.selectList(
+            new LambdaQueryWrapper<TransferDoc>()
+                .eq(TransferDoc::getStatus, "posted")
+                .eq(TransferDoc::getFromWarehouseId, doc.getFromWarehouseId())
+                .orderByAsc(TransferDoc::getCreatedAt)
+                .orderByAsc(TransferDoc::getId)
+        );
+
+        List<TransferDoc> filtered = new ArrayList<>();
+        Set<String> docIds = new HashSet<>();
+        for (TransferDoc d : sameDayDocs) {
+            if (d.getDocDate() != null && toLocalDate(d.getDocDate()).equals(docDay)) {
+                filtered.add(d);
+                docIds.add(d.getId());
+            }
+        }
+        if (filtered.isEmpty()) {
+            nullifyRemainingQty(doc);
+            return;
+        }
+
+        List<TransferLine> allDayLines = transferLineMapper.selectList(
+            new LambdaQueryWrapper<TransferLine>()
+                .in(TransferLine::getDocId, docIds)
+                .orderByAsc(TransferLine::getId)
+        );
+        Map<String, List<TransferLine>> linesByDocId = allDayLines.stream()
+            .collect(Collectors.groupingBy(TransferLine::getDocId));
+
+        Set<String> allProductIds = new HashSet<>();
+        for (TransferLine line : allDayLines) {
+            if (line.getProductId() != null && !line.getProductId().isEmpty()) {
+                allProductIds.add(line.getProductId());
+            }
+        }
+        Map<String, Integer> stockAtDayStart = allProductIds.isEmpty()
+            ? Collections.emptyMap()
+            : loadStockAtDayStart(doc.getFromWarehouseId(), allProductIds, docDay);
+
+        Map<String, Integer> running = new HashMap<>();
+        for (TransferDoc d : filtered) {
+            List<TransferLine> dLines = linesByDocId.getOrDefault(d.getId(), Collections.emptyList());
+            for (TransferLine line : dLines) {
+                if (line.getProductId() == null || line.getProductId().isEmpty()) continue;
+                int cur = running.computeIfAbsent(line.getProductId(), pid -> stockAtDayStart.getOrDefault(pid, 0));
+                int next = Math.max(cur - safeQty(line.getQty()), 0);
+                running.put(line.getProductId(), next);
+                if (d.getId().equals(doc.getId())) {
+                    line.setRemainingQty(next);
+                }
+            }
+            if (d.getId().equals(doc.getId())) {
+                doc.setLines(dLines);
+                return;
+            }
+        }
+        nullifyRemainingQty(doc);
+    }
+
+    private int safeQty(Integer qty) {
+        return qty == null || qty < 0 ? 0 : qty;
     }
 
     @lombok.Data

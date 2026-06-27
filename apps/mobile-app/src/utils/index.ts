@@ -128,6 +128,17 @@ export function formatBagQty(qty?: number): string {
   return `${normalizeCount(qty)}袋`
 }
 
+export function formatRemainingStockText(qty?: number, boxQty?: number): string {
+  const bags = normalizeCount(qty)
+  if (boxQty && boxQty > 0) {
+    const boxes = Math.floor(bags / boxQty)
+    const looseBags = bags % boxQty
+    if (looseBags > 0) return `出库后剩余${boxes}箱${looseBags}袋`
+    return `出库后剩余${boxes}箱`
+  }
+  return `出库后剩余${bags}袋`
+}
+
 // 格式化箱袋摘要
 export function formatPackSummary(totalQty?: number, boxCount?: number, productBoxQty?: number): string {
   const safeTotalQty = normalizeCount(totalQty)

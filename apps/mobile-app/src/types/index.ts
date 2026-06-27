@@ -169,6 +169,7 @@ export interface TransferLine {
   productId: string
   boxQty: number
   qty: number
+  remainingQty?: number
 }
 
 export interface TransferDoc {

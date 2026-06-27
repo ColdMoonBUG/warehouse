@@ -29,11 +29,11 @@ export async function checkServerReachable(): Promise<boolean> {
   })
 }
 
-/** 启动周期检测（每30秒一次），App.vue onLaunch 调用 */
+/** 启动周期检测（每15秒一次），App.vue onLaunch 调用 */
 export function startNetworkMonitor() {
   if (_checkTimer) return
   checkServerReachable()
-  _checkTimer = setInterval(checkServerReachable, 30000)
+  _checkTimer = setInterval(checkServerReachable, 15000)
 }
 
 /** 停止检测 */

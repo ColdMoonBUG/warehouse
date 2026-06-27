@@ -61,25 +61,25 @@
           <view class="field-grid field-grid-triple">
             <view class="field">
               <text class="field-label">箱数</text>
-              <input class="field-box input-box" v-model.number="line.boxQty" type="number" placeholder="0" @blur="syncLineQty(line); triggerAutoSave()" />
+              <input class="field-box input-box" v-model.number="line.boxQty" type="number" placeholder="0" @input="persistDraftLocally()" @blur="syncLineQty(line); triggerAutoSave()" />
             </view>
             <view class="field">
               <text class="field-label">袋数</text>
-              <input class="field-box input-box" v-model.number="line.bagQty" type="number" placeholder="0" @blur="syncLineQty(line); triggerAutoSave()" />
+              <input class="field-box input-box" v-model.number="line.bagQty" type="number" placeholder="0" @input="persistDraftLocally()" @blur="syncLineQty(line); triggerAutoSave()" />
             </view>
             <view class="field">
               <text class="field-label">总袋数</text>
-              <input class="field-box input-box" v-model.number="line.qty" type="number" placeholder="0" @blur="onQtyChange(line); triggerAutoSave()" />
+              <input class="field-box input-box" v-model.number="line.qty" type="number" placeholder="0" @input="persistDraftLocally()" @blur="onQtyChange(line); triggerAutoSave()" />
             </view>
           </view>
           <text v-if="lineSummary(line)" class="field-tip">{{ lineSummary(line) }}</text>
-          <text v-if="lineStockPreview(line.productId)" class="field-tip stock-preview">{{ lineStockPreview(line.productId) }}</text>
+          <text v-if="lineStockPreview(line)" class="field-tip stock-preview">{{ lineStockPreview(line) }}</text>
         </view>
         <button class="btn-add-line" @tap="addLine">+ 添加一行</button>
       </view>
 
       <view class="actions">
-        <button class="btn ghost" :disabled="!form.id || form.status !== 'draft'" @tap="post">过账</button>
+        <button class="btn ghost" :disabled="posting || !form.id || form.status !== 'draft'" @tap="post">过账</button>
         <button class="btn danger" :disabled="!form.id || form.status !== 'posted'" @tap="voidDoc">作废</button>
         <button v-if="form.id && form.status === 'posted'" class="btn warning" @tap="voidAndRebuild">作废重建</button>
         <button class="btn print" :disabled="!form.id || form.status !== 'posted'" @tap="printDoc">打印</button>
@@ -100,7 +100,7 @@ import { useUserStore } from '@/store/user'
 import { useReferenceStore } from '@/store/reference'
 import { getTransferDetail, saveTransfer, postTransfer, voidTransfer, getStock, getProductDetail } from '@/api'
 import type { TransferDoc, TransferLine, Product, Warehouse } from '@/types'
-import { genId, formatDate, getPageQueryParam, calcQty, deriveBagQty, normalizeBoxPackQty, normalizeCount, formatProductPackageSummary, formatStockPreview, getProductStockQty, toStockQtyMap, formatProductQuickPickLabel } from '@/utils'
+import { genId, formatDate, getPageQueryParam, calcQty, deriveBagQty, normalizeBoxPackQty, normalizeCount, formatProductPackageSummary, getProductStockQty, toStockQtyMap, formatProductQuickPickLabel } from '@/utils'
 import { guardNetwork, serverReachable } from '@/utils/network'
 import { printTransferA4, checkPrinterConnected, navigateToPrinterSettings } from '@/utils/bluetooth-printer'
 import { CANVAS_ID, PAGE_WIDTH_DOTS } from '@/utils/canvas-print'
@@ -131,6 +131,7 @@ const sourceStockMap = ref<Record<string, number>>({})
 const stockLoading = ref(false)
 const pageLoading = ref(false)
 const activeDraftId = ref('')
+const posting = ref(false)
 
 interface OutboundDraftPayload {
   version: 1
@@ -150,6 +151,8 @@ let draftHydrating = false
 let serverSyncTimer: ReturnType<typeof setTimeout> | null = null
 let serverSyncInFlight = false
 let serverSyncQueued = false
+let serverSyncRetryCount = 0
+const MAX_SYNC_RETRIES = 3
 let lastSyncedSignature = ''
 
 const fromWhName = computed(() => warehouses.value.find(w => w.id === form.value.fromWarehouseId)?.name || '')
@@ -287,6 +290,7 @@ async function syncDraftToServer(): Promise<boolean> {
     return false
   }
   if (serverReachable.value === false) {
+    scheduleSyncRetry()
     return false
   }
 
@@ -325,10 +329,12 @@ async function syncDraftToServer(): Promise<boolean> {
     }
 
     lastSyncedSignature = signature
+    serverSyncRetryCount = 0
     persistDraftLocally()
     return true
   } catch (e) {
     console.warn('[outbound] 草稿同步失败，保留本地缓存:', e)
+    scheduleSyncRetry()
     return false
   } finally {
     serverSyncInFlight = false
@@ -337,6 +343,17 @@ async function syncDraftToServer(): Promise<boolean> {
       void syncDraftToServer()
     }
   }
+}
+
+function scheduleSyncRetry() {
+  if (serverSyncRetryCount >= MAX_SYNC_RETRIES) return
+  serverSyncRetryCount++
+  const delay = 2000 * serverSyncRetryCount
+  if (serverSyncTimer) clearTimeout(serverSyncTimer)
+  serverSyncTimer = setTimeout(() => {
+    serverSyncTimer = null
+    void syncDraftToServer()
+  }, delay)
 }
 
 function triggerAutoSave() {
@@ -357,7 +374,7 @@ function normalizeLine(line?: Partial<FormLine>): FormLine {
   const boxQty = normalizeCount(line?.boxQty)
   const qty = normalizeCount(line?.qty)
   const bagQty = deriveBagQty(qty, boxQty, productPackQty(productId))
-  return { id: line?.id || '', productId, boxQty, bagQty, qty }
+  return { id: line?.id || '', productId, boxQty, bagQty, qty, remainingQty: typeof line?.remainingQty === 'number' ? normalizeCount(line.remainingQty) : undefined }
 }
 
 function syncLineQty(line: FormLine) {
@@ -375,7 +392,7 @@ function onQtyChange(line: FormLine) {
 
 function toSubmitLine(line: FormLine): TransferLine {
   syncLineQty(line)
-  return { id: line.id, productId: line.productId, boxQty: normalizeCount(line.boxQty), qty: normalizeCount(line.qty) }
+  return { id: line.id, productId: line.productId, boxQty: normalizeCount(line.boxQty), qty: normalizeCount(line.qty), remainingQty: line.remainingQty }
 }
 
 function lineSummary(line: FormLine) {
@@ -387,10 +404,27 @@ function lineSummary(line: FormLine) {
   return formatProductPackageSummary(product, qty, boxQty)
 }
 
-function lineStockPreview(productId?: string) {
-  return formatStockPreview([
-    { label: '调出仓', qty: getProductStockQty(sourceStockMap.value, productId), hidden: !fromWarehouse.value },
-  ])
+function formatQtyAsBoxes(qty: number, productId?: string): string {
+  const product = productId ? products.value.find(p => p.id === productId) : undefined
+  const bq = product?.boxQty && product.boxQty > 0 ? product.boxQty : 0
+  if (bq > 0) {
+    const boxes = Math.floor(qty / bq)
+    const loose = qty % bq
+    return loose > 0 ? `${boxes}箱${loose}袋` : `${boxes}箱`
+  }
+  return `${qty}袋`
+}
+
+function lineStockPreview(line: Pick<FormLine, 'productId' | 'qty' | 'remainingQty'>) {
+  if (!fromWarehouse.value) return ''
+  const currentStock = getProductStockQty(sourceStockMap.value, line.productId)
+  const remainingQty = form.value.status === 'posted' && line.productId && typeof line.remainingQty === 'number'
+    ? normalizeCount(line.remainingQty)
+    : Math.max(currentStock - normalizeCount(line.qty), 0)
+  const parts: string[] = []
+  parts.push(`调出仓${formatQtyAsBoxes(currentStock, line.productId)}`)
+  if (line.productId) parts.push(`出后剩余${formatQtyAsBoxes(remainingQty, line.productId)}`)
+  return parts.join('｜')
 }
 
 async function refreshStockPreview() {
@@ -553,7 +587,10 @@ function onToWhChange(e: any) {
 
 function onProductChange(e: any, index: number) {
   const productIndex = Number(e.detail.value)
-  lines.value[index].productId = productsWithStock.value[productIndex]?.id || ''
+  const selectedId = productsWithStock.value[productIndex]?.id || ''
+  if (!selectedId) return
+  if (lines.value[index].productId === selectedId) return
+  lines.value[index].productId = selectedId
   syncLineQty(lines.value[index])
   if (index !== 0) {
     const [moved] = lines.value.splice(index, 1)
@@ -564,9 +601,18 @@ function onProductChange(e: any, index: number) {
 
 function onQuickPickChange(e: any) {
   const productIndex = Number(e.detail.value)
-  const productId = productsWithStock.value[productIndex]?.id || ''
-  if (!productId) return
-  addLine(productId)
+  const product = productsWithStock.value[productIndex]
+  if (!product?.id) return
+  const existingIndex = lines.value.findIndex(l => l.productId === product.id)
+  if (existingIndex >= 0) {
+    if (existingIndex !== 0) {
+      const [moved] = lines.value.splice(existingIndex, 1)
+      lines.value.unshift(moved)
+    }
+    uni.showToast({ title: `${product.name || '商品'}已在列表中，已置顶`, icon: 'none', duration: 1500 })
+  } else {
+    addLine(product.id)
+  }
 }
 
 function productName(id: string) {
@@ -624,6 +670,7 @@ async function loadEdit(id: string) {
 }
 
 async function post() {
+  if (posting.value) return
   if (!(await guardNetwork('过账出库单'))) return
   persistDraftLocally()
   if (!form.value.fromWarehouseId || !form.value.toWarehouseId) {
@@ -671,6 +718,7 @@ async function post() {
   }
   
   uni.showLoading({ title: '正在过账...' })
+  posting.value = true
   try {
     await postTransfer(form.value.id)
     const doc = await getTransferDetail(form.value.id).catch(() => null)
@@ -690,6 +738,9 @@ async function post() {
       content: msg,
       showCancel: false,
     })
+    refreshStockPreview()
+  } finally {
+    posting.value = false
   }
 }
 
@@ -804,6 +855,7 @@ watch(
 
 watch(serverReachable, (reachable) => {
   if (reachable && !draftHydrating && hasMeaningfulDraftContent()) {
+    serverSyncRetryCount = 0
     scheduleServerSync()
   }
 })

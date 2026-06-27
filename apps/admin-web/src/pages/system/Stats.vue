@@ -226,7 +226,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { getAllInbounds, getAllReturns, getAllAccounts } from '@/api/stats'
 import { getProducts } from '@/api/product'
@@ -235,6 +235,7 @@ import type { InboundDoc, ReturnDoc, TransferDoc, Warehouse } from '@/types'
 
 const router = useRouter()
 const loading = ref(false)
+let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 // ---- 时间范围 ----
 type PeriodMode = 'today' | 'week' | 'month' | 'quarter' | 'custom'
@@ -242,7 +243,8 @@ const periodMode = ref<PeriodMode>('quarter')
 const customRange = ref<[string, string] | null>(null)
 
 function todayStr() {
-  return new Date().toISOString().slice(0, 10)
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 function getDateRange(): { start: string; end: string } {
@@ -253,7 +255,7 @@ function getDateRange(): { start: string; end: string } {
     const day = d.getDay() || 7
     const mon = new Date(d)
     mon.setDate(d.getDate() - day + 1)
-    return { start: mon.toISOString().slice(0, 10), end: today }
+    return { start: `${mon.getFullYear()}-${String(mon.getMonth() + 1).padStart(2, '0')}-${String(mon.getDate()).padStart(2, '0')}`, end: today }
   }
   if (periodMode.value === 'month') {
     const d = new Date()
@@ -502,6 +504,7 @@ function openReturnDetail(row: { salespersonId: string; salespersonName: string 
 
 // ---- 加载 ----
 async function loadData() {
+  if (loading.value) return
   loading.value = true
   try {
     const [inbounds, returns, transfers, accounts, products, warehouses] = await Promise.all([
@@ -541,7 +544,27 @@ async function loadData() {
   }
 }
 
-onMounted(loadData)
+function startAutoRefresh() {
+  if (refreshTimer) return
+  refreshTimer = setInterval(() => {
+    void loadData()
+  }, 60_000)
+}
+
+function stopAutoRefresh() {
+  if (!refreshTimer) return
+  clearInterval(refreshTimer)
+  refreshTimer = null
+}
+
+onMounted(() => {
+  void loadData()
+  startAutoRefresh()
+})
+
+onBeforeUnmount(() => {
+  stopAutoRefresh()
+})
 </script>
 
 <style scoped>

@@ -26,9 +26,10 @@ export interface PrinterPreset {
 
 export const PRINTER_PRESETS: Record<string, PrinterPreset> = {
   小车: { name: 'A4Pro-6A4F7A', mac: '98:3D:AE:6A:4F:7A', journalMode: false, rotateImage: false, autoCut: true },
-  大车: { name: 'A4Pro-134B6E', mac: '34:CD:B0:13:4B:6E', journalMode: false, rotateImage: false, autoCut: true },
+  大车: { name: 'A4Pro-6B1DEA', mac: '98:3D:AE:6B:1D:EA', journalMode: false, rotateImage: false, autoCut: true },
   三车: { name: 'A4Pro-134C46', mac: '34:CD:B0:13:4C:46', journalMode: false, rotateImage: false, autoCut: true },
   // 管理员使用 A4mini：旋转90度、铺满整页、无切刀
   // 旧设备备用：A4Pro-6B1DEA mac: '98:3D:AE:6B:1D:EA'
+  // 坏大车设备name: 'A4Pro-134B6E', mac: '34:CD:B0:13:4B:6E'
   管理员: { name: 'A4mini-7FC5C6', mac: '98:3D:AE:7F:C5:C6', journalMode: false, fillFullPage: true, rotateImage: true, autoCut: false },
 }

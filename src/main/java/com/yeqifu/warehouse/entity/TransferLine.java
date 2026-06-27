@@ -15,4 +15,6 @@ public class TransferLine implements Serializable {
     private String productId;
     private Integer boxQty;
     private Integer qty;
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private Integer remainingQty;
 }
