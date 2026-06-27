@@ -324,7 +324,8 @@ public class TransferController {
 
         Map<String, Integer> deltaMap = new HashMap<>();
         for (Ledger l : ledgers) {
-            deltaMap.merge(l.getProductId(), safeQty(l.getQty()), Integer::sum);
+            int q = l.getQty() == null ? 0 : l.getQty();
+            deltaMap.merge(l.getProductId(), q, Integer::sum);
         }
 
         Map<String, Integer> result = new HashMap<>();
