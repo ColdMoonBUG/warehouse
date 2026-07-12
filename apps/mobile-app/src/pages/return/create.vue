@@ -70,7 +70,7 @@
           <view class="item-head">
             <view class="info">
               <text class="name"><text class="seq-no">{{ idx + 1 }}.</text> {{ p.name }}</text>
-              <text class="price">¥{{ p.salePrice }}</text>
+              <text class="price">¥{{ productPrice(p) }}</text>
               <text class="barcode" v-if="p.barcode">条码: {{ p.barcode }}</text>
               <text class="package">{{ productPackageSummary(p) }}</text>
               <text v-if="productStockPreview(p.id)" class="stock-preview">{{ productStockPreview(p.id) }}</text>
@@ -148,7 +148,7 @@
           <text class="preview-seq">{{ idx + 1 }}.</text>
           <text class="preview-name">{{ p.name }}</text>
           <text class="preview-qty">{{ qtyMap[p.id]?.qty || 0 }}袋</text>
-          <text class="preview-price">¥{{ (normalizeCount(qtyMap[p.id]?.qty) * (p.salePrice || 0)).toFixed(2) }}</text>
+          <text class="preview-price">¥{{ (normalizeCount(qtyMap[p.id]?.qty) * productPrice(p)).toFixed(2) }}</text>
         </view>
       </view>
 
@@ -193,7 +193,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { onShow } from '@dcloudio/uni-app'
+import { onLoad, onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
 import { useReferenceStore } from '@/store/reference'
 import { getStock, saveReturn, postReturn, isOwnedStore, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId, getProductSaleQty, getSalespersonDisplayName } from '@/api'
@@ -229,6 +229,7 @@ const warehouses = ref<Warehouse[]>([])
 const selectedStore = ref<Store | null>(null)
 const storeSelectorVisible = ref(false)
 const qtyMap = ref<Record<string, QtyInput>>({})
+const prefillPriceMap = ref<Record<string, number>>({})
 const returnType = ref<'vehicle_return'|'warehouse_return'>('vehicle_return')
 const fromWarehouse = ref<Warehouse | null>(null)
 const toWarehouse = ref<Warehouse | null>(null)
@@ -244,9 +245,11 @@ const customSortOrder = ref<string[]>([])
 const productSaleQtyMap = ref<Record<string, number>>({})
 const step = ref<1 | 2>(1)
 const payType = ref<'cash' | 'card'>('card')
+const remark = ref('')
 const printCopies = ref(1)
 const submitting = ref(false)
 const previewDate = ref('')
+const prefillMode = ref(false)
 const addedProductOrder = ref(new Map<string, number>())
 const canvasId = CANVAS_ID
 const canvasWidthPx = PAGE_WIDTH_DOTS
@@ -409,11 +412,16 @@ const selectedProducts = computed(() => {
   })
 })
 
+function productPrice(product: Product): number {
+  return prefillPriceMap.value[product.id] ?? product.salePrice ?? 0
+}
+
 const totalQty = computed(() => Object.values(qtyMap.value).reduce((sum, item) => sum + normalizeCount(item.qty), 0))
 const totalAmount = computed(() => {
   let total = 0
   for (const p of selectedProducts.value) {
-    total += normalizeCount(qtyMap.value[p.id]?.qty) * (p.salePrice || 0)
+    const price = prefillPriceMap.value[p.id] ?? p.salePrice ?? 0
+    total += normalizeCount(qtyMap.value[p.id]?.qty) * price
   }
   return total
 })
@@ -653,7 +661,7 @@ async function doSubmit(): Promise<ReturnDoc | null> {
       productId: p.id,
       boxQty: normalizeCount(qtyMap.value[p.id]?.boxQty),
       qty: normalizeCount(qtyMap.value[p.id]?.qty),
-      price: p.salePrice || 0,
+      price: prefillPriceMap.value[p.id] ?? p.salePrice ?? 0,
     }))
     .filter(line => line.qty > 0)
   if (!fromWarehouse.value) {
@@ -673,6 +681,7 @@ async function doSubmit(): Promise<ReturnDoc | null> {
     fromWarehouseId: fromWarehouse.value?.id || '',
     toWarehouseId: returnType.value === 'warehouse_return' ? (toWarehouse.value?.id || '') : undefined,
     payType: payType.value,
+    remark: remark.value || undefined,
     lines,
   } as ReturnDoc
   try {
@@ -743,6 +752,45 @@ async function submitOnly() {
   setTimeout(() => { uni.redirectTo({ url: '/pages/return/index' }) }, 400)
 }
 
+function tryRestorePrefill() {
+  const raw = uni.getStorageSync('wh_return_prefill')
+  if (!raw) return
+  try {
+    const data = JSON.parse(raw)
+    returnType.value = data.returnType === 'warehouse_return' ? 'warehouse_return' : 'vehicle_return'
+    fromWarehouse.value = warehouses.value.find(w => w.id === data.fromWarehouseId) || fromWarehouse.value
+    toWarehouse.value = returnType.value === 'warehouse_return'
+      ? (warehouses.value.find(w => w.id === data.toWarehouseId) || defaultReturnWarehouse())
+      : null
+    selectedStore.value = returnType.value === 'vehicle_return'
+      ? (stores.value.find(s => s.id === data.storeId) || null)
+      : null
+    payType.value = data.payType === 'cash' ? 'cash' : 'card'
+    remark.value = data.sourceCode ? `[重建自${data.sourceCode}]` : ''
+
+    const newQtyMap: Record<string, QtyInput> = {}
+    const newPriceMap: Record<string, number> = {}
+    addedProductOrder.value = new Map<string, number>()
+    for (const line of data.lines || []) {
+      if (!line.productId || !products.value.some(p => p.id === line.productId)) continue
+      newQtyMap[line.productId] = createQtyInput(line.productId, line.qty, line.boxQty)
+      if (typeof line.price === 'number') newPriceMap[line.productId] = line.price
+      addedProductOrder.value.set(line.productId, addedProductOrder.value.size + 1)
+    }
+    qtyMap.value = newQtyMap
+    prefillPriceMap.value = newPriceMap
+    refreshStockPreview()
+  } catch {
+    uni.showToast({ title: '重建数据读取失败', icon: 'none' })
+  } finally {
+    uni.removeStorageSync('wh_return_prefill')
+  }
+}
+
+onLoad((query: any) => {
+  prefillMode.value = query?.prefill === 'true'
+})
+
 onShow(() => {
   // 从排序页面返回时重新加载自定义排序
   loadCustomSortOrder()
@@ -754,7 +802,9 @@ onMounted(() => {
     uni.reLaunch({ url: '/pages/login/index' })
     return
   }
-  loadData()
+  loadData().then(() => {
+    if (prefillMode.value) tryRestorePrefill()
+  })
 })
 </script>
 

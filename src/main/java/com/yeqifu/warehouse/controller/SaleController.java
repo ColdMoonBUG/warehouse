@@ -371,7 +371,9 @@ public class SaleController {
                 }
             }
             doc.setStatus("voided");
-            saleDocMapper.updateById(doc);
+            int updated = saleDocMapper.update(doc,
+                new LambdaQueryWrapper<SaleDoc>().eq(SaleDoc::getId, id).eq(SaleDoc::getStatus, "posted"));
+            if (updated == 0) return Result.error("单据状态已变更，请刷新");
             return Result.ok();
         } catch (RuntimeException e) {
             TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
@@ -393,6 +395,9 @@ public class SaleController {
     @PostMapping("/delete/{id}")
     @Transactional
     public Result<Void> delete(@PathVariable String id) {
+        SaleDoc doc = saleDocMapper.selectById(id);
+        if (doc == null) return Result.error("单据不存在");
+        if (!"draft".equals(doc.getStatus())) return Result.error("仅草稿状态可删除");
         saleDocMapper.deleteById(id);
         saleLineMapper.delete(
             new LambdaQueryWrapper<SaleLine>().eq(SaleLine::getDocId, id)
@@ -451,26 +456,28 @@ public class SaleController {
     }
 
     /**
-     * 按超市统计区间内净销售袋数（销售袋数 - 退货袋数），首页看板颜色分级用
-     * GET /api/sale/storeNetQty?startDate=2026-05-01&endDate=2026-05-31
+     * 按超市统计净销售袋数（销售袋数 - 退货袋数），首页看板颜色分级用
+     * GET /api/sale/storeNetQty 或 GET /api/sale/storeNetQty?startDate=2026-05-01&endDate=2026-05-31
      */
     @GetMapping("/storeNetQty")
     public Result<java.util.Map<String, Integer>> storeNetQty(
-            @RequestParam String startDate,
-            @RequestParam String endDate) {
-        java.time.LocalDate start = java.time.LocalDate.parse(startDate);
-        java.time.LocalDate end = java.time.LocalDate.parse(endDate);
-        java.sql.Date sqlStart = java.sql.Date.valueOf(start);
-        java.sql.Date sqlEnd = java.sql.Date.valueOf(end);
+            @RequestParam(required = false) String startDate,
+            @RequestParam(required = false) String endDate) {
+        java.sql.Date sqlStart = null;
+        java.sql.Date sqlEnd = null;
+        if (startDate != null && !startDate.isEmpty() && endDate != null && !endDate.isEmpty()) {
+            sqlStart = java.sql.Date.valueOf(java.time.LocalDate.parse(startDate));
+            sqlEnd = java.sql.Date.valueOf(java.time.LocalDate.parse(endDate));
+        }
 
         // 销售袋数
         java.util.Map<String, Integer> saleMap = new java.util.HashMap<>();
-        List<SaleDoc> saleDocs = saleDocMapper.selectList(
-            new LambdaQueryWrapper<SaleDoc>()
-                .eq(SaleDoc::getStatus, "posted")
-                .ge(SaleDoc::getDocDate, sqlStart)
-                .le(SaleDoc::getDocDate, sqlEnd)
-        );
+        LambdaQueryWrapper<SaleDoc> saleQuery = new LambdaQueryWrapper<SaleDoc>()
+                .eq(SaleDoc::getStatus, "posted");
+        if (sqlStart != null) {
+            saleQuery.ge(SaleDoc::getDocDate, sqlStart).le(SaleDoc::getDocDate, sqlEnd);
+        }
+        List<SaleDoc> saleDocs = saleDocMapper.selectList(saleQuery);
         for (SaleDoc doc : saleDocs) {
             List<SaleLine> lines = saleLineMapper.selectList(
                 new LambdaQueryWrapper<SaleLine>().eq(SaleLine::getDocId, doc.getId()));
@@ -482,13 +489,15 @@ public class SaleController {
         // 退货袋数（vehicle_return，按超市扣除）
         java.util.Map<String, Integer> returnMap = new java.util.HashMap<>();
         if (returnDocMapper != null) {
-            java.util.List<com.yeqifu.warehouse.entity.ReturnDoc> rets = returnDocMapper.selectList(
+            LambdaQueryWrapper<com.yeqifu.warehouse.entity.ReturnDoc> retQuery =
                 new LambdaQueryWrapper<com.yeqifu.warehouse.entity.ReturnDoc>()
                     .eq(com.yeqifu.warehouse.entity.ReturnDoc::getStatus, "posted")
-                    .eq(com.yeqifu.warehouse.entity.ReturnDoc::getReturnType, "vehicle_return")
-                    .ge(com.yeqifu.warehouse.entity.ReturnDoc::getDocDate, sqlStart)
-                    .le(com.yeqifu.warehouse.entity.ReturnDoc::getDocDate, sqlEnd)
-            );
+                    .eq(com.yeqifu.warehouse.entity.ReturnDoc::getReturnType, "vehicle_return");
+            if (sqlStart != null) {
+                retQuery.ge(com.yeqifu.warehouse.entity.ReturnDoc::getDocDate, sqlStart)
+                        .le(com.yeqifu.warehouse.entity.ReturnDoc::getDocDate, sqlEnd);
+            }
+            java.util.List<com.yeqifu.warehouse.entity.ReturnDoc> rets = returnDocMapper.selectList(retQuery);
             for (com.yeqifu.warehouse.entity.ReturnDoc ret : rets) {
                 String sid = ret.getStoreId() != null ? ret.getStoreId() : "";
                 java.util.List<com.yeqifu.warehouse.entity.ReturnLine> retLines = returnLineMapper.selectList(

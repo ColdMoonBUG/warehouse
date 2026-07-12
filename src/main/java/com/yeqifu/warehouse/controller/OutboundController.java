@@ -135,7 +135,9 @@ public class OutboundController {
                 insertLedger("outbound", id, doc.getWarehouseId(), line.getProductId(), line.getQty());
             }
             doc.setStatus("voided");
-            outboundDocMapper.updateById(doc);
+            int updated = outboundDocMapper.update(doc,
+                new LambdaQueryWrapper<OutboundDoc>().eq(OutboundDoc::getId, id).eq(OutboundDoc::getStatus, "posted"));
+            if (updated == 0) return Result.error("单据状态已变更，请刷新");
             return Result.ok();
         } catch (RuntimeException e) {
             TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();

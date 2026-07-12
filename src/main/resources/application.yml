@@ -62,6 +62,9 @@ shiro:
 #修改端口号为8088
 server:
   port: 8888
+  servlet:
+    session:
+      timeout: 30d
 
 # 应用自定义配置
 app:

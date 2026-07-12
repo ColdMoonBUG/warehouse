@@ -52,8 +52,8 @@
     <!-- 汇总卡片 -->
     <div class="summary-cards">
       <el-card class="summary-card">
-        <div class="card-value inbound-color">{{ inboundSummary.totalQty.toLocaleString() }}</div>
-        <div class="card-label">进货总袋数</div>
+        <div class="card-value inbound-color">{{ inboundSummary.displayQty }}</div>
+        <div class="card-label">进货总量</div>
         <div class="card-sub">{{ inboundSummary.docCount }} 张入库单</div>
       </el-card>
       <el-card class="summary-card">
@@ -62,18 +62,18 @@
         <div class="card-sub">按进货价计算</div>
       </el-card>
       <el-card class="summary-card">
-        <div class="card-value return-color">{{ returnSummary.totalQty.toLocaleString() }}</div>
-        <div class="card-label">退货总袋数</div>
-        <div class="card-sub">{{ returnSummary.docCount }} 张退货单</div>
+        <div class="card-value return-color">{{ returnSummary.displayQty }}</div>
+        <div class="card-label">退货总量</div>
+        <div class="card-sub">{{ returnSummary.docCount }} 张退货单（含车库+回仓）</div>
       </el-card>
       <el-card class="summary-card">
-        <div class="card-value return-color">¥{{ returnSummary.totalAmount.toFixed(2) }}</div>
-        <div class="card-label">退货总金额</div>
-        <div class="card-sub">按销售价计算</div>
+        <div class="card-value loss-color">¥{{ returnSummary.totalAmount.toFixed(2) }}</div>
+        <div class="card-label">退货总亏损</div>
+        <div class="card-sub">回仓退货 ¥{{ returnSummary.warehouseReturnAmount.toFixed(2) }}</div>
       </el-card>
       <el-card v-if="selectedProductId" class="summary-card">
-        <div class="card-value transfer-color">{{ transferSummary.totalQty.toLocaleString() }}</div>
-        <div class="card-label">出库总袋数</div>
+        <div class="card-value transfer-color">{{ transferSummary.displayQty }}</div>
+        <div class="card-label">出库总量</div>
         <div class="card-sub">{{ transferSummary.docCount }} 张出库单</div>
       </el-card>
       <el-card v-if="selectedProductId" class="summary-card">
@@ -94,7 +94,9 @@
       <el-table :data="inboundByDate" border stripe max-height="400" v-loading="loading">
         <el-table-column prop="date" label="日期" width="130" sortable />
         <el-table-column prop="docCount" label="入库单数" width="100" sortable />
-        <el-table-column prop="totalQty" label="总袋数" width="100" sortable />
+        <el-table-column label="总量" width="140" sortable prop="totalQty">
+          <template #default="{ row }">{{ row.displayQty }}</template>
+        </el-table-column>
         <el-table-column label="总金额" width="130" sortable prop="totalAmount">
           <template #default="{ row }">¥{{ row.totalAmount.toFixed(2) }}</template>
         </el-table-column>
@@ -106,7 +108,7 @@
                 :key="p.productId"
                 size="small"
                 type="info"
-              >{{ p.name }} ×{{ p.qty }}</el-tag>
+              >{{ p.name }} {{ formatBoxBag(p.qty, p.productId) }}</el-tag>
               <span v-if="row.products.length > 6" class="more-tag">+{{ row.products.length - 6 }}种</span>
             </div>
           </template>
@@ -126,7 +128,9 @@
         <el-table-column prop="date" label="日期" width="130" sortable />
         <el-table-column prop="toWarehouseName" label="目标仓库" width="150" />
         <el-table-column prop="docCount" label="出库单数" width="100" sortable />
-        <el-table-column prop="totalQty" label="总袋数" width="100" sortable />
+        <el-table-column label="总量" width="140" sortable prop="totalQty">
+          <template #default="{ row }">{{ formatBoxBag(row.totalQty, selectedProductId) }}</template>
+        </el-table-column>
         <el-table-column label="出库单号" min-width="260">
           <template #default="{ row }">
             <div class="product-chips">
@@ -149,15 +153,17 @@
       <el-table :data="returnBySalesperson" border stripe v-loading="loading">
         <el-table-column prop="salespersonName" label="业务员" width="120" />
         <el-table-column prop="docCount" label="退货单数" width="100" sortable />
-        <el-table-column prop="totalQty" label="总袋数" width="100" sortable />
+        <el-table-column label="总量" width="140" sortable prop="totalQty">
+          <template #default="{ row }">{{ row.displayQty }}</template>
+        </el-table-column>
         <el-table-column label="总金额" width="130" sortable prop="totalAmount">
           <template #default="{ row }">¥{{ row.totalAmount.toFixed(2) }}</template>
         </el-table-column>
-        <el-table-column label="车库退货" width="100">
-          <template #default="{ row }">{{ row.vehicleReturnQty }} 袋</template>
+        <el-table-column label="车库退货" width="120">
+          <template #default="{ row }">{{ row.vehicleDisplayQty }}</template>
         </el-table-column>
-        <el-table-column label="回仓退货" width="100">
-          <template #default="{ row }">{{ row.warehouseReturnQty }} 袋</template>
+        <el-table-column label="回仓退货" width="120">
+          <template #default="{ row }">{{ row.warehouseDisplayQty }}</template>
         </el-table-column>
         <el-table-column label="操作" width="80">
           <template #default="{ row }">
@@ -177,7 +183,9 @@
       <el-table :data="returnByDate" border stripe max-height="400" v-loading="loading">
         <el-table-column prop="date" label="日期" width="130" sortable />
         <el-table-column prop="docCount" label="退货单数" width="100" sortable />
-        <el-table-column prop="totalQty" label="总袋数" width="100" sortable />
+        <el-table-column label="总量" width="140" sortable prop="totalQty">
+          <template #default="{ row }">{{ row.displayQty }}</template>
+        </el-table-column>
         <el-table-column label="总金额" width="130" sortable prop="totalAmount">
           <template #default="{ row }">¥{{ row.totalAmount.toFixed(2) }}</template>
         </el-table-column>
@@ -231,6 +239,7 @@ import { useRouter } from 'vue-router'
 import { getAllInbounds, getAllReturns, getAllAccounts } from '@/api/stats'
 import { getProducts } from '@/api/product'
 import { getTransfers, getWarehouses } from '@/api/stock'
+import { getPackSize } from '@/utils/pack'
 import type { InboundDoc, ReturnDoc, TransferDoc, Warehouse } from '@/types'
 
 const router = useRouter()
@@ -287,6 +296,7 @@ const allReturns = ref<ReturnDoc[]>([])
 const allTransfers = ref<TransferDoc[]>([])
 const accountMap = ref<Record<string, string>>({})
 const productMap = ref<Record<string, string>>({}) // productId -> name
+const productBoxQtyMap = ref<Record<string, number>>({}) // productId -> boxQty
 const warehouseMap = ref<Record<string, string>>({})
 
 // 商品筛选
@@ -304,6 +314,33 @@ function matchesSelectedProduct(line: { productId?: string }) {
   return !selectedProductId.value || line.productId === selectedProductId.value
 }
 
+function formatBoxBag(qty: number, productId?: string): string {
+  const boxQty = productId ? (productBoxQtyMap.value[productId] || 1) : 1
+  if (boxQty <= 1) return `${qty}袋`
+  const boxes = Math.floor(qty / boxQty)
+  const bags = qty % boxQty
+  if (boxes === 0) return `${bags}袋`
+  if (bags === 0) return `${boxes}箱`
+  return `${boxes}箱${bags}袋`
+}
+
+function formatMixedBoxBag(lines: Array<{ productId?: string; qty: number }>): string {
+  let totalBoxes = 0
+  let totalBags = 0
+  for (const l of lines) {
+    const boxQty = l.productId ? (productBoxQtyMap.value[l.productId] || 1) : 1
+    if (boxQty <= 1) {
+      totalBags += l.qty
+    } else {
+      totalBoxes += Math.floor(l.qty / boxQty)
+      totalBags += l.qty % boxQty
+    }
+  }
+  if (totalBoxes === 0) return `${totalBags}袋`
+  if (totalBags === 0) return `${totalBoxes}箱`
+  return `${totalBoxes}箱${totalBags}袋`
+}
+
 const filteredInbounds = computed(() => {
   const { start, end } = getDateRange()
   return allInbounds.value.filter(d => {
@@ -318,7 +355,7 @@ const filteredInbounds = computed(() => {
 const filteredReturns = computed(() => {
   const { start, end } = getDateRange()
   return allReturns.value.filter(d => {
-    if (d.status !== 'posted' || d.returnType !== 'warehouse_return' || !inRange(d.date, start, end)) return false
+    if (d.status !== 'posted' || !inRange(d.date, start, end)) return false
     if (selectedProductId.value) {
       return d.lines.some(l => l.productId === selectedProductId.value)
     }
@@ -330,28 +367,43 @@ const filteredReturns = computed(() => {
 const inboundSummary = computed(() => {
   const docs = filteredInbounds.value
   let totalQty = 0, totalAmount = 0
+  const lines: Array<{ productId?: string; qty: number }> = []
   for (const d of docs) {
     for (const l of d.lines) {
       if (!matchesSelectedProduct(l)) continue
       totalQty += l.qty
       totalAmount += l.qty * l.price
+      lines.push(l)
     }
   }
-  return { docCount: docs.length, totalQty, totalAmount }
+  return { docCount: docs.length, totalQty, totalAmount, displayQty: formatMixedBoxBag(lines) }
 })
 
-// ---- 退货汇总 ----
+// ---- 退货汇总（全部退货 = 亏损） ----
 const returnSummary = computed(() => {
   const docs = filteredReturns.value
   let totalQty = 0, totalAmount = 0
+  let warehouseReturnAmount = 0
+  const lines: Array<{ productId?: string; qty: number }> = []
+  const whLines: Array<{ productId?: string; qty: number }> = []
   for (const d of docs) {
     for (const l of d.lines) {
       if (!matchesSelectedProduct(l)) continue
       totalQty += l.qty
       totalAmount += l.qty * l.price
+      lines.push(l)
+      if (d.returnType === 'warehouse_return') {
+        warehouseReturnAmount += l.qty * l.price
+        whLines.push(l)
+      }
     }
   }
-  return { docCount: docs.length, totalQty, totalAmount }
+  return {
+    docCount: docs.length, totalQty, totalAmount,
+    warehouseReturnAmount,
+    displayQty: formatMixedBoxBag(lines),
+    whDisplayQty: formatMixedBoxBag(whLines),
+  }
 })
 
 const filteredTransfers = computed(() => {
@@ -369,14 +421,16 @@ const transferSummary = computed(() => {
   const docs = filteredTransfers.value
   let totalQty = 0
   const warehouseSet = new Set<string>()
+  const lines: Array<{ productId?: string; qty: number }> = []
   for (const d of docs) {
     for (const l of d.lines) {
       if (!matchesSelectedProduct(l)) continue
       totalQty += l.qty
+      lines.push(l)
     }
     warehouseSet.add(d.toWarehouseId)
   }
-  return { docCount: docs.length, totalQty, toWarehouseCount: warehouseSet.size }
+  return { docCount: docs.length, totalQty, toWarehouseCount: warehouseSet.size, displayQty: formatMixedBoxBag(lines) }
 })
 
 // ---- 进货按日期 ----
@@ -402,7 +456,7 @@ const inboundByDate = computed(() => {
     }
   }
   return [...map.values()]
-    .map(e => ({ ...e, products: [...e.products.values()] }))
+    .map(e => ({ ...e, products: [...e.products.values()], displayQty: formatMixedBoxBag([...e.products.values()]) }))
     .sort((a, b) => b.date.localeCompare(a.date))
 })
 
@@ -450,41 +504,62 @@ const returnBySalesperson = computed(() => {
     salespersonId: string; salespersonName: string
     docCount: number; totalQty: number; totalAmount: number
     vehicleReturnQty: number; warehouseReturnQty: number
+    lines: Array<{ productId?: string; qty: number }>
+    vehicleLines: Array<{ productId?: string; qty: number }>
+    warehouseLines: Array<{ productId?: string; qty: number }>
   }>()
   for (const doc of filteredReturns.value) {
     const spId = doc.salespersonId
     const spName = accountMap.value[spId] || spId
     if (!map.has(spId)) {
-      map.set(spId, { salespersonId: spId, salespersonName: spName, docCount: 0, totalQty: 0, totalAmount: 0, vehicleReturnQty: 0, warehouseReturnQty: 0 })
+      map.set(spId, { salespersonId: spId, salespersonName: spName, docCount: 0, totalQty: 0, totalAmount: 0, vehicleReturnQty: 0, warehouseReturnQty: 0, lines: [], vehicleLines: [], warehouseLines: [] })
     }
     const entry = map.get(spId)!
     entry.docCount++
-    const qty = doc.lines.reduce((s, l) => s + l.qty, 0)
-    const amount = doc.lines.reduce((s, l) => s + l.qty * l.price, 0)
-    entry.totalQty += qty
-    entry.totalAmount += amount
-    if (doc.returnType === 'warehouse_return') entry.warehouseReturnQty += qty
-    else entry.vehicleReturnQty += qty
+    for (const l of doc.lines) {
+      if (!matchesSelectedProduct(l)) continue
+      entry.totalQty += l.qty
+      entry.totalAmount += l.qty * l.price
+      entry.lines.push(l)
+      if (doc.returnType === 'warehouse_return') {
+        entry.warehouseReturnQty += l.qty
+        entry.warehouseLines.push(l)
+      } else {
+        entry.vehicleReturnQty += l.qty
+        entry.vehicleLines.push(l)
+      }
+    }
   }
-  return [...map.values()].sort((a, b) => b.totalQty - a.totalQty)
+  return [...map.values()]
+    .map(e => ({
+      ...e,
+      displayQty: formatMixedBoxBag(e.lines),
+      vehicleDisplayQty: formatMixedBoxBag(e.vehicleLines),
+      warehouseDisplayQty: formatMixedBoxBag(e.warehouseLines),
+    }))
+    .sort((a, b) => b.totalQty - a.totalQty)
 })
 
 // ---- 退货按日期 ----
 const returnByDate = computed(() => {
-  const map = new Map<string, { date: string; docCount: number; totalQty: number; totalAmount: number; salespersons: Set<string> }>()
+  const map = new Map<string, { date: string; docCount: number; totalQty: number; totalAmount: number; salespersons: Set<string>; lines: Array<{ productId?: string; qty: number }> }>()
   for (const doc of filteredReturns.value) {
     const dateKey = (doc.date || '').slice(0, 10)
     if (!map.has(dateKey)) {
-      map.set(dateKey, { date: dateKey, docCount: 0, totalQty: 0, totalAmount: 0, salespersons: new Set() })
+      map.set(dateKey, { date: dateKey, docCount: 0, totalQty: 0, totalAmount: 0, salespersons: new Set(), lines: [] })
     }
     const entry = map.get(dateKey)!
     entry.docCount++
-    entry.totalQty += doc.lines.reduce((s, l) => s + l.qty, 0)
-    entry.totalAmount += doc.lines.reduce((s, l) => s + l.qty * l.price, 0)
+    for (const l of doc.lines) {
+      if (!matchesSelectedProduct(l)) continue
+      entry.totalQty += l.qty
+      entry.totalAmount += l.qty * l.price
+      entry.lines.push(l)
+    }
     entry.salespersons.add(accountMap.value[doc.salespersonId] || doc.salespersonId)
   }
   return [...map.values()]
-    .map(e => ({ ...e, salespersons: [...e.salespersons] }))
+    .map(e => ({ ...e, salespersons: [...e.salespersons], displayQty: formatMixedBoxBag(e.lines) }))
     .sort((a, b) => b.date.localeCompare(a.date))
 })
 
@@ -526,10 +601,13 @@ async function loadData() {
     accountMap.value = map
     // 建立 productId -> name 映射
     const pmap: Record<string, string> = {}
+    const pbmap: Record<string, number> = {}
     for (const p of products) {
       pmap[p.id] = p.name
+      pbmap[p.id] = p.boxQty || 1
     }
     productMap.value = pmap
+    productBoxQtyMap.value = pbmap
     productOptions.value = products.map((p: any) => ({ id: p.id, name: p.name }))
       .sort((a: ProductOption, b: ProductOption) => a.name.localeCompare(b.name, 'zh-CN'))
     const wmap: Record<string, string> = {}
@@ -592,6 +670,7 @@ onBeforeUnmount(() => {
 .inbound-color { color: #3b82f6; }
 .return-color { color: #f59e0b; }
 .transfer-color { color: #10b981; }
+.loss-color { color: #dc2626; }
 
 .table-card { }
 .table-header { display: flex; align-items: center; gap: 12px; }

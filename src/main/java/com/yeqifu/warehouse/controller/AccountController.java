@@ -92,6 +92,7 @@ public class AccountController {
     }
 
     private void saveAccountSession(HttpSession session, Account account) {
+        session.setMaxInactiveInterval(30 * 24 * 3600);
         session.setAttribute("warehouseAccountId", account.getId());
         session.setAttribute("warehouseAccountRole", account.getRole());
         session.setAttribute("warehouseAccountName", account.getDisplayName());

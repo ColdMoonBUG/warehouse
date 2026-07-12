@@ -120,7 +120,9 @@ public class InboundController {
                 insertLedger("inbound", id, MAIN_WAREHOUSE_ID, line.getProductId(), -line.getQty());
             }
             doc.setStatus("voided");
-            inboundDocMapper.updateById(doc);
+            int updated = inboundDocMapper.update(doc,
+                new LambdaQueryWrapper<InboundDoc>().eq(InboundDoc::getId, id).eq(InboundDoc::getStatus, "posted"));
+            if (updated == 0) return Result.error("单据状态已变更，请刷新");
             return Result.ok();
         } catch (RuntimeException e) {
             TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();

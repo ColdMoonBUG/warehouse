@@ -28,6 +28,7 @@
       </view>
 
       <button class="btn-print" @tap="previewPrint">预览并打印</button>
+      <button class="btn-rebuild" v-if="doc.status==='posted' || doc.status==='voided'" @tap="voidAndRebuild">根据此单重建</button>
       <button class="btn-void" v-if="doc.status==='posted'" @tap="voidDoc">作废退货单</button>
     </view>
 
@@ -99,6 +100,49 @@ import type { ReturnDoc, Store, Salesperson, Product } from '@/types'
 import { getPageQueryParam, formatPackSummary, normalizeCount } from '@/utils'
 import { buildReturnReceipt, printText, printReturnA4, checkPrinterConnected, navigateToPrinterSettings, getBluetoothPrinterLogs } from '@/utils/bluetooth-printer'
 import { CANVAS_ID, estimateContentHeight, PAGE_WIDTH_DOTS } from '@/utils/canvas-print'
+
+async function voidAndRebuild() {
+  if (!doc.value) return
+  const isVoided = doc.value.status === 'voided'
+  uni.showModal({
+    title: '根据此单重建',
+    content: isVoided
+      ? '将以此作废退货单为基础进入创建页，保留原单内容。'
+      : '将先作废此退货单并反冲库存，再以原单内容进入创建页。',
+    confirmText: '确认',
+    success: async (res) => {
+      if (!res.confirm || !doc.value) return
+      const source = doc.value
+      try {
+        const prefill = {
+          returnType: source.returnType,
+          storeId: source.storeId,
+          salespersonId: source.salespersonId,
+          fromWarehouseId: source.fromWarehouseId,
+          toWarehouseId: source.toWarehouseId || '',
+          payType: source.payType || 'card',
+          sourceCode: source.code,
+          lines: source.lines.map(line => ({
+            productId: line.productId,
+            qty: line.qty,
+            boxQty: line.boxQty || 0,
+            price: line.price,
+          })),
+        }
+        if (!isVoided) {
+          await voidReturn(source.id)
+        }
+        uni.setStorageSync('wh_return_prefill', JSON.stringify(prefill))
+        uni.showToast({ title: '正在跳转...', icon: 'none' })
+        setTimeout(() => {
+          uni.redirectTo({ url: '/pages/return/create?prefill=true' })
+        }, 400)
+      } catch (e: any) {
+        uni.showToast({ title: e?.message || '重建失败', icon: 'none' })
+      }
+    },
+  })
+}
 
 async function voidDoc() {
   if (!doc.value) return
@@ -266,6 +310,7 @@ onMounted(() => {
 .price { color: #333; }
 .summary { display:flex; justify-content: space-between; padding: 10rpx; color:#333; }
 .btn-print { width:100%; height:88rpx; background:#1890ff; color:#fff; font-size:32rpx; border-radius:44rpx; border:none; margin-bottom:16rpx; }
+.btn-rebuild { width:100%; height:88rpx; background:#d97706; color:#fff; font-size:32rpx; border-radius:44rpx; border:none; margin-bottom:16rpx; }
 .btn-void { width:100%; height:88rpx; background:#ff4d4f; color:#fff; font-size:32rpx; border-radius:44rpx; border:none; }
 .empty { text-align:center; padding:80rpx 0; color:#999; }
 

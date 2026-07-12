@@ -169,7 +169,9 @@ public class TransferController {
                 insertLedger("transfer", id, doc.getToWarehouseId(), line.getProductId(), -line.getQty());
             }
             doc.setStatus("voided");
-            transferDocMapper.updateById(doc);
+            int updated = transferDocMapper.update(doc,
+                new LambdaQueryWrapper<TransferDoc>().eq(TransferDoc::getId, id).eq(TransferDoc::getStatus, "posted"));
+            if (updated == 0) return Result.error("单据状态已变更，请刷新");
             return Result.ok();
         } catch (RuntimeException e) {
             TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();

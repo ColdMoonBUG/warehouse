@@ -232,7 +232,11 @@ public class ReturnController {
                 }
             }
             doc.setStatus("voided");
-            returnDocMapper.updateById(doc);
+            int updated = returnDocMapper.update(doc,
+                new LambdaQueryWrapper<com.yeqifu.warehouse.entity.ReturnDoc>()
+                    .eq(com.yeqifu.warehouse.entity.ReturnDoc::getId, id)
+                    .eq(com.yeqifu.warehouse.entity.ReturnDoc::getStatus, "posted"));
+            if (updated == 0) return Result.error("单据状态已变更，请刷新");
             return Result.ok();
         } catch (RuntimeException e) {
             TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
