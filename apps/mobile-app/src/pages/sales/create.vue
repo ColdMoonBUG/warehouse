@@ -283,7 +283,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { onLoad, onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
 import { useReferenceStore } from '@/store/reference'
@@ -291,7 +291,7 @@ import { getStock, saveSale, postSale, linkSaleReturn, saveReturn, postReturn, i
 import type { Store, Product, SaleDoc, SaleLine, ReturnDoc, ReturnLine, Warehouse, StockItem } from '@/types'
 import { genId, formatProductQuickPickLabel, formatProductPackageSummary, calcQty, deriveBagQty, normalizeCount, normalizeBoxPackQty, formatStockPreview, getProductStockQty, toStockQtyMap, COMMISSION_RATE, todayLocalDate, debounce } from '@/utils'
 import { printSaleA4, printCombinedA4, checkPrinterConnected, navigateToPrinterSettings } from '@/utils/bluetooth-printer'
-import { CANVAS_ID, PAGE_WIDTH_DOTS, estimateContentHeight } from '@/utils/canvas-print'
+import { CANVAS_ID, PAGE_WIDTH_DOTS, calcCanvasHeightForItems } from '@/utils/canvas-print'
 import { guardNetwork } from '@/utils/network'
 import { requestCurrentLocation } from '@/utils/location'
 import { haversineDistance, formatDistance } from '@/utils/geo'
@@ -343,6 +343,7 @@ const addedProductOrder = ref(new Map<string, number>())
 const showReturnSection = ref(false)
 const returnQtyMap = ref<Record<string, QtyInput>>({})
 const returnKeyword = ref('')
+const returnAddedProductOrder = ref(new Map<string, number>())
 
 // 非响应式提交锁，防止快速连点导致的重复提交
 let _submitLock = false
@@ -351,8 +352,9 @@ const canvasId = CANVAS_ID
 const canvasWidthPx = PAGE_WIDTH_DOTS
 const canvasHeightPx = computed(() => {
   const itemCount = selectedProducts.value.length + (showReturnSection.value ? returnSelectedProducts.value.length : 0)
-  // 保持足够高度以容纳所有商品行
-  return Math.max(2480, 800 + itemCount * 64)
+  // 用打印模块的同一套常量计算，避免元素高度小于实际绘制高度导致小票底部被裁切。
+  // +3 行余量给合并打印的「退货商品」标题行与净额行。
+  return calcCanvasHeightForItems(itemCount + 3)
 })
 
 const DRAFT_KEY = 'wh_sale_draft'
@@ -369,6 +371,8 @@ interface SaleDraft {
   savedAt: number
   showReturnSection?: boolean
   returnQtyMap?: Record<string, { boxQty: number; bagQty: number; qty: number }>
+  productOrder?: Record<string, number>
+  returnProductOrder?: Record<string, number>
 }
 
 const storeOptions = computed(() => {
@@ -576,7 +580,15 @@ const returnQuickPickOptions = computed(() => returnFilteredProducts.value.map(p
   name: formatProductQuickPickLabel(p, productStockPreview(p.id)),
 })))
 
-const returnSelectedProducts = computed(() => products.value.filter(p => !!returnQtyMap.value[p.id]))
+const returnSelectedProducts = computed(() => {
+  const selected = products.value.filter(p => !!returnQtyMap.value[p.id])
+  const order = returnAddedProductOrder.value
+  return [...selected].sort((a, b) => {
+    const oa = order.get(a.id) ?? 0
+    const ob = order.get(b.id) ?? 0
+    return ob - oa
+  })
+})
 
 const returnTotalQty = computed(() => {
   return Object.values(returnQtyMap.value).reduce((sum, item) => sum + normalizeCount(item.qty), 0)
@@ -657,10 +669,12 @@ function toggleReturnSelect(p: Product) {
   if (returnQtyMap.value[p.id]) {
     delete returnQtyMap.value[p.id]
     returnQtyMap.value = { ...returnQtyMap.value }
+    returnAddedProductOrder.value.delete(p.id)
     return
   }
   returnQtyMap.value[p.id] = createQtyInput(p.id)
   returnQtyMap.value = { ...returnQtyMap.value }
+  returnAddedProductOrder.value.set(p.id, Date.now())
 }
 
 function syncReturnQty(productId: string) {
@@ -1053,6 +1067,10 @@ async function submitAndPrint() {
   }
   submittedResult.value = result
 
+  // 等待 canvas 元素按最终高度完成布局再绘制，避免画布尺寸未就绪导致图像被裁/空白
+  await nextTick()
+  await new Promise(r => setTimeout(r, 120))
+
   try {
     const store = stores.value.find(s => s.id === result.saleDoc.storeId)
     const spId = currentSalespersonId()
@@ -1136,6 +1154,10 @@ function saveDraftNow() {
     savedAt: Date.now(),
     showReturnSection: showReturnSection.value,
     returnQtyMap: showReturnSection.value ? JSON.parse(JSON.stringify(returnQtyMap.value)) : undefined,
+    // 顺序也要存：否则恢复草稿后所有 order 都取默认 0，排序失效，
+    // 商品会退回基础资料顺序而不是用户当时的录入顺序。
+    productOrder: Object.fromEntries(addedProductOrder.value),
+    returnProductOrder: Object.fromEntries(returnAddedProductOrder.value),
   }
   uni.setStorageSync(DRAFT_KEY, JSON.stringify(draft))
 }
@@ -1180,6 +1202,29 @@ function clearDraft() {
   autoDraftId.value = ''
 }
 
+/**
+ * 恢复商品录入顺序表。
+ * saved 有值则直接用；老草稿没存顺序时，按 qtyMap 的键序递减赋值兜底
+ * （selectedProducts 按 order 降序展示，递减才能保持原顺序）。
+ */
+function restoreOrderMap(
+  target: { value: Map<string, number> },
+  saved?: Record<string, number>,
+  fallbackQtyMap?: Record<string, unknown>,
+) {
+  const next = new Map<string, number>()
+  if (saved && Object.keys(saved).length > 0) {
+    for (const [id, order] of Object.entries(saved)) {
+      const n = Number(order)
+      if (Number.isFinite(n)) next.set(id, n)
+    }
+  } else if (fallbackQtyMap) {
+    const ids = Object.keys(fallbackQtyMap)
+    ids.forEach((id, index) => next.set(id, ids.length - index))
+  }
+  target.value = next
+}
+
 function tryRestoreDraft() {
   const raw = uni.getStorageSync(DRAFT_KEY)
   if (!raw) return
@@ -1215,6 +1260,10 @@ function tryRestoreDraft() {
           if (draft.returnQtyMap && Object.keys(draft.returnQtyMap).length > 0) {
             returnQtyMap.value = draft.returnQtyMap
           }
+          // 恢复录入顺序；老草稿没有该字段时按 qtyMap 的键序兜底，
+          // 至少保证相对顺序稳定，不会退化成基础资料顺序。
+          restoreOrderMap(addedProductOrder, draft.productOrder, draft.qtyMap)
+          restoreOrderMap(returnAddedProductOrder, draft.returnProductOrder, draft.returnQtyMap)
         } else {
           clearDraft()
         }
@@ -1332,7 +1381,8 @@ async function tryRestoreBackendDraft(draftId: string) {
       refreshStockPreview()
     }
     if (doc.lines && doc.lines.length > 0) {
-      for (const line of doc.lines) {
+      const total = doc.lines.length
+      doc.lines.forEach((line: any, index: number) => {
         const boxQty = products.value.find(p => p.id === line.productId)?.boxQty || 1
         const boxes = boxQty > 1 ? Math.floor(line.qty / boxQty) : 0
         const bags = boxQty > 1 ? line.qty % boxQty : line.qty
@@ -1341,10 +1391,10 @@ async function tryRestoreBackendDraft(draftId: string) {
           bagQty: bags,
           qty: line.qty,
         }
-        if (!addedProductOrder.value.has(line.productId)) {
-          addedProductOrder.value.set(line.productId, addedProductOrder.value.size)
-        }
-      }
+        // 必须递减赋值：selectedProducts 按 order 降序展示，
+        // 若按 0,1,2 递增会让草稿恢复后的商品顺序整个反过来。
+        addedProductOrder.value.set(line.productId, total - index)
+      })
     }
   } catch {
     // 静默失败，当作新建处理
@@ -1364,19 +1414,28 @@ function tryRestorePrefill() {  const raw = uni.getStorageSync('wh_sale_prefill'
     }
     if (data.lines) {
       const newQtyMap: Record<string, QtyInput> = {}
-      for (const line of data.lines) {
+      const newOrder = new Map<string, number>()
+      const total = data.lines.length
+      data.lines.forEach((line: any, index: number) => {
         newQtyMap[line.productId] = createQtyInput(line.productId, line.qty, line.boxQty)
-      }
+        // 保持原单顺序：第一行取最大值，selectedProducts 按 order 降序展示
+        newOrder.set(line.productId, total - index)
+      })
       qtyMap.value = newQtyMap
+      addedProductOrder.value = newOrder
     }
     // 恢复退单部分
     if (data.returnLines && data.returnLines.length > 0) {
       showReturnSection.value = true
       const newReturnQtyMap: Record<string, QtyInput> = {}
-      for (const line of data.returnLines) {
+      const newReturnOrder = new Map<string, number>()
+      const rtotal = data.returnLines.length
+      data.returnLines.forEach((line: any, index: number) => {
         newReturnQtyMap[line.productId] = createQtyInput(line.productId, line.qty, line.boxQty)
-      }
+        newReturnOrder.set(line.productId, rtotal - index)
+      })
       returnQtyMap.value = newReturnQtyMap
+      returnAddedProductOrder.value = newReturnOrder
     }
   } catch { /* ignore */ }
   uni.removeStorageSync('wh_sale_prefill')

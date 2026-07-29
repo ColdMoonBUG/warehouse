@@ -50,6 +50,24 @@ export async function getStoreSaleQty(days = 30): Promise<Record<string, number>
   return res.data || {}
 }
 
+export interface ProductStat {
+  saleQty: number
+  giftQty: number
+  saleAmount: number
+  vehicleReturnQty: number
+  warehouseReturnQty: number
+  returnQty: number
+  returnAmount: number
+  netQty: number
+}
+
+export async function getProductStat(productId: string, startDate?: string, endDate?: string): Promise<ProductStat> {
+  const params: Record<string, string> = { productId }
+  if (startDate && endDate) { params.startDate = startDate; params.endDate = endDate }
+  const res = await request.get('/sale/productStat', { params })
+  return res.data
+}
+
 export async function getUnsettledSales(page = 1, limit = 50): Promise<{ list: SaleDoc[], total: number }> {
   const res = await request.get('/sale/unsettled', { params: { page, limit } }) as unknown as SaleListResponse
   return {

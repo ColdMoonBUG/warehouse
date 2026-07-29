@@ -103,6 +103,7 @@ interface PrintItem {
   price: number
   amount: number
   shelfDays?: number
+  weight?: string
   boxPackQty?: number  // 每箱袋数，出库单显示 X箱(X袋) 用
 }
 
@@ -141,6 +142,24 @@ function estimateContentHeight(data: PrintDocData, fillFullPage: boolean = false
 
   const margin = PAGE_MARGIN_DOTS
   return margin + headerH + 15 + infoH + 15 + tableH + 15 + footerH + margin + CUT_BOTTOM_BLANK_DOTS
+}
+
+/**
+ * 供页面给 <canvas> 元素设置高度用。
+ *
+ * 背景：各页面此前各自用「800 + 商品数×64」之类的独立公式估高，与打印模块真实
+ * 绘制高度不同步。一旦元素高度小于实际绘制高度，canvasGetImageData 读不到超出
+ * 部分，小票底部（合计/签名）会被静默裁掉——商品越多越容易触发。
+ * 这里用与绘制完全相同的常量计算，并额外留 15% 余量兜底。
+ */
+export function calcCanvasHeightForItems(_itemCount: number, _hasRemark: boolean = true): number {
+  // 恒为 A4 整页高度：
+  // - 不能更矮：fillFullPage 预设会铺满整页，画布矮于整页就会被裁掉底部（原先各页面
+  //   自算的 800 + 商品数×64 正是矮于整页才导致小票底部丢失）。
+  // - 不需更高：超过一页的内容一律由 splitItemsByHeight 分页渲染，单张画布永远不会
+  //   画得比一页更高；盲目加高只会逼近 WebView 的 canvas 尺寸上限反而整块变空白。
+  // 保留入参是为了调用点语义清晰，也便于将来改成按内容动态收缩。
+  return PAGE_HEIGHT_DOTS
 }
 
 function estimateSalePageHeight(itemCount: number): number {
@@ -1225,7 +1244,15 @@ function renderDocImages(data: PrintDocData, options: PrintBuildOptions, estimat
   }
   const chunks = createSplitItems(data.items, estimateHeight)
   notifySplit(finalPageLabel(data), chunks.length)
-  return Promise.all(chunks.map((items, index) => generatePrintImageData(buildPageData(data, items, index, chunks.length), false)))
+  // 必须串行：所有页共用同一个 canvas('printCanvas')，并发绘制会互相覆盖，
+  // 导致 canvasGetImageData 读到别页的像素。
+  return (async () => {
+    const pages: any[] = []
+    for (let index = 0; index < chunks.length; index++) {
+      pages.push(await generatePrintImageData(buildPageData(data, chunks[index], index, chunks.length), false))
+    }
+    return pages
+  })()
 }
 
 function renderCombinedImagePages(data: CombinedPrintData, options: PrintBuildOptions): Promise<any[]> {
@@ -1235,13 +1262,19 @@ function renderCombinedImagePages(data: CombinedPrintData, options: PrintBuildOp
   }
   const chunks = createSplitCombined(data)
   notifySplit(finalCombinedPageLabel(), chunks.length)
-  return Promise.all(chunks.map(async (chunk, index) => {
-    const pageData = buildCombinedDataByChunk(data, chunk, index, chunks.length)
-    const pageHeight = getPageImageHeight(imageHeightForCombined(chunk))
-    const ctx = createCombinedCtx()
-    await drawCombinedContent(ctx, pageData, pageData.saleItems, pageData.returnItems, PAGE_WIDTH_DOTS, pageHeight, index + 1, chunks.length)
-    return getCanvasImageData(PAGE_WIDTH_DOTS, pageHeight)
-  }))
+  // 必须串行：多页共用同一个 canvas，并发绘制会互相覆盖导致读到错页像素
+  return (async () => {
+    const pages: any[] = []
+    for (let index = 0; index < chunks.length; index++) {
+      const chunk = chunks[index]
+      const pageData = buildCombinedDataByChunk(data, chunk, index, chunks.length)
+      const pageHeight = getPageImageHeight(imageHeightForCombined(chunk))
+      const ctx = createCombinedCtx()
+      await drawCombinedContent(ctx, pageData, pageData.saleItems, pageData.returnItems, PAGE_WIDTH_DOTS, pageHeight, index + 1, chunks.length)
+      pages.push(await getCanvasImageData(PAGE_WIDTH_DOTS, pageHeight))
+    }
+    return pages
+  })()
 }
 
 function getSaleImagePages(data: PrintDocData, options: PrintBuildOptions) {
@@ -1314,12 +1347,13 @@ async function drawPrintContent(ctx: any, data: PrintDocData, width: number, hei
   const ll = 1
 
   const colSeq = left
-  const colBarcode = left + Math.floor(contentWidth * 0.06)
-  const colName = left + Math.floor(contentWidth * 0.26) + PRODUCT_COLUMN_OFFSET_DOTS
-  const colQty = left + Math.floor(contentWidth * 0.62)
-  const colShelf = left + Math.floor(contentWidth * 0.72)
-  const colPrice = left + Math.floor(contentWidth * 0.82)
-  const colAmount = left + Math.floor(contentWidth * 0.91)
+  const colBarcode = left + Math.floor(contentWidth * 0.05)
+  const colName = left + Math.floor(contentWidth * 0.23) + PRODUCT_COLUMN_OFFSET_DOTS
+  const colQty = left + Math.floor(contentWidth * 0.55)
+  const colShelf = left + Math.floor(contentWidth * 0.65)
+  const colWeight = left + Math.floor(contentWidth * 0.75)
+  const colPrice = left + Math.floor(contentWidth * 0.84)
+  const colAmount = left + Math.floor(contentWidth * 0.92)
 
   ctx.setFillStyle('black')
 
@@ -1365,6 +1399,7 @@ async function drawPrintContent(ctx: any, data: PrintDocData, width: number, hei
   ctx.fillText('商品', colName, y + 44)
   ctx.fillText('数量', colQty, y + 44)
   ctx.fillText('保质期', colShelf, y + 44)
+  ctx.fillText('克重', colWeight, y + 44)
   ctx.fillText('进价', colPrice, y + 44)
   ctx.fillText('总计', colAmount, y + 44)
   y += 58
@@ -1390,6 +1425,7 @@ async function drawPrintContent(ctx: any, data: PrintDocData, width: number, hei
     ctx.fillText(nameText, colName, y + 44)
     ctx.fillText(qtyText, colQty, y + 44)
     ctx.fillText(shelfText, colShelf, y + 44)
+    ctx.fillText(item.weight || '', colWeight, y + 44)
     ctx.fillText(priceText, colPrice, y + 44)
     ctx.fillText(amountText, colAmount, y + 44)
     y += 64
@@ -1427,7 +1463,7 @@ async function drawPrintContent(ctx: any, data: PrintDocData, width: number, hei
   })
 }
 
-async function getCanvasImageData(width: number, height: number): Promise<any> {
+function readCanvasImageDataOnce(width: number, height: number): Promise<any> {
   return new Promise((resolve, reject) => {
     uni.canvasGetImageData({
       canvasId: CANVAS_ID,
@@ -1439,6 +1475,36 @@ async function getCanvasImageData(width: number, height: number): Promise<any> {
       fail: reject,
     })
   })
+}
+
+/**
+ * 读取画布像素。
+ * 慢设备上 ctx.draw 之后固定等 200ms 有时仍未光栅化完成，会读到空/残缺数据。
+ * 这里做一次校验与重试兜底：数据长度不足预期(width*height*4)时补等再读一次，
+ * 仍不达标也照常返回（打印内容可能偏短，但不会直接中断整个打印流程）。
+ */
+async function getCanvasImageData(width: number, height: number): Promise<any> {
+  const expected = width * height * 4
+  let res: any
+  try {
+    res = await readCanvasImageDataOnce(width, height)
+  } catch (e) {
+    await new Promise(r => setTimeout(r, 300))
+    res = await readCanvasImageDataOnce(width, height) // 第二次失败才向上抛
+    return res
+  }
+  const len = res?.data?.length || 0
+  if (len < expected) {
+    console.warn(`[canvas-print] 像素数据不完整(${len}/${expected})，补等后重读`)
+    await new Promise(r => setTimeout(r, 300))
+    try {
+      const retry = await readCanvasImageDataOnce(width, height)
+      if ((retry?.data?.length || 0) >= len) return retry
+    } catch {
+      // 重读失败则沿用首次结果，避免打印彻底失败
+    }
+  }
+  return res
 }
 
 async function generatePrintImageData(data: PrintDocData, fillFullPage: boolean = false): Promise<any> {
@@ -1550,6 +1616,7 @@ export async function buildSalePrintData(
       price: line.price,
       amount: Number(line.qty) * Number(line.price),
       shelfDays: product?.shelfDays,
+      weight: product?.weight,
     }
   })
 
@@ -1595,6 +1662,7 @@ export async function buildReturnPrintData(
       price: line.price,
       amount: Number(line.qty) * Number(line.price),
       shelfDays: product?.shelfDays,
+      weight: product?.weight,
     }
   })
 
@@ -1667,12 +1735,13 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
   const ll = 1
 
   const colSeq = left
-  const colBarcode = left + Math.floor(contentWidth * 0.06)
-  const colName = left + Math.floor(contentWidth * 0.26) + PRODUCT_COLUMN_OFFSET_DOTS
-  const colQty = left + Math.floor(contentWidth * 0.62)
-  const colShelf = left + Math.floor(contentWidth * 0.72)
-  const colPrice = left + Math.floor(contentWidth * 0.82)
-  const colAmount = left + Math.floor(contentWidth * 0.91)
+  const colBarcode = left + Math.floor(contentWidth * 0.05)
+  const colName = left + Math.floor(contentWidth * 0.23) + PRODUCT_COLUMN_OFFSET_DOTS
+  const colQty = left + Math.floor(contentWidth * 0.55)
+  const colShelf = left + Math.floor(contentWidth * 0.65)
+  const colWeight = left + Math.floor(contentWidth * 0.75)
+  const colPrice = left + Math.floor(contentWidth * 0.84)
+  const colAmount = left + Math.floor(contentWidth * 0.92)
 
   ctx.setFillStyle('black')
 
@@ -1716,6 +1785,7 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
     ctx.fillText('商品', colName, y + 44)
     ctx.fillText('数量', colQty, y + 44)
     ctx.fillText('保质期', colShelf, y + 44)
+    ctx.fillText('克重', colWeight, y + 44)
     ctx.fillText('进价', colPrice, y + 44)
     ctx.fillText('总计', colAmount, y + 44)
     y += 58
@@ -1734,6 +1804,7 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
       ctx.fillText(item.name, colName, y + 44)
       ctx.fillText(`${normalizeCount(item.qty)}`, colQty, y + 44)
       ctx.fillText(item.shelfDays ? `${item.shelfDays}天` : '-', colShelf, y + 44)
+      ctx.fillText(item.weight || '', colWeight, y + 44)
       ctx.fillText(moneyText(item.price), colPrice, y + 44)
       ctx.fillText(moneyText(item.amount), colAmount, y + 44)
       y += 64
@@ -1766,6 +1837,7 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
     ctx.fillText('商品', colName, y + 44)
     ctx.fillText('数量', colQty, y + 44)
     ctx.fillText('保质期', colShelf, y + 44)
+    ctx.fillText('克重', colWeight, y + 44)
     ctx.fillText('进价', colPrice, y + 44)
     ctx.fillText('总计', colAmount, y + 44)
     y += 58
@@ -1784,6 +1856,7 @@ async function drawCombinedContent(ctx: any, data: CombinedPrintData, saleItems:
       ctx.fillText(item.name, colName, y + 44)
       ctx.fillText(`${normalizeCount(item.qty)}`, colQty, y + 44)
       ctx.fillText(item.shelfDays ? `${item.shelfDays}天` : '-', colShelf, y + 44)
+      ctx.fillText(item.weight || '', colWeight, y + 44)
       ctx.fillText(moneyText(item.price), colPrice, y + 44)
       ctx.fillText(moneyText(item.amount), colAmount, y + 44)
       y += 64
@@ -1857,6 +1930,7 @@ export async function buildCombinedPrintData(
       price: line.price,
       amount: Number(line.qty) * Number(line.price),
       shelfDays: product?.shelfDays,
+      weight: product?.weight,
     }
   })
 
@@ -1870,6 +1944,7 @@ export async function buildCombinedPrintData(
       price: line.price,
       amount: Number(line.qty) * Number(line.price),
       shelfDays: product?.shelfDays,
+      weight: product?.weight,
     }
   })
 

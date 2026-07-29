@@ -200,7 +200,7 @@ import { getStock, saveReturn, postReturn, isOwnedStore, isSameSalespersonId, ge
 import type { Store, Product, Warehouse, ReturnDoc, ReturnLine, StockItem } from '@/types'
 import { genId, formatProductQuickPickLabel, formatProductPackageSummary, calcQty, deriveBagQty, normalizeCount, normalizeBoxPackQty, formatStockPreview, getProductStockQty, toStockQtyMap, todayLocalDate } from '@/utils'
 import { printReturnA4, checkPrinterConnected, navigateToPrinterSettings } from '@/utils/bluetooth-printer'
-import { CANVAS_ID, PAGE_WIDTH_DOTS } from '@/utils/canvas-print'
+import { CANVAS_ID, PAGE_WIDTH_DOTS, calcCanvasHeightForItems } from '@/utils/canvas-print'
 import { guardNetwork } from '@/utils/network'
 import { requestCurrentLocation } from '@/utils/location'
 import { haversineDistance, formatDistance } from '@/utils/geo'
@@ -254,8 +254,8 @@ const addedProductOrder = ref(new Map<string, number>())
 const canvasId = CANVAS_ID
 const canvasWidthPx = PAGE_WIDTH_DOTS
 const canvasHeightPx = computed(() => {
-  const itemCount = selectedProducts.value.length
-  return Math.max(2480, 800 + itemCount * 64)
+  // 与打印模块同源计算，避免元素高度不足导致小票底部被裁切
+  return calcCanvasHeightForItems(selectedProducts.value.length + 2)
 })
 let _submitLock = false
 

@@ -56,7 +56,8 @@ public class ReturnController {
         if (!docs.isEmpty()) {
             java.util.Set<String> docIds = docs.stream().map(ReturnDoc::getId).collect(java.util.stream.Collectors.toSet());
             List<ReturnLine> allLines = returnLineMapper.selectList(
-                new LambdaQueryWrapper<ReturnLine>().in(ReturnLine::getDocId, docIds));
+                new LambdaQueryWrapper<ReturnLine>().in(ReturnLine::getDocId, docIds)
+                    .orderByAsc(ReturnLine::getLineNo).orderByAsc(ReturnLine::getId));
             java.util.Map<String, List<ReturnLine>> lineMap = allLines.stream()
                 .collect(java.util.stream.Collectors.groupingBy(ReturnLine::getDocId));
             for (ReturnDoc doc : docs) {
@@ -70,7 +71,7 @@ public class ReturnController {
     public Result<ReturnDoc> detail(@PathVariable String id) {
         ReturnDoc doc = returnDocMapper.selectById(id);
         if (doc != null) {
-            List<ReturnLine> lines = returnLineMapper.selectList(new LambdaQueryWrapper<ReturnLine>().eq(ReturnLine::getDocId, id));
+            List<ReturnLine> lines = returnLineMapper.selectList(new LambdaQueryWrapper<ReturnLine>().eq(ReturnLine::getDocId, id).orderByAsc(ReturnLine::getLineNo).orderByAsc(ReturnLine::getId));
             doc.setLines(lines);
         }
         return Result.ok(doc);
@@ -118,10 +119,16 @@ public class ReturnController {
                 returnLineMapper.delete(new LambdaQueryWrapper<ReturnLine>().eq(ReturnLine::getDocId, doc.getId()));
             }
         }
+        int lineIdx = 0;
         for (ReturnLine line : lines) {
             int qty = line.getQty() == null ? 0 : line.getQty();
             line.setId(IdUtils.randomId());
             line.setDocId(doc.getId());
+            // 行号：前端传了则保留，否则用录入顺序兜底（打印/重建排序依赖）
+            if (line.getLineNo() == null || line.getLineNo() <= 0) {
+                line.setLineNo(lineIdx + 1);
+            }
+            lineIdx++;
             if (line.getAmount() == null) {
                 BigDecimal price = line.getPrice() == null ? BigDecimal.ZERO : line.getPrice();
                 line.setAmount(price.multiply(new BigDecimal(qty)));
@@ -139,7 +146,7 @@ public class ReturnController {
             if (doc == null || !"draft".equals(doc.getStatus())) {
                 return Result.error("单据状态异常");
             }
-            List<ReturnLine> lines = returnLineMapper.selectList(new LambdaQueryWrapper<ReturnLine>().eq(ReturnLine::getDocId, id));
+            List<ReturnLine> lines = returnLineMapper.selectList(new LambdaQueryWrapper<ReturnLine>().eq(ReturnLine::getDocId, id).orderByAsc(ReturnLine::getLineNo).orderByAsc(ReturnLine::getId));
             String fromWarehouseId = doc.getFromWarehouseId() == null || doc.getFromWarehouseId().isEmpty() ? MAIN_WAREHOUSE_ID : doc.getFromWarehouseId();
             String toWarehouseId = doc.getToWarehouseId() == null || doc.getToWarehouseId().isEmpty() ? RETURN_WAREHOUSE_ID : doc.getToWarehouseId();
             for (ReturnLine line : lines) {
@@ -193,7 +200,7 @@ public class ReturnController {
             if (doc == null || !"posted".equals(doc.getStatus())) {
                 return Result.error("只能作废已过账单据");
             }
-            List<ReturnLine> lines = returnLineMapper.selectList(new LambdaQueryWrapper<ReturnLine>().eq(ReturnLine::getDocId, id));
+            List<ReturnLine> lines = returnLineMapper.selectList(new LambdaQueryWrapper<ReturnLine>().eq(ReturnLine::getDocId, id).orderByAsc(ReturnLine::getLineNo).orderByAsc(ReturnLine::getId));
             String fromWarehouseId = doc.getFromWarehouseId() == null || doc.getFromWarehouseId().isEmpty() ? MAIN_WAREHOUSE_ID : doc.getFromWarehouseId();
             String toWarehouseId = doc.getToWarehouseId() == null || doc.getToWarehouseId().isEmpty() ? RETURN_WAREHOUSE_ID : doc.getToWarehouseId();
             for (ReturnLine line : lines) {
@@ -236,7 +243,9 @@ public class ReturnController {
                 new LambdaQueryWrapper<com.yeqifu.warehouse.entity.ReturnDoc>()
                     .eq(com.yeqifu.warehouse.entity.ReturnDoc::getId, id)
                     .eq(com.yeqifu.warehouse.entity.ReturnDoc::getStatus, "posted"));
-            if (updated == 0) return Result.error("单据状态已变更，请刷新");
+            // 必须抛异常：直接 return 会让事务正常提交，而上面已写入的库存流水/提成冲账会被保留，
+            // 造成并发双击作废时重复冲账。抛出后由下方 catch 统一 setRollbackOnly 回滚。
+            if (updated == 0) throw new RuntimeException("单据状态已变更，请刷新");
             return Result.ok();
         } catch (RuntimeException e) {
             TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();

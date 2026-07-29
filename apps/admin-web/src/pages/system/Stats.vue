@@ -49,6 +49,47 @@
       </div>
     </el-card>
 
+    <!-- 单商品进退统计 -->
+    <el-card v-if="selectedProductId" class="product-stat-card" v-loading="productStatLoading">
+      <template #header>
+        <div class="table-header">
+          <span>🔎 「{{ productMap[selectedProductId] }}」进退统计</span>
+          <span class="header-sub">{{ periodLabel }}（已过账，销售不含赠送）</span>
+        </div>
+      </template>
+      <div v-if="productStat" class="product-stat-grid">
+        <div class="pstat-item">
+          <div class="pstat-value sale-color">{{ formatBoxBag(productStat.saleQty, selectedProductId) }}</div>
+          <div class="pstat-label">累计销售</div>
+          <div class="pstat-sub">¥{{ Number(productStat.saleAmount).toFixed(2) }}</div>
+        </div>
+        <div class="pstat-item">
+          <div class="pstat-value loss-color">{{ formatBoxBag(productStat.returnQty, selectedProductId) }}</div>
+          <div class="pstat-label">累计退货</div>
+          <div class="pstat-sub">¥{{ Number(productStat.returnAmount).toFixed(2) }}</div>
+        </div>
+        <div class="pstat-item">
+          <div class="pstat-value">{{ formatBoxBag(productStat.vehicleReturnQty, selectedProductId) }}</div>
+          <div class="pstat-label">其中·超市退货</div>
+          <div class="pstat-sub">已实时扣提成</div>
+        </div>
+        <div class="pstat-item">
+          <div class="pstat-value loss-color">{{ formatBoxBag(productStat.warehouseReturnQty, selectedProductId) }}</div>
+          <div class="pstat-label">其中·回仓退货</div>
+          <div class="pstat-sub">真正没卖掉</div>
+        </div>
+        <div class="pstat-item">
+          <div class="pstat-value net-color">{{ formatBoxBag(productStat.netQty, selectedProductId) }}</div>
+          <div class="pstat-label">净销售</div>
+          <div class="pstat-sub">销售 − 超市退货</div>
+        </div>
+        <div v-if="productStat.giftQty > 0" class="pstat-item">
+          <div class="pstat-value gift-color">{{ formatBoxBag(productStat.giftQty, selectedProductId) }}</div>
+          <div class="pstat-label">另·赠送</div>
+        </div>
+      </div>
+    </el-card>
+
     <!-- 汇总卡片 -->
     <div class="summary-cards">
       <el-card class="summary-card">
@@ -234,11 +275,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { getAllInbounds, getAllReturns, getAllAccounts } from '@/api/stats'
 import { getProducts } from '@/api/product'
 import { getTransfers, getWarehouses } from '@/api/stock'
+import { getProductStat, type ProductStat } from '@/api/sale'
 import { getPackSize } from '@/utils/pack'
 import type { InboundDoc, ReturnDoc, TransferDoc, Warehouse } from '@/types'
 
@@ -303,6 +345,25 @@ const warehouseMap = ref<Record<string, string>>({})
 const selectedProductId = ref<string>('')
 interface ProductOption { id: string; name: string }
 const productOptions = ref<ProductOption[]>([])
+
+// 单商品进退统计（按当前周期）
+const productStat = ref<ProductStat | null>(null)
+const productStatLoading = ref(false)
+async function loadProductStat() {
+  if (!selectedProductId.value) {
+    productStat.value = null
+    return
+  }
+  const { start, end } = getDateRange()
+  productStatLoading.value = true
+  try {
+    productStat.value = await getProductStat(selectedProductId.value, start, end)
+  } catch {
+    productStat.value = null
+  } finally {
+    productStatLoading.value = false
+  }
+}
 
 function inRange(date: string, start: string, end: string) {
   // 兼容 "2026-05-14T00:00:00" 和 "2026-05-14" 两种格式
@@ -635,6 +696,11 @@ function stopAutoRefresh() {
   refreshTimer = null
 }
 
+// 商品选择或统计周期变化时，刷新单商品进退统计
+watch([selectedProductId, periodMode, customRange], () => {
+  void loadProductStat()
+})
+
 onMounted(() => {
   void loadData()
   startAutoRefresh()
@@ -671,6 +737,24 @@ onBeforeUnmount(() => {
 .return-color { color: #f59e0b; }
 .transfer-color { color: #10b981; }
 .loss-color { color: #dc2626; }
+.sale-color { color: #2563eb; }
+.net-color { color: #059669; }
+.gift-color { color: #d97706; }
+
+.product-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 16px;
+}
+.pstat-item {
+  text-align: center;
+  padding: 12px 8px;
+  background: #f8fafc;
+  border-radius: 8px;
+}
+.pstat-value { font-size: 22px; font-weight: 700; line-height: 1.3; }
+.pstat-label { font-size: 13px; color: #64748b; margin-top: 6px; }
+.pstat-sub { font-size: 12px; color: #94a3b8; margin-top: 2px; }
 
 .table-card { }
 .table-header { display: flex; align-items: center; gap: 12px; }

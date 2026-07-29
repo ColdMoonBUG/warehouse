@@ -194,14 +194,15 @@ async function writeBleWithFlowControl(
 ) {
   const total = value.byteLength
   let count = 0
-  const deadline = Date.now() + 3000
-  let noCreditTicks = 0
+  // 无 credit 停滞超过该时长即降级；原实现的 deadline 变量从未被判断（死代码），
+  // 且降级条件写死 count===0，导致「传到一半 credit 断供」时会永久空转。
+  const NO_CREDIT_TIMEOUT = 3000
+  let noCreditSince = 0
 
   while (count < total) {
     if (device.dataFC.mtu > 0 && device.dataFC.credit > 0) {
       const subData = value.slice(count, count + device.dataFC.mtu - 3)
       if (subData.byteLength === 0) break
-      count += subData.byteLength
       device.dataFC.credit--
 
       let ok = false
@@ -220,16 +221,27 @@ async function writeBleWithFlowControl(
             retries++
             await sleep(30)
           } else {
+            device.dataFC.credit++ // 该片未发出，归还预扣的信用
             throw e
           }
         }
       }
-      noCreditTicks = 0
+      if (!ok) {
+        // 重试用尽仍失败：原实现会静默跳过这一片，导致打印内容缺块。
+        // 这里改为从当前偏移降级续传，保证数据完整。
+        device.dataFC.credit++ // 归还预扣信用，避免每次失败都永久少算一个窗口
+        appendLog('warn', `流控写入重试失败，从 ${count} 字节处降级续传`)
+        await writeBleSimple(device, value, count)
+        return
+      }
+      count += subData.byteLength
+      noCreditSince = 0
     } else {
-      noCreditTicks++
-      if (noCreditTicks > 100 && count === 0) {
-        // 3 秒内没收到流控 credit，降级为普通分片写入
-        appendLog('warn', '未收到流控 credit，降级为普通写入')
+      if (noCreditSince === 0) {
+        noCreditSince = Date.now()
+      } else if (Date.now() - noCreditSince > NO_CREDIT_TIMEOUT) {
+        // 不再限制 count===0：传输中途 credit 断供同样降级续传，避免死循环
+        appendLog('warn', `${NO_CREDIT_TIMEOUT}ms 未获得流控 credit，从 ${count} 字节处降级为普通写入`)
         await writeBleSimple(device, value, count)
         return
       }
@@ -281,6 +293,8 @@ interface BleSession {
 }
 
 let currentSession: BleSession | null = null
+// 当前已注册的 BLE 连接状态监听器，用于下次注册前注销，防止监听器堆积
+let _connStateHandler: ((res: any) => void) | null = null
 let resultBuffer: number[] = []
 let jsonBuffer: string | null = null
 
@@ -353,6 +367,15 @@ export async function connectPrinter(deviceId: string): Promise<void> {
         reject(new Error('蓝牙连接失败或已断开'))
       }
     }
+    // 每次连接都注册而从不注销会导致监听器堆积（5s 重连场景下尤其明显），
+    // 旧 handler 可能对新一轮连接误触发。注册前先注销上一个。
+    // offBLEConnectionStateChange 在部分平台可能缺失，用 try/typeof 兜底。
+    try {
+      if (_connStateHandler && typeof (uni as any).offBLEConnectionStateChange === 'function') {
+        (uni as any).offBLEConnectionStateChange(_connStateHandler)
+      }
+    } catch { /* 平台不支持则忽略，不影响连接 */ }
+    _connStateHandler = handler
     uni.onBLEConnectionStateChange(handler)
     createBleConnection(deviceId).catch((e: any) => {
       if (!settled) {
@@ -591,11 +614,45 @@ export function buildReturnReceipt(doc: ReturnDoc, storeName: string, salesperso
 // 打印入口（参照官方 demo testPrint 流程）
 // ============================================================
 
+// ---- 打印任务串行化 + 守护进程恢复兜底 ----
+// 1) 串行锁：模块级共享 currentSession / dataFC 信用 / 同一块 canvas，
+//    两个打印任务重叠会交错写同一特征值导致数据错乱，这里排队执行。
+// 2) finally 恢复守护：原先 resumeDaemonAfterPrint() 写在函数最后一行，
+//    打印中途抛错就永远不会执行，自动重连从此停摆。放进 finally 保证一定恢复。
+let _printChain: Promise<unknown> = Promise.resolve()
+let _pendingPrintJobs = 0
+
+function withPrintJob<T>(label: string, job: () => Promise<T>): Promise<T> {
+  _pendingPrintJobs++ // 入队即计数，确保「队列是否还有后续任务」判断准确
+  const run = async (): Promise<T> => {
+    try {
+      return await job()
+    } finally {
+      _pendingPrintJobs--
+      // 仅当队列已排空时才恢复守护。否则守护会立刻发起 tryConnectOnce，
+      // 与紧接着出队的下一个打印任务的 connectPrinter 并发操作同一设备，
+      // 双方都会 closeBluetoothAdapter 重置适配器并互相覆盖 currentSession。
+      if (_pendingPrintJobs === 0) {
+        try {
+          resumeDaemonAfterPrint()
+        } catch (e) {
+          appendLog('warn', `[${label}] 恢复蓝牙守护失败: ${(e as any)?.message || e}`)
+        }
+      }
+    }
+  }
+  // 前一个任务无论成功失败都不阻断后一个任务排队
+  const next = _printChain.then(run, run)
+  _printChain = next.catch(() => undefined)
+  return next
+}
+
 export async function printTestPage(device?: PrinterDevice | null) {
-  await ensurePrinterConnected(device || null)
-  const cpcl = buildTestPageCpcl()
-  await sendCpcl(cpcl)
-  resumeDaemonAfterPrint()
+  return withPrintJob('测试页', async () => {
+    await ensurePrinterConnected(device || null)
+    const cpcl = buildTestPageCpcl()
+    await sendCpcl(cpcl)
+  })
 }
 
 export async function printSaleA4(
@@ -606,23 +663,24 @@ export async function printSaleA4(
   payType: 'cash' | 'card' = 'card',
   device?: PrinterDevice | null
 ) {
-  const { buildSalePrintData } = await import('./canvas-print')
-  const useJournal = isJournalMode()
-  const printOptions = getPrinterPrintOptions()
-  const { cpclBuffer, journalSetup } = await buildSalePrintData(doc, store, salespersonName, products, payType, printOptions)
-  await ensurePrinterConnected(device || null)
+  return withPrintJob('销单打印', async () => {
+    const { buildSalePrintData } = await import('./canvas-print')
+    const useJournal = isJournalMode()
+    const printOptions = getPrinterPrintOptions()
+    const { cpclBuffer, journalSetup } = await buildSalePrintData(doc, store, salespersonName, products, payType, printOptions)
+    await ensurePrinterConnected(device || null)
 
-  if (useJournal) {
-    appendLog('info', `[A4打印] 发送 JOURNAL+SETFF 配置...`)
-    await sendCpcl(journalSetup)
-    await sleep(500)
-  } else {
-    appendLog('info', `[A4打印] 当前打印机不需要 JOURNAL 模式，跳过（${printOptions.fillFullPage ? '内容铺满整页' : '按内容高度打印'}）`)
-  }
-  appendLog('info', '[A4打印] 发送打印指令...')
-  await sendCpcl(cpclBuffer)
-  appendLog('info', '[A4打印] 完成')
-  resumeDaemonAfterPrint()
+    if (useJournal) {
+      appendLog('info', `[A4打印] 发送 JOURNAL+SETFF 配置...`)
+      await sendCpcl(journalSetup)
+      await sleep(500)
+    } else {
+      appendLog('info', `[A4打印] 当前打印机不需要 JOURNAL 模式，跳过（${printOptions.fillFullPage ? '内容铺满整页' : '按内容高度打印'}）`)
+    }
+    appendLog('info', '[A4打印] 发送打印指令...')
+    await sendCpcl(cpclBuffer)
+    appendLog('info', '[A4打印] 完成')
+  })
 }
 
 export async function printReturnA4(
@@ -633,22 +691,23 @@ export async function printReturnA4(
   payType: 'cash' | 'card' = 'card',
   device?: PrinterDevice | null
 ) {
-  const { buildReturnPrintData } = await import('./canvas-print')
-  const useJournal = isJournalMode()
-  const printOptions = getPrinterPrintOptions()
-  const { cpclBuffer, journalSetup } = await buildReturnPrintData(doc, store, salespersonName, products, payType, printOptions)
-  await ensurePrinterConnected(device || null)
+  return withPrintJob('退单打印', async () => {
+    const { buildReturnPrintData } = await import('./canvas-print')
+    const useJournal = isJournalMode()
+    const printOptions = getPrinterPrintOptions()
+    const { cpclBuffer, journalSetup } = await buildReturnPrintData(doc, store, salespersonName, products, payType, printOptions)
+    await ensurePrinterConnected(device || null)
 
-  if (useJournal) {
-    appendLog('info', '[A4打印] 发送 JOURNAL+SETFF 配置...')
-    await sendCpcl(journalSetup)
-    await sleep(500)
-  } else {
-    appendLog('info', `[A4打印] 当前打印机不需要 JOURNAL 模式，跳过（${printOptions.fillFullPage ? '内容铺满整页' : '按内容高度打印'}）`)
-  }
-  appendLog('info', '[A4打印] 发送打印指令...')
-  await sendCpcl(cpclBuffer)
-  resumeDaemonAfterPrint()
+    if (useJournal) {
+      appendLog('info', '[A4打印] 发送 JOURNAL+SETFF 配置...')
+      await sendCpcl(journalSetup)
+      await sleep(500)
+    } else {
+      appendLog('info', `[A4打印] 当前打印机不需要 JOURNAL 模式，跳过（${printOptions.fillFullPage ? '内容铺满整页' : '按内容高度打印'}）`)
+    }
+    appendLog('info', '[A4打印] 发送打印指令...')
+    await sendCpcl(cpclBuffer)
+  })
 }
 
 export async function printCombinedA4(
@@ -660,29 +719,30 @@ export async function printCombinedA4(
   payType: 'cash' | 'card' = 'card',
   device?: PrinterDevice | null
 ) {
-  const { buildCombinedPrintData } = await import('./canvas-print')
-  const useJournal = isJournalMode()
-  const printOptions = getPrinterPrintOptions()
-  const { pages } = await buildCombinedPrintData(saleDoc, returnDoc, store, salespersonName, products, payType, printOptions)
-  await ensurePrinterConnected(device || null)
+  return withPrintJob('合并打印', async () => {
+    const { buildCombinedPrintData } = await import('./canvas-print')
+    const useJournal = isJournalMode()
+    const printOptions = getPrinterPrintOptions()
+    const { pages } = await buildCombinedPrintData(saleDoc, returnDoc, store, salespersonName, products, payType, printOptions)
+    await ensurePrinterConnected(device || null)
 
-  appendLog('info', `[合并打印] ${pages.length} 页${useJournal ? '' : `（无JOURNAL模式，${printOptions.fillFullPage ? '铺满整页' : '按内容高度打印'}）`}`)
+    appendLog('info', `[合并打印] ${pages.length} 页${useJournal ? '' : `（无JOURNAL模式，${printOptions.fillFullPage ? '铺满整页' : '按内容高度打印'}）`}`)
 
-  for (let p = 0; p < pages.length; p++) {
-    const { cpclBuffer, journalSetup } = pages[p]
-    if (useJournal) {
-      appendLog('info', `[合并打印] 第 ${p + 1}/${pages.length} 页 - 发送配置...`)
-      await sendCpcl(journalSetup)
-      await sleep(500)
+    for (let p = 0; p < pages.length; p++) {
+      const { cpclBuffer, journalSetup } = pages[p]
+      if (useJournal) {
+        appendLog('info', `[合并打印] 第 ${p + 1}/${pages.length} 页 - 发送配置...`)
+        await sendCpcl(journalSetup)
+        await sleep(500)
+      }
+      appendLog('info', `[合并打印] 第 ${p + 1}/${pages.length} 页 - 发送打印指令...`)
+      await sendCpcl(cpclBuffer)
+      if (p < pages.length - 1) {
+        await sleep(1500)
+      }
     }
-    appendLog('info', `[合并打印] 第 ${p + 1}/${pages.length} 页 - 发送打印指令...`)
-    await sendCpcl(cpclBuffer)
-    if (p < pages.length - 1) {
-      await sleep(1500)
-    }
-  }
-  appendLog('info', `[合并打印] 完成，共 ${pages.length} 页`)
-  resumeDaemonAfterPrint()
+    appendLog('info', `[合并打印] 完成，共 ${pages.length} 页`)
+  })
 }
 
 export async function printTransferA4(
@@ -692,24 +752,31 @@ export async function printTransferA4(
   products: import('@/types').Product[],
   device?: PrinterDevice | null
 ) {
-  const { buildTransferPrintData } = await import('./canvas-print')
-  const useJournal = isJournalMode()
-  const printOptions = getPrinterPrintOptions()
-  const { cpclBuffer, journalSetup } = await buildTransferPrintData(doc, fromWarehouseName, toWarehouseName, products, printOptions)
-  await ensurePrinterConnected(device || null)
+  return withPrintJob('出库单打印', async () => {
+    const { buildTransferPrintData } = await import('./canvas-print')
+    const useJournal = isJournalMode()
+    const printOptions = getPrinterPrintOptions()
+    const { cpclBuffer, journalSetup } = await buildTransferPrintData(doc, fromWarehouseName, toWarehouseName, products, printOptions)
+    await ensurePrinterConnected(device || null)
 
-  if (useJournal) {
-    appendLog('info', '[A4打印] 出库单 - 发送 JOURNAL+SETFF 配置...')
-    await sendCpcl(journalSetup)
-    await sleep(500)
-  }
-  appendLog('info', '[A4打印] 出库单 - 发送打印指令...')
-  await sendCpcl(cpclBuffer)
-  resumeDaemonAfterPrint()
+    if (useJournal) {
+      appendLog('info', '[A4打印] 出库单 - 发送 JOURNAL+SETFF 配置...')
+      await sendCpcl(journalSetup)
+      await sleep(500)
+    }
+    appendLog('info', '[A4打印] 出库单 - 发送打印指令...')
+    await sendCpcl(cpclBuffer)
+  })
 }
 
+/**
+ * 返回「当前账户已配置的打印机」，用于判断是否需要引导用户去绑定设备。
+ * 注意：这里刻意不检查 BLE 实时连接状态——打印时 ensurePrinterConnected()
+ * 会自动重连（最多 3 次），若此处按实时状态返回 null，会在守护进程正在
+ * 重连的间隙误报「未连接」而挡住本可成功的打印。
+ * 需要真实链路状态请用 isBluetoothConnected()。
+ */
 export function checkPrinterConnected(): PrinterDevice | null {
-  // 优先检查账户预设设备
   return getPresetPrinter(_accountLabel || undefined) || getBoundPrinter()
 }
 
@@ -916,7 +983,11 @@ export function openBluetoothSettings() {
 // ============================================================
 
 let _connected = false
-let _retryTimer: ReturnType<typeof setInterval> | null = null
+let _retryTimer: ReturnType<typeof setTimeout> | null = null
+let _retryAttempts = 0
+// 重连链代次。stopAllTimers/startAggressiveRetry 递增它，使旧链在 await 恢复后自行退出，
+// 避免出现多条并行重连链互相踢掉对方的连接。
+let _retryGen = 0
 let _heartbeatTimer: ReturnType<typeof setInterval> | null = null
 let _currentDeviceId: string | null = null
 let _reconnecting = false
@@ -929,7 +1000,11 @@ export function isBluetoothConnected(): boolean {
 
 /** 停止所有定时器 */
 function stopAllTimers() {
-  if (_retryTimer) { clearInterval(_retryTimer); _retryTimer = null }
+  // 递增代次：递归 setTimeout 的回调可能已在执行（tryConnectOnce 最长可阻塞十余秒），
+  // clearTimeout 只能取消尚未触发的定时器。代次变化后，旧链在 await 结束时会自行终止，
+  // 不会再排下一次——否则打印期间调用 stopAllTimers 仍会被旧链重新唤醒打断蓝牙。
+  _retryGen++
+  if (_retryTimer) { clearTimeout(_retryTimer); _retryTimer = null }
   if (_heartbeatTimer) { clearInterval(_heartbeatTimer); _heartbeatTimer = null }
 }
 
@@ -991,25 +1066,66 @@ function startMaintenanceHeartbeat() {
   }, 30000)
 }
 
-/** 启动激进重试（每5s重试，直到连接成功后切换为维护心跳） */
+/**
+ * 重连间隔（渐进退避，省电但永不放弃）：
+ * 前 12 次 5s（覆盖打印机开机/走出蓝牙范围等常见 1 分钟内恢复的场景），
+ * 之后 15s，再之后固定 30s。始终持续重试，不设上限，保证长时间挂机也能自动恢复。
+ */
+function nextRetryDelay(attempts: number): number {
+  if (attempts < 12) return 5000
+  if (attempts < 24) return 15000
+  return 30000
+}
+
+/** 启动自动重连（渐进退避，连接成功后切换为维护心跳） */
 function startAggressiveRetry() {
-  stopAllTimers()
+  stopAllTimers()          // 内部递增 _retryGen，旧链会在下一个检查点退出
   if (!_daemonActive) return
-  appendLog('info', '[蓝牙] 启动激进重连（每5s）...')
-  // 立即尝试一次
-  tryConnectOnce().then(ok => {
-    if (!_daemonActive) return
-    if (ok) { startMaintenanceHeartbeat(); return }
-    _retryTimer = setInterval(async () => {
-      if (!_daemonActive) { stopAllTimers(); return }
-      const ok = await tryConnectOnce()
-      if (ok) {
-        clearInterval(_retryTimer!)
-        _retryTimer = null
-        startMaintenanceHeartbeat()
+  const myGen = _retryGen  // 本链代次，await 恢复后据此判断自己是否已被作废
+  _retryAttempts = 0
+  appendLog('info', '[蓝牙] 启动自动重连...')
+
+  // 本链是否仍然有效：代次未变且守护仍开启
+  const alive = () => _daemonActive && myGen === _retryGen
+
+  const scheduleNext = () => {
+    if (!alive()) return
+    const delay = nextRetryDelay(_retryAttempts)
+    _retryTimer = setTimeout(async () => {
+      if (!alive()) return
+      let ok = false
+      try {
+        ok = await tryConnectOnce()
+      } catch (e: any) {
+        // tryConnectOnce 内部已兜底，这里再保险一层：异常绝不能中断重连链
+        appendLog('warn', `[蓝牙] 重连异常: ${e?.message || e}`)
+        ok = false
       }
-    }, 5000)
-  })
+      // 关键：await 期间可能已被 stopAllTimers（如开始打印）作废，此时必须直接退出，
+      // 否则会在打印过程中重连并重置蓝牙适配器，打断正在传输的数据。
+      if (!alive()) return
+      if (ok) {
+        _retryAttempts = 0
+        startMaintenanceHeartbeat()
+      } else {
+        _retryAttempts++
+        if (_retryAttempts === 12 || _retryAttempts === 24) {
+          appendLog('info', `[蓝牙] 已重试 ${_retryAttempts} 次，降低重连频率至 ${nextRetryDelay(_retryAttempts) / 1000}s`)
+        }
+        scheduleNext()
+      }
+    }, delay)
+  }
+
+  // 立即尝试一次，失败再进入退避排程
+  tryConnectOnce()
+    .catch(() => false)
+    .then(ok => {
+      if (!alive()) return
+      if (ok) { _retryAttempts = 0; startMaintenanceHeartbeat(); return }
+      _retryAttempts = 1
+      scheduleNext()
+    })
 }
 
 /**

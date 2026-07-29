@@ -137,7 +137,9 @@ public class OutboundController {
             doc.setStatus("voided");
             int updated = outboundDocMapper.update(doc,
                 new LambdaQueryWrapper<OutboundDoc>().eq(OutboundDoc::getId, id).eq(OutboundDoc::getStatus, "posted"));
-            if (updated == 0) return Result.error("单据状态已变更，请刷新");
+            // 必须抛异常：直接 return 会让事务正常提交，而上面已写入的库存流水/提成冲账会被保留，
+            // 造成并发双击作废时重复冲账。抛出后由下方 catch 统一 setRollbackOnly 回滚。
+            if (updated == 0) throw new RuntimeException("单据状态已变更，请刷新");
             return Result.ok();
         } catch (RuntimeException e) {
             TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();

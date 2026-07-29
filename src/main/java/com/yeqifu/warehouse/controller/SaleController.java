@@ -87,7 +87,7 @@ public class SaleController {
                     List<SaleLine> lines = saleLineMapper.selectList(
                         new LambdaQueryWrapper<SaleLine>()
                             .eq(SaleLine::getDocId, doc.getId())
-                            .orderByDesc(SaleLine::getId)
+                            .orderByAsc(SaleLine::getLineNo).orderByAsc(SaleLine::getId)
                     );
                     doc.setLines(lines);
                 } catch (Exception lineEx) {
@@ -110,6 +110,7 @@ public class SaleController {
         if (doc != null) {
             List<SaleLine> lines = saleLineMapper.selectList(
                 new LambdaQueryWrapper<SaleLine>().eq(SaleLine::getDocId, id)
+                    .orderByAsc(SaleLine::getLineNo).orderByAsc(SaleLine::getId)
             );
             doc.setLines(lines);
         }
@@ -171,10 +172,16 @@ public class SaleController {
         }
 
         // 保存明细（lines 为空时跳过）
+        int lineIdx = 0;
         for (SaleLine line : lines) {
             int qty = line.getQty() == null ? 0 : line.getQty();
             line.setId(IdUtils.randomId());
             line.setDocId(doc.getId());
+            // 行号：前端传了则保留，否则用录入顺序兜底（打印/重建排序依赖）
+            if (line.getLineNo() == null || line.getLineNo() <= 0) {
+                line.setLineNo(lineIdx + 1);
+            }
+            lineIdx++;
             if (line.getAmount() == null) {
                 BigDecimal price = line.getPrice() == null ? BigDecimal.ZERO : line.getPrice();
                 line.setAmount(price.multiply(new BigDecimal(qty)));
@@ -373,7 +380,9 @@ public class SaleController {
             doc.setStatus("voided");
             int updated = saleDocMapper.update(doc,
                 new LambdaQueryWrapper<SaleDoc>().eq(SaleDoc::getId, id).eq(SaleDoc::getStatus, "posted"));
-            if (updated == 0) return Result.error("单据状态已变更，请刷新");
+            // 必须抛异常：直接 return 会让事务正常提交，而上面已写入的库存流水/提成冲账会被保留，
+            // 造成并发双击作废时重复冲账。抛出后由下方 catch 统一 setRollbackOnly 回滚。
+            if (updated == 0) throw new RuntimeException("单据状态已变更，请刷新");
             return Result.ok();
         } catch (RuntimeException e) {
             TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
@@ -421,7 +430,7 @@ public class SaleController {
             List<SaleLine> lines = saleLineMapper.selectList(
                 new LambdaQueryWrapper<SaleLine>()
                     .eq(SaleLine::getDocId, doc.getId())
-                    .orderByDesc(SaleLine::getId)
+                    .orderByAsc(SaleLine::getLineNo).orderByAsc(SaleLine::getId)
             );
             doc.setLines(lines);
         }
@@ -474,6 +483,7 @@ public class SaleController {
         java.util.Map<String, Integer> saleMap = new java.util.HashMap<>();
         LambdaQueryWrapper<SaleDoc> saleQuery = new LambdaQueryWrapper<SaleDoc>()
                 .eq(SaleDoc::getStatus, "posted");
+        excludeGift(saleQuery);
         if (sqlStart != null) {
             saleQuery.ge(SaleDoc::getDocDate, sqlStart).le(SaleDoc::getDocDate, sqlEnd);
         }
@@ -520,18 +530,17 @@ public class SaleController {
     @GetMapping("/storeSaleQty")
     public Result<java.util.Map<String, Integer>> storeSaleQty(@RequestParam(defaultValue = "30") Integer days) {
         java.time.LocalDate start = java.time.LocalDate.now().minusDays(days);
-        List<SaleDoc> docs = saleDocMapper.selectList(
-            new LambdaQueryWrapper<SaleDoc>()
+        LambdaQueryWrapper<SaleDoc> qw = new LambdaQueryWrapper<SaleDoc>()
                 .eq(SaleDoc::getStatus, "posted")
-                .eq(SaleDoc::getDocType, "sale")
-                .ge(SaleDoc::getDocDate, java.sql.Date.valueOf(start))
-        );
+                .ge(SaleDoc::getDocDate, java.sql.Date.valueOf(start));
+        excludeGift(qw); // 原为 eq(docType,'sale')，会漏掉 docType 为 NULL 的历史单
+        List<SaleDoc> docs = saleDocMapper.selectList(qw);
         java.util.Map<String, Integer> map = new java.util.HashMap<>();
         for (SaleDoc doc : docs) {
             List<SaleLine> lines = saleLineMapper.selectList(
                 new LambdaQueryWrapper<SaleLine>()
                     .eq(SaleLine::getDocId, doc.getId())
-                    .orderByDesc(SaleLine::getId)
+                    .orderByAsc(SaleLine::getLineNo).orderByAsc(SaleLine::getId)
             );
             int sum = 0;
             for (SaleLine line : lines) sum += line.getQty() == null ? 0 : line.getQty();
@@ -553,13 +562,13 @@ public class SaleController {
         java.sql.Date sqlStart = java.sql.Date.valueOf(start);
         java.sql.Date sqlEnd = java.sql.Date.valueOf(end);
 
-        // 1. 查区间内所有已过账销单
-        java.util.List<SaleDoc> saleDocs = saleDocMapper.selectList(
-            new LambdaQueryWrapper<SaleDoc>()
+        // 1. 查区间内所有已过账销单（排除赠送单，口径与 storeSaleQty 一致）
+        LambdaQueryWrapper<SaleDoc> summaryQw = new LambdaQueryWrapper<SaleDoc>()
                 .eq(SaleDoc::getStatus, "posted")
                 .ge(SaleDoc::getDocDate, sqlStart)
-                .le(SaleDoc::getDocDate, sqlEnd)
-        );
+                .le(SaleDoc::getDocDate, sqlEnd);
+        excludeGift(summaryQw);
+        java.util.List<SaleDoc> saleDocs = saleDocMapper.selectList(summaryQw);
 
         // 按超市聚合销售额
         java.util.Map<String, java.math.BigDecimal> saleMap = new java.util.LinkedHashMap<>();
@@ -622,17 +631,17 @@ public class SaleController {
     @GetMapping("/productSaleQty")
     public Result<java.util.Map<String, Integer>> productSaleQty(@RequestParam(defaultValue = "30") Integer days) {
         java.time.LocalDate start = java.time.LocalDate.now().minusDays(days);
-        List<SaleDoc> docs = saleDocMapper.selectList(
-            new LambdaQueryWrapper<SaleDoc>()
+        LambdaQueryWrapper<SaleDoc> pQw = new LambdaQueryWrapper<SaleDoc>()
                 .eq(SaleDoc::getStatus, "posted")
-                .ge(SaleDoc::getDocDate, java.sql.Date.valueOf(start))
-        );
+                .ge(SaleDoc::getDocDate, java.sql.Date.valueOf(start));
+        excludeGift(pQw); // 赠送不计入销量排序
+        List<SaleDoc> docs = saleDocMapper.selectList(pQw);
         java.util.Map<String, Integer> map = new java.util.HashMap<>();
         for (SaleDoc doc : docs) {
             List<SaleLine> lines = saleLineMapper.selectList(
                 new LambdaQueryWrapper<SaleLine>()
                     .eq(SaleLine::getDocId, doc.getId())
-                    .orderByDesc(SaleLine::getId)
+                    .orderByAsc(SaleLine::getLineNo).orderByAsc(SaleLine::getId)
             );
             for (SaleLine line : lines) {
                 int qty = line.getQty() == null ? 0 : line.getQty();
@@ -640,6 +649,103 @@ public class SaleController {
             }
         }
         return Result.ok(map);
+    }
+
+    /**
+     * 单商品进退统计：某商品在区间内累计销售袋数、退货袋数（分车库退/回仓退）、净销售
+     * GET /api/sale/productStat?productId=X[&startDate=&endDate=]
+     * 不传日期则统计全部历史。排除赠送单(docType=gift)的销售数，赠送数单独返回。
+     */
+    @GetMapping("/productStat")
+    public Result<java.util.Map<String, Object>> productStat(
+            @RequestParam String productId,
+            @RequestParam(required = false) String startDate,
+            @RequestParam(required = false) String endDate) {
+        java.sql.Date sqlStart = null, sqlEnd = null;
+        if (startDate != null && !startDate.isEmpty() && endDate != null && !endDate.isEmpty()) {
+            sqlStart = java.sql.Date.valueOf(java.time.LocalDate.parse(startDate));
+            sqlEnd = java.sql.Date.valueOf(java.time.LocalDate.parse(endDate));
+        }
+
+        // 1) 销售单（已过账），按 docId 分组区分赠送
+        LambdaQueryWrapper<SaleDoc> saleQ = new LambdaQueryWrapper<SaleDoc>()
+                .eq(SaleDoc::getStatus, "posted");
+        if (sqlStart != null) saleQ.ge(SaleDoc::getDocDate, sqlStart).le(SaleDoc::getDocDate, sqlEnd);
+        List<SaleDoc> saleDocs = saleDocMapper.selectList(saleQ);
+        java.util.Map<String, String> docTypeMap = new java.util.HashMap<>();
+        java.util.List<String> saleDocIds = new java.util.ArrayList<>();
+        for (SaleDoc d : saleDocs) { saleDocIds.add(d.getId()); docTypeMap.put(d.getId(), d.getDocType()); }
+
+        int saleQty = 0, giftQty = 0;
+        java.math.BigDecimal saleAmount = java.math.BigDecimal.ZERO;
+        if (!saleDocIds.isEmpty()) {
+            List<SaleLine> lines = saleLineMapper.selectList(
+                new LambdaQueryWrapper<SaleLine>()
+                    .in(SaleLine::getDocId, saleDocIds)
+                    .eq(SaleLine::getProductId, productId));
+            for (SaleLine l : lines) {
+                int q = l.getQty() == null ? 0 : l.getQty();
+                java.math.BigDecimal amt = l.getAmount() == null ? java.math.BigDecimal.ZERO : l.getAmount();
+                if ("gift".equals(docTypeMap.get(l.getDocId()))) {
+                    giftQty += q;
+                } else {
+                    saleQty += q;
+                    saleAmount = saleAmount.add(amt);
+                }
+            }
+        }
+
+        // 2) 退货单（已过账），分车库退/回仓退
+        LambdaQueryWrapper<com.yeqifu.warehouse.entity.ReturnDoc> retQ =
+            new LambdaQueryWrapper<com.yeqifu.warehouse.entity.ReturnDoc>()
+                .eq(com.yeqifu.warehouse.entity.ReturnDoc::getStatus, "posted");
+        if (sqlStart != null) retQ.ge(com.yeqifu.warehouse.entity.ReturnDoc::getDocDate, sqlStart)
+                                 .le(com.yeqifu.warehouse.entity.ReturnDoc::getDocDate, sqlEnd);
+        List<com.yeqifu.warehouse.entity.ReturnDoc> retDocs = returnDocMapper.selectList(retQ);
+        java.util.Map<String, String> retTypeMap = new java.util.HashMap<>();
+        java.util.List<String> retDocIds = new java.util.ArrayList<>();
+        for (com.yeqifu.warehouse.entity.ReturnDoc d : retDocs) {
+            retDocIds.add(d.getId()); retTypeMap.put(d.getId(), d.getReturnType());
+        }
+
+        int vehicleReturnQty = 0, warehouseReturnQty = 0;
+        java.math.BigDecimal returnAmount = java.math.BigDecimal.ZERO;
+        if (!retDocIds.isEmpty()) {
+            List<com.yeqifu.warehouse.entity.ReturnLine> rlines = returnLineMapper.selectList(
+                new LambdaQueryWrapper<com.yeqifu.warehouse.entity.ReturnLine>()
+                    .in(com.yeqifu.warehouse.entity.ReturnLine::getDocId, retDocIds)
+                    .eq(com.yeqifu.warehouse.entity.ReturnLine::getProductId, productId));
+            for (com.yeqifu.warehouse.entity.ReturnLine l : rlines) {
+                int q = l.getQty() == null ? 0 : l.getQty();
+                java.math.BigDecimal amt = l.getAmount() == null ? java.math.BigDecimal.ZERO : l.getAmount();
+                returnAmount = returnAmount.add(amt);
+                if ("warehouse_return".equals(retTypeMap.get(l.getDocId()))) warehouseReturnQty += q;
+                else vehicleReturnQty += q;
+            }
+        }
+
+        java.util.Map<String, Object> res = new java.util.HashMap<>();
+        res.put("saleQty", saleQty);
+        res.put("giftQty", giftQty);
+        res.put("saleAmount", saleAmount);
+        res.put("vehicleReturnQty", vehicleReturnQty);
+        res.put("warehouseReturnQty", warehouseReturnQty);
+        res.put("returnQty", vehicleReturnQty + warehouseReturnQty);
+        res.put("returnAmount", returnAmount);
+        // 净销售 = 销售 - 超市退货。
+        // 超市退回车上的货会再卖给别家，销售额被重复计入，减掉车库退货正好抵消这部分转手，
+        // 得到「超市最终留下的数量」——等价于「出库量 - 回仓量」（车上还没卖的除外）。
+        // 回仓退货不能再减：那批货从来没算进销售，减了等于扣了没加过的数。
+        res.put("netQty", saleQty - vehicleReturnQty);
+        return Result.ok(res);
+    }
+
+    /**
+     * 统计口径统一：排除赠送单。
+     * 兼容历史数据——docType 为 NULL 的老单据视为普通销售单，不会被漏统计。
+     */
+    private static void excludeGift(LambdaQueryWrapper<SaleDoc> wrapper) {
+        wrapper.and(w -> w.isNull(SaleDoc::getDocType).or().ne(SaleDoc::getDocType, "gift"));
     }
 
     private void normalizeLines(List<SaleLine> lines) {

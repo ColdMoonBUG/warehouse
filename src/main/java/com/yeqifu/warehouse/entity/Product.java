@@ -21,6 +21,7 @@ public class Product implements Serializable {
     private String unit;
     private Integer boxQty;
     private Integer shelfDays;
+    private String weight;
     private BigDecimal purchasePrice;
     private BigDecimal salePrice;
     private String status;

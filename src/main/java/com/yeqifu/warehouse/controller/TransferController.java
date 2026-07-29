@@ -162,16 +162,33 @@ public class TransferController {
                 return Result.error("只能作废已过账单据");
             }
             List<TransferLine> lines = transferLineMapper.selectList(new LambdaQueryWrapper<TransferLine>().eq(TransferLine::getDocId, id));
+            // 过账时若处于初始化模式，源仓并未扣减；作废若无条件加回会凭空多出库存。
+            // 以账本为事实来源：该单在源仓有扣减流水才回补。查询异常时退回旧行为，保证作废不被阻断。
+            boolean restoreFrom = true;
+            try {
+                List<Ledger> fromLedgers = ledgerMapper.selectList(
+                    new LambdaQueryWrapper<Ledger>()
+                        .eq(Ledger::getDocId, id)
+                        .eq(Ledger::getWarehouseId, doc.getFromWarehouseId())
+                        .lt(Ledger::getQty, 0));
+                restoreFrom = fromLedgers != null && !fromLedgers.isEmpty();
+            } catch (Exception ignore) {
+                restoreFrom = true;
+            }
             for (TransferLine line : lines) {
-                applyStockDelta(doc.getFromWarehouseId(), line.getProductId(), line.getQty());
+                if (restoreFrom) {
+                    applyStockDelta(doc.getFromWarehouseId(), line.getProductId(), line.getQty());
+                    insertLedger("transfer", id, doc.getFromWarehouseId(), line.getProductId(), line.getQty());
+                }
                 applyStockDelta(doc.getToWarehouseId(), line.getProductId(), -line.getQty());
-                insertLedger("transfer", id, doc.getFromWarehouseId(), line.getProductId(), line.getQty());
                 insertLedger("transfer", id, doc.getToWarehouseId(), line.getProductId(), -line.getQty());
             }
             doc.setStatus("voided");
             int updated = transferDocMapper.update(doc,
                 new LambdaQueryWrapper<TransferDoc>().eq(TransferDoc::getId, id).eq(TransferDoc::getStatus, "posted"));
-            if (updated == 0) return Result.error("单据状态已变更，请刷新");
+            // 必须抛异常：直接 return 会让事务正常提交，而上面已写入的库存流水/提成冲账会被保留，
+            // 造成并发双击作废时重复冲账。抛出后由下方 catch 统一 setRollbackOnly 回滚。
+            if (updated == 0) throw new RuntimeException("单据状态已变更，请刷新");
             return Result.ok();
         } catch (RuntimeException e) {
             TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();

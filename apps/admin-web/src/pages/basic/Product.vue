@@ -22,6 +22,7 @@
         </el-table-column>
         <el-table-column prop="boxQty" label="每箱袋数" width="100" />
         <el-table-column prop="shelfDays" label="保质期(天)" width="100" />
+        <el-table-column prop="weight" label="克重" width="90" />
         <el-table-column prop="purchasePrice" label="进价" width="80" />
         <el-table-column prop="salePrice" label="供货价" width="80" />
         <el-table-column label="状态" width="80">
@@ -58,6 +59,11 @@
           <el-col :span="12">
             <el-form-item label="保质期(天)" prop="shelfDays">
               <el-input-number v-model="form.shelfDays" :min="1" style="width:100%" placeholder="可选" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="克重" prop="weight">
+              <el-input v-model="form.weight" style="width:100%" placeholder="如 500g、1kg，可留空" />
             </el-form-item>
           </el-col>
           <el-col :span="12">

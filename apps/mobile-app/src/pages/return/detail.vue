@@ -98,8 +98,8 @@ import { onLoad } from '@dcloudio/uni-app'
 import { getReturnDetail, getStores, getSalespersonAccounts, getProducts, voidReturn, isSameSalespersonId, getSalespersonDisplayName } from '@/api'
 import type { ReturnDoc, Store, Salesperson, Product } from '@/types'
 import { getPageQueryParam, formatPackSummary, normalizeCount } from '@/utils'
-import { buildReturnReceipt, printText, printReturnA4, checkPrinterConnected, navigateToPrinterSettings, getBluetoothPrinterLogs } from '@/utils/bluetooth-printer'
-import { CANVAS_ID, estimateContentHeight, PAGE_WIDTH_DOTS } from '@/utils/canvas-print'
+import { buildReturnReceipt, printReturnA4, checkPrinterConnected, navigateToPrinterSettings, getBluetoothPrinterLogs } from '@/utils/bluetooth-printer'
+import { CANVAS_ID, estimateContentHeight, PAGE_WIDTH_DOTS, calcCanvasHeightForItems } from '@/utils/canvas-print'
 
 async function voidAndRebuild() {
   if (!doc.value) return
@@ -172,9 +172,9 @@ const printing = ref(false)
 const canvasId = CANVAS_ID
 
 const canvasHeightPx = computed(() => {
-  if (!doc.value) return 2480
-  // canvas 元素需至少容纳完整 A5 页面（A4mini 模式会铺满整页）
-  return Math.max(2480, estimateContentHeight({
+  if (!doc.value) return calcCanvasHeightForItems(0)
+  // 取「实际估算高度」与「带余量的统一算法」两者较大值，确保元素高度绝不小于绘制高度
+  const estimated = estimateContentHeight({
     type: 'return',
     code: doc.value.code,
     date: doc.value.date,
@@ -185,7 +185,8 @@ const canvasHeightPx = computed(() => {
     totalAmount: 0,
     payType: doc.value.payType || 'card',
     remark: doc.value.remark,
-  }))
+  })
+  return Math.max(estimated, calcCanvasHeightForItems(doc.value.lines.length + 2))
 })
 
 const storeName = computed(() => stores.value.find(i => i.id === doc.value?.storeId)?.name || '-')

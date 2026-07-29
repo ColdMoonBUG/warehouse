@@ -179,8 +179,8 @@ import { onLoad } from '@dcloudio/uni-app'
 import { getSaleDetail, getStores, getSalespersonAccounts, getProducts, voidSale, isSameSalespersonId, getReturnDetail, voidReturn, getSalespersonDisplayName } from '@/api'
 import type { SaleDoc, Store, Salesperson, Product, ReturnDoc } from '@/types'
 import { getPageQueryParam, formatPackSummary, normalizeCount } from '@/utils'
-import { buildSaleReceipt, printText, printSaleA4, printCombinedA4, checkPrinterConnected, navigateToPrinterSettings, getBluetoothPrinterLogs } from '@/utils/bluetooth-printer'
-import { CANVAS_ID, estimateContentHeight, PAGE_WIDTH_DOTS } from '@/utils/canvas-print'
+import { buildSaleReceipt, printSaleA4, printCombinedA4, checkPrinterConnected, navigateToPrinterSettings, getBluetoothPrinterLogs } from '@/utils/bluetooth-printer'
+import { CANVAS_ID, PAGE_WIDTH_DOTS, calcCanvasHeightForItems } from '@/utils/canvas-print'
 
 async function voidDoc() {
   if (!doc.value) return
@@ -268,16 +268,11 @@ const printing = ref(false)
 const canvasId = CANVAS_ID
 
 const canvasHeightPx = computed(() => {
-  if (!doc.value) return 2480
+  if (!doc.value) return calcCanvasHeightForItems(0)
   const saleItemCount = doc.value.lines.length
   const returnItemCount = returnDoc.value ? returnDoc.value.lines.length : 0
-  const totalItems = saleItemCount + returnItemCount
-  // 合并打印时需要更多高度：标题+信息+表格+退货区+净额
-  const hasReturn = returnItemCount > 0
-  const baseHeight = hasReturn ? 900 : 800
-  const returnLabel = hasReturn ? 56 : 0
-  const netAmount = hasReturn ? 75 : 0
-  return Math.max(2480, baseHeight + totalItems * 64 + returnLabel + netAmount)
+  // 与打印模块同源计算，避免高度不足导致底部被裁；+3 行给退货标题与净额行
+  return calcCanvasHeightForItems(saleItemCount + returnItemCount + 3)
 })
 
 const storeName = computed(() => {

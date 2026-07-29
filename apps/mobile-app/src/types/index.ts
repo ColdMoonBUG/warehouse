@@ -55,6 +55,7 @@ export interface Product {
   unit?: string
   boxQty?: number
   shelfDays?: number
+  weight?: string
   purchasePrice?: number
   salePrice?: number
   status: Status

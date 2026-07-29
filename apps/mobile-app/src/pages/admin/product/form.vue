@@ -25,6 +25,10 @@
         <input v-model.number="form.shelfDays" type="number" placeholder="保质期" />
       </view>
       <view class="section">
+        <text class="label">克重</text>
+        <input v-model="form.weight" placeholder="如 500g、1kg，可留空" />
+      </view>
+      <view class="section">
         <text class="label">单位</text>
         <view class="picker"><text>袋</text></view>
       </view>
