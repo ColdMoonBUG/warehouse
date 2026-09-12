@@ -32,13 +32,13 @@
       <el-card class="summary-card" v-for="sp in salespersonList" :key="sp.id">
         <div class="card-name">{{ sp.displayName }}</div>
         <div class="card-value">¥{{ (spTotals[sp.id] || 0).toFixed(2) }}</div>
-        <div class="card-label">期间销售总额</div>
+        <div class="card-label">期间净销售额</div>
         <div class="card-sub">{{ spDocCount[sp.id] || 0 }} 张销单</div>
       </el-card>
       <el-card class="summary-card total-card">
         <div class="card-name">合计</div>
         <div class="card-value total-value">¥{{ grandTotal.toFixed(2) }}</div>
-        <div class="card-label">三车合计销售额</div>
+        <div class="card-label">合计净销售额</div>
         <div class="card-sub">{{ totalDocCount }} 张销单</div>
       </el-card>
     </div>
@@ -47,8 +47,8 @@
     <el-card class="table-card">
       <template #header>
         <div class="table-header">
-          <span>📊 每日销售额（{{ periodLabel }}）</span>
-          <span class="header-sub">仅统计已过账销单（不含作废）</span>
+          <span>📊 每日净销售额（{{ periodLabel }}）</span>
+          <span class="header-sub">已过账销售额 − 当天已过账超市退货额（不含回仓退货和作废）</span>
         </div>
       </template>
 
@@ -71,7 +71,7 @@
           sortable
         >
           <template #default="{ row }">
-            <span v-if="row[sp.id] > 0" class="amount-cell">¥{{ row[sp.id].toFixed(2) }}</span>
+            <span v-if="Number(row[sp.id]) !== 0" class="amount-cell">¥{{ Number(row[sp.id]).toFixed(2) }}</span>
             <span v-else class="empty-cell">-</span>
           </template>
         </el-table-column>
@@ -88,6 +88,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import request from '@/utils/request'
+import dayjs from 'dayjs'
+import { ElMessage } from 'element-plus'
+import { getReportSales, getReportReturns } from '@/api/reporting'
+import { docDay, docAmount } from '@/utils/reporting'
 
 // ---- 周期选择 ----
 type PeriodMode = 'week' | 'month' | 'year' | 'custom'
@@ -96,7 +100,7 @@ const customRange = ref<[string, string] | null>(null)
 const loading = ref(false)
 
 function todayStr() {
-  return new Date().toISOString().slice(0, 10)
+  return dayjs().format('YYYY-MM-DD')
 }
 
 function getDateRange(): { start: string; end: string } {
@@ -106,7 +110,7 @@ function getDateRange(): { start: string; end: string } {
     const day = d.getDay() || 7
     const mon = new Date(d)
     mon.setDate(d.getDate() - day + 1)
-    return { start: mon.toISOString().slice(0, 10), end: today }
+    return { start: dayjs(mon).format('YYYY-MM-DD'), end: today }
   }
   if (periodMode.value === 'month') {
     return {
@@ -181,7 +185,7 @@ async function loadData() {
     const accRes = await request.get('/account/list')
     const accounts: any[] = accRes.data || []
     salespersonList.value = accounts
-      .filter((a: any) => a.role === 'salesperson' && a.status === 'active')
+      .filter((a: any) => a.role === 'salesperson')
       .map((a: any) => ({ id: a.id, displayName: a.displayName || a.username }))
       .sort((a, b) => {
         const order: Record<string, number> = { '大车': 0, '小车': 1, '三车': 2 }
@@ -190,23 +194,16 @@ async function loadData() {
 
     // 2. 拉取范围内所有已过账销单（分页，每次200）
     const { start, end } = getDateRange()
-    let page = 1
-    const allDocs: any[] = []
-    while (true) {
-      const res = await request.get('/sale/list', { params: { page, limit: 200 } })
-      const list: any[] = res.data || []
-      // 过滤状态和日期
-      for (const d of list) {
-        if (d.status !== 'posted') continue
-        const docDate = (d.docDate || d.date || '').slice(0, 10)
-        if (docDate >= start && docDate <= end) allDocs.push(d)
+    const [sales, returns] = await Promise.all([getReportSales(), getReportReturns()])
+    const eligible = (d: { status: string; date: string }) => d.status === 'posted' && docDay(d) >= start && docDay(d) <= end
+    const allDocs = sales.filter(eligible)
+    const returnDocs = returns.filter(d => eligible(d) && d.returnType === 'vehicle_return')
+    const knownIds = new Set(salespersonList.value.map(sp => sp.id))
+    for (const d of [...allDocs, ...returnDocs]) {
+      if (!knownIds.has(d.salespersonId)) {
+        salespersonList.value.push({ id: d.salespersonId, displayName: `未知账户（${d.salespersonId}）` })
+        knownIds.add(d.salespersonId)
       }
-      // 如果本页最后一条日期已早于 start，停止翻页
-      if (list.length < 200) break
-      const lastDate = (list[list.length - 1]?.docDate || list[list.length - 1]?.date || '').slice(0, 10)
-      if (lastDate < start) break
-      page++
-      if (page > 50) break // 安全上限
     }
     rawDocs.value = allDocs
 
@@ -223,10 +220,10 @@ async function loadData() {
       cur.setDate(cur.getDate() + 1)
     }
 
-    for (const d of allDocs) {
-      const dateKey = (d.docDate || d.date || '').slice(0, 10)
+    for (const { doc: d, sign } of [...allDocs.map(doc => ({ doc, sign: 1 })), ...returnDocs.map(doc => ({ doc, sign: -1 }))]) {
+      const dateKey = docDay(d)
       const spId = d.salespersonId
-      const amount = Number(d.totalAmount || 0)
+      const amount = Math.round(docAmount(d) * 100) * sign / 100
       if (!dateMap.has(dateKey)) continue
       const row = dateMap.get(dateKey)!
       row[spId] = (Number(row[spId]) || 0) + amount
@@ -234,6 +231,10 @@ async function loadData() {
     }
 
     dailyRows.value = [...dateMap.values()].sort((a, b) => b.date.localeCompare(a.date))
+  } catch (error: any) {
+    dailyRows.value = []
+    rawDocs.value = []
+    ElMessage.error(error.message || '统计加载失败')
   } finally {
     loading.value = false
   }

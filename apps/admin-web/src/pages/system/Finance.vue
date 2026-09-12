@@ -39,6 +39,8 @@
       </el-table>
     </el-card>
 
+    <WageQuery :accounts="summaries" />
+
     <el-card class="history-card">
       <template #header>
         <div class="header-row">
@@ -211,6 +213,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref, computed } from 'vue'
+import WageQuery from '@/components/WageQuery.vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { refreshSession } from '@/api/auth'

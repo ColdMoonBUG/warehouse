@@ -57,6 +57,7 @@ const router = createRouter({
             { path: 'store-finance', component: () => import('@/pages/system/StoreFinance.vue'), meta: { title: '超市流水', adminOnly: true } },
             { path: 'unsettled', component: () => import('@/pages/system/UnsettledDocs.vue'), meta: { title: '未收款管理', adminOnly: true } },
             { path: 'stats', component: () => import('@/pages/system/Stats.vue'), meta: { title: '进退货统计', adminOnly: true } },
+            { path: 'account-daily-stats', component: () => import('@/pages/system/AccountDailyStats.vue'), meta: { title: '账户每日领销', adminOnly: true } },
             { path: 'sales-stats', component: () => import('@/pages/system/SalesStats.vue'), meta: { title: '销售额统计', adminOnly: true } },
             { path: 'maintenance', component: () => import('@/pages/system/Maintenance.vue'), meta: { title: '系统维护', adminOnly: true } }
           ]

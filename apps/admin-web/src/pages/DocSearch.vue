@@ -54,11 +54,13 @@
         </div>
       </div>
     </el-card>
+    <DuplicateDocs />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import DuplicateDocs from '@/components/DuplicateDocs.vue'
 import { useRouter } from 'vue-router'
 import { getSales } from '@/api/sale'
 import { getReturns } from '@/api/return'

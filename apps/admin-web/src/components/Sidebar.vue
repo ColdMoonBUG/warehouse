@@ -56,6 +56,7 @@
         <el-menu-item index="/system/store-finance">超市流水</el-menu-item>
         <el-menu-item index="/system/unsettled">未收款管理</el-menu-item>
         <el-menu-item index="/system/stats">进退货统计</el-menu-item>
+        <el-menu-item index="/system/account-daily-stats">账户每日领销</el-menu-item>
         <el-menu-item index="/system/sales-stats">销售额统计</el-menu-item>
         <el-menu-item index="/system/maintenance">系统维护</el-menu-item>
       </el-sub-menu>
