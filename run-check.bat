@@ -26,45 +26,13 @@ if not exist "%LOGDIR%" mkdir "%LOGDIR%"
 echo [1/6] Use JDK 8...
 java -version
 
-set "BACKEND_RUNNING="
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr /R /C:":8888 .*LISTENING"') do set "BACKEND_RUNNING=1"
-if not defined BACKEND_RUNNING (
-  rem 双重保险：检查是否有 spring-boot:run 的 Java 进程在跑
-  for /f %%a in ('wmic process where "name='java.exe'" get ProcessId ^| findstr /R "[0-9]"') do (
-    set "BACKEND_RUNNING=1"
-  )
-)
+echo [2/6] Ensure single backend instance...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%scripts\start-dev-service.ps1" -Service backend
+if errorlevel 1 goto :backend_err
 
-if not defined BACKEND_RUNNING (
-  echo [2/6] Start backend...
-  powershell -NoProfile -Command "$limit=1GB; if (Test-Path '%BACKEND_LOG%') { $size=(Get-Item '%BACKEND_LOG%').Length; if ($size -ge $limit) { $stamp=Get-Date -Format 'yyyyMMdd_HHmmss'; $bak='%BACKEND_LOG%.' + $stamp + '.bak'; Move-Item '%BACKEND_LOG%' $bak -Force; New-Item -ItemType File -Path '%BACKEND_LOG%' -Force | Out-Null; Get-ChildItem '%LOGDIR%' -Filter 'backend.log.*.bak' | Sort-Object LastWriteTime -Descending | Select-Object -Skip 1 | Remove-Item -Force -ErrorAction SilentlyContinue } }"
-  start "backend" /b powershell -NoProfile -Command "Set-Location '%ROOT%'; & '.\mvnw.cmd' spring-boot:run 2>&1 | Tee-Object -FilePath '%BACKEND_LOG%'"
-) else (
-  echo [2/6] Backend already running.
-  call :follow_backend_log
-)
-
-set "WEB_RUNNING="
-set "WEB_LISTENING="
-set "WEB_PID="
-call :probe_web
-if not errorlevel 1 set "WEB_RUNNING=1"
-if not defined WEB_RUNNING call :probe_web_ipv6
-if not errorlevel 1 set "WEB_RUNNING=1"
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr /R /C:":5173 .*LISTENING"') do (
-  set "WEB_LISTENING=1"
-  set "WEB_PID=%%a"
-)
-
-if defined WEB_RUNNING (
-  echo [3/6] Admin-web already running.
-) else if defined WEB_LISTENING (
-  echo [3/6] Found existing 5173 listener, but HTTP probe failed.
-  goto :web_stale
-) else (
-  echo [3/6] Start admin-web...
-  start "admin-web" /b powershell -NoProfile -Command "Set-Location '%ROOT%apps\admin-web'; if (Get-Command pnpm -ErrorAction SilentlyContinue) { & pnpm exec vite --host 0.0.0.0 --port 5173 --strictPort } else { & npm run dev -- --host 0.0.0.0 --port 5173 --strictPort } 2>&1 | Tee-Object -FilePath '%WEB_LOG%'"
-)
+echo [3/6] Ensure single admin-web instance...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%scripts\start-dev-service.ps1" -Service web
+if errorlevel 1 goto :web_err
 
 echo [4/6] Wait admin-web (%WEB_CHECK_URL%)...
 call :wait_web 30
