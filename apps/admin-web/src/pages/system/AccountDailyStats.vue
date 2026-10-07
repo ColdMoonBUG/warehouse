@@ -47,7 +47,14 @@ async function query() {
   const id = accountId.value, dates: [string, string] = [...range.value]
   loading.value = true; searched.value = false; rows.value = []
   try {
-    const [warehouses, transfers, sales, returns] = await Promise.all([getWarehouses(), getTransfers(), getReportSales(), getReportReturns()])
+    // 只拉所选日期范围内的单据；只用到合计数量，不需要明细和“出库后剩余”
+    const docRange = { startDate: dates[0], endDate: dates[1], withLines: false }
+    const [warehouses, transfers, sales, returns] = await Promise.all([
+      getWarehouses(),
+      getTransfers({ startDate: dates[0], endDate: dates[1], withRemaining: false }),
+      getReportSales(docRange),
+      getReportReturns(docRange),
+    ])
     const vehicleIds = new Set(warehouses.filter(w => w.type === 'vehicle' && w.salespersonId === id).map(w => w.id))
     const mainIds = new Set(warehouses.filter(w => w.type === 'main').map(w => w.id))
     if (!vehicleIds.size) throw new Error('该账户没有关联车库，无法统计领货量')

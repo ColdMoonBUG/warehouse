@@ -8,182 +8,127 @@
       <div class="search-bar">
         <el-input
           v-model="keyword"
-          placeholder="输入单号、门店名、业务员名称..."
+          placeholder="单号、门店、业务员、商品、金额、备注…多个词用空格分开"
           clearable
           size="large"
-          @keyup.enter="doSearch"
-          @clear="doSearch"
-          style="flex: 1"
+          @keyup.enter="doSearch(1)"
+          @clear="doSearch(1)"
+          style="flex: 1; min-width: 260px"
         >
           <template #prefix><i class="ri-search-line" /></template>
         </el-input>
-        <el-select v-model="docType" style="width: 140px" size="large" @change="doSearch">
+        <el-select v-model="docType" style="width: 130px" size="large" @change="doSearch(1)">
           <el-option label="全部类型" value="" />
           <el-option label="销售单" value="sale" />
           <el-option label="退货单" value="return" />
-          <el-option label="入库单" value="inbound" />
-          <el-option label="出库单" value="transfer" />
+          <el-option v-if="!isSalesperson" label="入库单" value="inbound" />
+          <el-option v-if="!isSalesperson" label="出库单" value="transfer" />
         </el-select>
-        <el-button type="primary" size="large" :loading="loading" @click="doSearch">查询</el-button>
+        <el-select v-model="status" style="width: 120px" size="large" @change="doSearch(1)">
+          <el-option label="全部状态" value="" />
+          <el-option label="草稿" value="draft" />
+          <el-option label="已过账" value="posted" />
+          <el-option label="已作废" value="voided" />
+        </el-select>
+        <el-date-picker v-model="range" type="daterange" value-format="YYYY-MM-DD" size="large"
+          start-placeholder="开始日期" end-placeholder="结束日期" style="width: 260px" @change="doSearch(1)" />
+        <el-button type="primary" size="large" :loading="loading" @click="doSearch(1)">查询</el-button>
+      </div>
+      <div class="tip">
+        支持：单号（可省略“-”，如输入 0514 能找到 XS-2026-05-14-…）、日期、门店/厂家名（可用拼音首字母，如 hyc）、
+        业务员、单据里的商品名或条码、金额、备注。在服务器上分页查询，历史单据也能搜到。
       </div>
 
       <div v-if="searched && results.length === 0 && !loading" class="empty">
         未找到匹配单据
       </div>
 
-      <div v-if="results.length > 0" class="result-list">
+      <div v-if="results.length > 0" v-loading="loading" class="result-list">
+        <div class="result-count">共 {{ total }} 张</div>
         <div
           v-for="item in results"
-          :key="item.id"
+          :key="item.type + item.id"
           class="result-item"
           @click="goDetail(item)"
         >
           <div class="result-main">
-            <el-tag :type="typeTagType(item.type)" size="small" class="type-tag">{{ typeLabel(item.type) }}</el-tag>
+            <el-tag :type="typeTagType(item.type)" size="small" class="type-tag">{{ typeLabel(item) }}</el-tag>
             <span class="code">{{ item.code }}</span>
-            <el-tag :type="statusTagType(item.status)" size="small">{{ statusLabel(item.status) }}</el-tag>
+            <el-tag :type="statusTagType(item)" size="small">{{ statusLabel(item) }}</el-tag>
           </div>
           <div class="result-meta">
-            <span v-if="item.salesperson">👤 {{ item.salesperson }}</span>
-            <span v-if="item.store">🏪 {{ item.store }}</span>
+            <span v-if="item.salespersonName">👤 {{ item.salespersonName }}</span>
+            <span v-if="item.partyName">🏪 {{ item.partyName }}</span>
             <span v-if="item.date">📅 {{ item.date }}</span>
             <span v-if="item.totalQty">📦 {{ item.totalQty }} 袋</span>
-            <span v-if="item.totalAmount">¥{{ item.totalAmount.toFixed(2) }}</span>
+            <span v-if="item.totalAmount != null">¥{{ Number(item.totalAmount).toFixed(2) }}</span>
+            <span v-if="item.linkedId" @click.stop>
+              🔗 {{ item.type === 'sale' ? '关联退单' : '关联销单' }}
+              <DocLink :type="item.type === 'sale' ? 'return' : 'sale'" :id="item.linkedId" :code="item.linkedCode" :status="item.linkedStatus" />
+            </span>
           </div>
           <div v-if="item.remark" class="result-remark">备注：{{ item.remark }}</div>
         </div>
+        <div class="pager">
+          <el-pagination
+            v-model:current-page="page"
+            :page-size="pageSize"
+            :total="total"
+            layout="prev, pager, next"
+            @current-change="doSearch"
+          />
+        </div>
       </div>
     </el-card>
-    <DuplicateDocs />
+    <DuplicateDocs v-if="!isSalesperson" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
 import DuplicateDocs from '@/components/DuplicateDocs.vue'
+import DocLink from '@/components/DocLink.vue'
 import { useRouter } from 'vue-router'
-import { getSales } from '@/api/sale'
-import { getReturns } from '@/api/return'
-import { getInbounds, getTransfers } from '@/api/stock'
-import { getSalespersonAccounts } from '@/api/auth'
-import { getStores } from '@/api/store'
-import type { SaleDoc, ReturnDoc, InboundDoc, TransferDoc, Account, Store } from '@/types'
+import { getSession } from '@/api/auth'
+import { searchDocs, type DocSearchHit } from '@/api/search'
 
 const router = useRouter()
+const session = getSession()
+const isSalesperson = session?.role === 'salesperson'
 const keyword = ref('')
-const docType = ref('')
+const docType = ref<'' | 'sale' | 'return' | 'inbound' | 'transfer'>('')
+const status = ref('')
+const range = ref<[string, string] | null>(null)
 const loading = ref(false)
 const searched = ref(false)
+const results = ref<DocSearchHit[]>([])
+const total = ref(0)
+const page = ref(1)
+const pageSize = 50
 
-interface ResultItem {
-  id: string
-  type: 'sale' | 'return' | 'inbound' | 'transfer'
-  code: string
-  status: string
-  salesperson?: string
-  store?: string
-  date?: string
-  totalQty?: number
-  totalAmount?: number
-  remark?: string
-}
-
-const results = ref<ResultItem[]>([])
-
-let accountMap: Record<string, string> = {}
-let storeMap: Record<string, string> = {}
-let dataLoaded = false
-
-async function ensureRefData() {
-  if (dataLoaded) return
-  const [accounts, stores] = await Promise.all([getSalespersonAccounts(), getStores()])
-  accountMap = Object.fromEntries((accounts as Account[]).map(a => [a.id, a.displayName]))
-  storeMap = Object.fromEntries((stores as Store[]).map(s => [s.id, s.name]))
-  dataLoaded = true
-}
-
-function matchKw(kw: string, ...fields: (string | undefined)[]) {
-  if (!kw) return true
-  const k = kw.toLowerCase()
-  return fields.some(f => f && f.toLowerCase().includes(k))
-}
-
-async function doSearch() {
-  const kw = keyword.value.trim()
+async function doSearch(toPage?: number) {
+  if (typeof toPage === 'number') page.value = toPage
   searched.value = true
   loading.value = true
-  results.value = []
-
   try {
-    await ensureRefData()
-    const all: ResultItem[] = []
-
-    if (!docType.value || docType.value === 'sale') {
-      const { list } = await getSales(1, 500)
-      for (const doc of list as SaleDoc[]) {
-        const sp = accountMap[doc.salespersonId] || ''
-        const st = storeMap[doc.storeId] || ''
-        if (!matchKw(kw, doc.code, sp, st, doc.remark)) continue
-        all.push({
-          id: doc.id, type: 'sale', code: doc.code, status: doc.status,
-          salesperson: sp, store: st, date: doc.date,
-          totalQty: doc.totalQty ?? doc.lines.reduce((s, l) => s + l.qty, 0),
-          totalAmount: doc.totalAmount ?? doc.lines.reduce((s, l) => s + l.qty * l.price, 0),
-          remark: doc.remark,
-        })
-      }
-    }
-
-    if (!docType.value || docType.value === 'return') {
-      const list = await getReturns() as ReturnDoc[]
-      for (const doc of list) {
-        const sp = accountMap[doc.salespersonId] || ''
-        const st = storeMap[doc.storeId] || ''
-        if (!matchKw(kw, doc.code, sp, st, doc.remark)) continue
-        const qty = doc.lines.reduce((s, l) => s + l.qty, 0)
-        const amount = doc.lines.reduce((s, l) => s + l.qty * l.price, 0)
-        all.push({
-          id: doc.id, type: 'return', code: doc.code, status: doc.status,
-          salesperson: sp, store: st, date: doc.date,
-          totalQty: qty, totalAmount: amount, remark: doc.remark,
-        })
-      }
-    }
-
-    if (!docType.value || docType.value === 'inbound') {
-      const list = await getInbounds() as InboundDoc[]
-      for (const doc of list) {
-        if (!matchKw(kw, doc.code, doc.remark)) continue
-        const qty = doc.lines.reduce((s, l) => s + l.qty, 0)
-        const amount = doc.lines.reduce((s, l) => s + l.qty * l.price, 0)
-        all.push({
-          id: doc.id, type: 'inbound', code: doc.code, status: doc.status,
-          date: doc.date, totalQty: qty, totalAmount: amount, remark: doc.remark,
-        })
-      }
-    }
-
-    if (!docType.value || docType.value === 'transfer') {
-      const list = await getTransfers() as TransferDoc[]
-      for (const doc of list) {
-        if (!matchKw(kw, doc.code, doc.remark)) continue
-        const qty = doc.lines.reduce((s, l) => s + l.qty, 0)
-        all.push({
-          id: doc.id, type: 'transfer', code: doc.code, status: doc.status,
-          date: doc.date, totalQty: qty, remark: doc.remark,
-        })
-      }
-    }
-
-    // 按日期倒序
-    all.sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-    results.value = all
+    const res = await searchDocs({
+      keyword: keyword.value.trim(),
+      type: docType.value,
+      status: status.value,
+      startDate: range.value?.[0],
+      endDate: range.value?.[1],
+      salespersonId: isSalesperson ? session?.accountId : undefined,
+      page: page.value,
+      limit: pageSize,
+    })
+    results.value = res.list
+    total.value = res.total
   } finally {
     loading.value = false
   }
 }
 
-function goDetail(item: ResultItem) {
+function goDetail(item: DocSearchHit) {
   const pathMap: Record<string, string> = {
     sale: '/stock/sale/',
     return: '/stock/return/',
@@ -193,17 +138,21 @@ function goDetail(item: ResultItem) {
   router.push(pathMap[item.type] + item.id)
 }
 
-function typeLabel(type: string) {
-  return { sale: '销售单', return: '退货单', inbound: '入库单', transfer: '出库单' }[type] || type
+function typeLabel(item: DocSearchHit) {
+  if (item.type === 'sale' && item.docType === 'gift') return '赠送单'
+  if (item.type === 'return' && item.docType === 'warehouse_return') return '回仓退货'
+  return { sale: '销售单', return: '退货单', inbound: '入库单', transfer: '出库单' }[item.type] || item.type
 }
 function typeTagType(type: string) {
-  return { sale: 'primary', return: 'warning', inbound: 'success', transfer: 'info' }[type] || ''
+  return ({ sale: 'primary', return: 'warning', inbound: 'success', transfer: 'info' } as Record<string, any>)[type] || ''
 }
-function statusLabel(status: string) {
-  return { draft: '草稿', posted: '已过账', voided: '已作废' }[status] || status
+function statusLabel(item: DocSearchHit) {
+  if (item.type === 'sale' && item.status === 'posted') return item.settled ? '已结清' : '未结清'
+  return ({ draft: '草稿', posted: '已过账', voided: '已作废' } as Record<string, string>)[item.status] || item.status
 }
-function statusTagType(status: string) {
-  return { draft: 'info', posted: 'success', voided: 'danger' }[status] || ''
+function statusTagType(item: DocSearchHit) {
+  if (item.type === 'sale' && item.status === 'posted') return item.settled ? 'success' : 'warning'
+  return ({ draft: 'info', posted: 'success', voided: 'danger' } as Record<string, any>)[item.status] || ''
 }
 </script>
 
@@ -212,13 +161,23 @@ function statusTagType(status: string) {
 .search-bar {
   display: flex;
   gap: 12px;
-  margin-bottom: 20px;
+  margin-bottom: 8px;
   flex-wrap: wrap;
+}
+.tip {
+  font-size: 12px;
+  color: #64748b;
+  margin-bottom: 16px;
+  line-height: 1.6;
 }
 .empty {
   text-align: center;
   padding: 60px 0;
   color: #64748b;
+}
+.result-count {
+  font-size: 13px;
+  color: #94a3b8;
 }
 .result-list {
   display: flex;
@@ -261,8 +220,10 @@ function statusTagType(status: string) {
   font-size: 12px;
   color: #64748b;
 }
+.pager { display: flex; justify-content: center; margin-top: 8px; }
 @media (max-width: 600px) {
   .search-bar { flex-direction: column; }
-  .search-bar :deep(.el-select) { width: 100% !important; }
+  .search-bar :deep(.el-select),
+  .search-bar :deep(.el-date-editor) { width: 100% !important; }
 }
 </style>

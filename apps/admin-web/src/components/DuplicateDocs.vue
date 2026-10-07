@@ -46,7 +46,8 @@ async function query() {
   const type = kind.value, keyword = storeKeyword.value.trim().toLowerCase()
   loading.value = true; searched.value = false; groups.value = []
   try {
-    const [docs, stores, accounts] = await Promise.all([type === 'sale' ? getReportSales() : getReportReturns(), getStores(), getSalespersonAccounts()])
+    const docRange = { startDate: dates[0], endDate: dates[1], withLines: false }
+    const [docs, stores, accounts] = await Promise.all([type === 'sale' ? getReportSales(docRange) : getReportReturns(docRange), getStores(), getSalespersonAccounts()])
     const storeMap = new Map(stores.map(s => [s.id, s.name]))
     const accountMap = new Map(accounts.map(a => [a.id, a.displayName]))
     const map = new Map<string, Group>()

@@ -639,14 +639,21 @@ function openReturnDetail(row: { salespersonId: string; salespersonName: string 
 }
 
 // ---- 加载 ----
+// 只拉当前统计周期内的单据（以前每次都拉全部历史，且每分钟自动刷新一次，服务器压力很大）
+let reloadPending = false
 async function loadData() {
-  if (loading.value) return
+  if (loading.value) {
+    reloadPending = true
+    return
+  }
   loading.value = true
   try {
+    const { start, end } = getDateRange()
+    const range = { startDate: start, endDate: end }
     const [inbounds, returns, transfers, accounts, products, warehouses] = await Promise.all([
-      getAllInbounds(),
-      getAllReturns(),
-      getTransfers(),
+      getAllInbounds(range),
+      getAllReturns(range),
+      getTransfers({ ...range, withRemaining: false }),
       getAllAccounts(),
       getProducts(),
       getWarehouses(),
@@ -680,13 +687,18 @@ async function loadData() {
     if (e?.message === '未登录') { router.replace('/login'); return }
   } finally {
     loading.value = false
+    if (reloadPending) {
+      reloadPending = false
+      void loadData()
+    }
   }
 }
 
 function startAutoRefresh() {
   if (refreshTimer) return
   refreshTimer = setInterval(() => {
-    void loadData()
+    // 标签页在后台时不刷新，避免没人看也一直请求服务器
+    if (document.visibilityState === 'visible') void loadData()
   }, 60_000)
 }
 

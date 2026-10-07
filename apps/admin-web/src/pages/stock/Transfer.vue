@@ -45,7 +45,8 @@ function statusLabel(s: string) { return ({draft:'草稿',posted:'已过账',voi
 function statusType(s: string) { return ({draft:'info',posted:'success',voided:'danger'} as any)[s]||'' }
 
 async function load() {
-  ;[list.value, warehouses.value] = await Promise.all([getTransfers(), getWarehouses()])
+  // 列表不显示“出库后剩余”，不让后端为全部出库单逐日倒推库存
+  ;[list.value, warehouses.value] = await Promise.all([getTransfers({ withRemaining: false }), getWarehouses()])
 }
 onMounted(load)
 </script>
