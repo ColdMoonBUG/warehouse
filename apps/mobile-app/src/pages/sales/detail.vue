@@ -58,6 +58,10 @@
         <text class="net-value">¥{{ (totalAmount - returnTotalAmount).toFixed(2) }}</text>
       </view>
 
+      <view v-if="voidedReturnCode" class="summary return-summary">
+        <text>关联退单 {{ voidedReturnCode }} 已作废，不计入本单</text>
+      </view>
+
       <view class="pay-type-section" v-if="showPayType">
         <text class="pay-type-label">付款方式</text>
         <view class="pay-type-options">
@@ -176,7 +180,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
-import { getSaleDetail, getStores, getSalespersonAccounts, getProducts, voidSale, isSameSalespersonId, getReturnDetail, voidReturn, getSalespersonDisplayName } from '@/api'
+import { getSaleDetail, getStores, getSalespersonAccounts, getProducts, voidSale, isSameSalespersonId, getReturnDetail, voidReturn, getSalespersonDisplayName, hasServerFeature } from '@/api'
 import type { SaleDoc, Store, Salesperson, Product, ReturnDoc } from '@/types'
 import { getPageQueryParam, formatPackSummary, normalizeCount } from '@/utils'
 import { buildSaleReceipt, printSaleA4, printCombinedA4, checkPrinterConnected, navigateToPrinterSettings, getBluetoothPrinterLogs } from '@/utils/bluetooth-printer'
@@ -192,12 +196,12 @@ async function voidDoc() {
     success: async (res) => {
       if (!res.confirm || !doc.value) return
       try {
-        // 先作废关联退单（如有）
-        if (hasReturn && returnDoc.value) {
-          await voidReturn(returnDoc.value.id).catch(() => {})
+        const warning = await voidSaleWithLinkedReturn(doc.value.id, hasReturn ? returnDoc.value : null)
+        if (warning) {
+          uni.showModal({ title: '销单已作废', content: warning, showCancel: false })
+        } else {
+          uni.showToast({ title: '已作废', icon: 'success' })
         }
-        await voidSale(doc.value.id)
-        uni.showToast({ title: '已作废', icon: 'success' })
         await loadDetail()
       } catch (e: any) {
         uni.showToast({ title: e?.message || '作废失败', icon: 'none' })
@@ -206,12 +210,28 @@ async function voidDoc() {
   })
 }
 
+/**
+ * 作废销单并连同作废关联退单。新版后端在同一事务里自动处理关联退单；
+ * 旧版后端由 App 先作废退单再作废销单（与原来一致）。返回需要提示用户的信息。
+ */
+async function voidSaleWithLinkedReturn(saleId: string, linked: ReturnDoc | null): Promise<string> {
+  if (await hasServerFeature('sale.void.cascade')) {
+    return voidSale(saleId)
+  }
+  if (linked && linked.status === 'posted') {
+    await voidReturn(linked.id).catch(() => {})
+  }
+  return voidSale(saleId)
+}
+
 async function voidAndRebuild() {
   if (!doc.value) return
   const isVoided = doc.value.status === 'voided'
-  const confirmContent = isVoided
+  const linkedPosted = returnDoc.value?.status === 'posted'
+  const confirmContent = (isVoided
     ? '将以此作废单为基础跳转到创建页，保留本单商品数据。'
-    : '将作废此销单并跳转到创建页，保留本单商品数据作为新单基础。'
+    : '将作废此销单并跳转到创建页，保留本单商品数据作为新单基础。')
+    + (linkedPosted ? `\n关联退单 ${returnDoc.value?.code || ''} 会一并作废，退货商品会带到新单里重新提交。` : '')
   uni.showModal({
     title: '根据此单重建',
     content: confirmContent,
@@ -237,9 +257,13 @@ async function voidAndRebuild() {
             : [],
         }
         uni.setStorageSync('wh_sale_prefill', JSON.stringify(prefill))
-        // 仅 posted 状态需要先作废
+        // 仅 posted 状态需要先作废；关联退单一并作废，否则重建后同一批退货会被算两次
         if (!isVoided) {
-          await voidSale(doc.value.id)
+          const warning = await voidSaleWithLinkedReturn(doc.value.id, returnDoc.value)
+          if (warning) uni.showToast({ title: warning, icon: 'none', duration: 3000 })
+        } else if (returnDoc.value?.status === 'posted') {
+          // 历史数据：销单早已作废但关联退单还是已过账，重建前也要作废它
+          await voidReturn(returnDoc.value.id)
         }
         uni.showToast({ title: '正在跳转...', icon: 'none' })
         setTimeout(() => {
@@ -257,6 +281,7 @@ const userStore = useUserStore()
 
 const doc = ref<SaleDoc | null>(null)
 const returnDoc = ref<ReturnDoc | null>(null)
+const voidedReturnCode = ref('')
 const stores = ref<Store[]>([])
 const salespersons = ref<Salesperson[]>([])
 const products = ref<Product[]>([])
@@ -412,9 +437,16 @@ async function loadDetail() {
   stores.value = storeList
   salespersons.value = salespersonList
   products.value = productList
-  // 加载关联退单
+  // 加载关联退单；销单仍有效而退单已单独作废时，不再把它算进本单净额和合并打印
+  voidedReturnCode.value = ''
   if (detail?.returnDocId) {
-    returnDoc.value = await getReturnDetail(detail.returnDocId)
+    const linked = await getReturnDetail(detail.returnDocId)
+    if (linked && linked.status === 'voided' && detail.status !== 'voided') {
+      voidedReturnCode.value = linked.code
+      returnDoc.value = null
+    } else {
+      returnDoc.value = linked
+    }
   } else {
     returnDoc.value = null
   }

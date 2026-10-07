@@ -35,26 +35,32 @@
           <text class="amount">¥{{ docAmount(doc).toFixed(2) }}</text>
         </view>
         <view class="row">
-          <text class="qty">{{ doc.lines.length }}种 / {{ docQty(doc) }}袋</text>
+          <text class="qty">{{ docKinds(doc) }}种 / {{ docQty(doc) }}袋</text>
         </view>
       </view>
+      <view v-if="!loading && sales.length < total" class="load-more" @tap="loadMore">已显示 {{ sales.length }} / {{ total }}，点击加载更多</view>
     </view>
   </view>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
-import { getSales, getStores } from '@/api'
+import { getStores, querySales } from '@/api'
+import type { DocQuery } from '@/api'
 import type { SaleDoc } from '@/types'
 import { formatDate, getPageQueryParam, normalizeCount } from '@/utils'
 
+const PAGE_SIZE = 100
 const userStore = useUserStore()
 const storeId = ref('')
 const storeName = ref('超市')
 const sales = ref<SaleDoc[]>([])
+const total = ref(0)
+const page = ref(0)
 const loading = ref(false)
+let seq = 0
 const rangeMode = ref<'7d' | '30d' | 'custom'>('7d')
 const customStart = ref('')
 const customEnd = ref('')
@@ -65,10 +71,16 @@ function statusText(status: string) {
 }
 
 function docAmount(doc: SaleDoc) {
+  if (doc.totalAmount != null) return Number(doc.totalAmount)
   return doc.lines.reduce((sum, line) => sum + normalizeCount(line.qty) * line.price, 0)
 }
 
+function docKinds(doc: SaleDoc) {
+  return doc.lineCount != null ? doc.lineCount : doc.lines.length
+}
+
 function docQty(doc: SaleDoc) {
+  if (doc.totalQty != null) return doc.totalQty
   return doc.lines.reduce((sum, line) => sum + normalizeCount(line.qty), 0)
 }
 
@@ -114,34 +126,56 @@ function onEndDateChange(e: any) {
   normalizeRange()
 }
 
-const filteredSales = computed(() => {
-  if (rangeMode.value === '7d') {
-    const start = daysAgoString(6)
-    return sales.value.filter(doc => doc.date >= start)
-  }
-  if (rangeMode.value === '30d') {
-    const start = daysAgoString(29)
-    return sales.value.filter(doc => doc.date >= start)
-  }
-  if (!customStart.value || !customEnd.value) return sales.value
-  return sales.value.filter(doc => doc.date >= customStart.value && doc.date <= customEnd.value)
-})
+// 日期筛选在服务器上做，只取这家超市在所选范围内的单据
+const filteredSales = computed(() => sales.value)
+
+function rangeQuery(): DocQuery {
+  if (rangeMode.value === '7d') return { startDate: daysAgoString(6) }
+  if (rangeMode.value === '30d') return { startDate: daysAgoString(29) }
+  if (!customStart.value || !customEnd.value) return {}
+  return { startDate: customStart.value, endDate: customEnd.value }
+}
 
 async function loadData() {
   if (!storeId.value) return
+  const mySeq = ++seq
   loading.value = true
   try {
-    const [list, storeList] = await Promise.all([
-      getSales(storeId.value),
+    const [res, storeList] = await Promise.all([
+      querySales({ storeId: storeId.value, ...rangeQuery(), page: 1, limit: PAGE_SIZE }),
       getStores(),
     ])
-    sales.value = list
+    if (mySeq !== seq) return
+    sales.value = res.list
+    total.value = res.total
+    page.value = 1
     const store = storeList.find(item => item.id === storeId.value)
     if (store) storeName.value = store.name
+  } catch (e: any) {
+    if (mySeq === seq) uni.showToast({ title: e?.message || '加载失败', icon: 'none' })
   } finally {
-    loading.value = false
+    if (mySeq === seq) loading.value = false
   }
 }
+
+async function loadMore() {
+  if (loading.value || sales.value.length >= total.value) return
+  const mySeq = ++seq
+  loading.value = true
+  try {
+    const res = await querySales({ storeId: storeId.value, ...rangeQuery(), page: page.value + 1, limit: PAGE_SIZE })
+    if (mySeq !== seq) return
+    sales.value = [...sales.value, ...res.list]
+    total.value = res.total
+    page.value += 1
+  } catch (e: any) {
+    uni.showToast({ title: e?.message || '加载失败', icon: 'none' })
+  } finally {
+    if (mySeq === seq) loading.value = false
+  }
+}
+
+watch([rangeMode, customStart, customEnd], () => loadData())
 
 onLoad((query) => {
   storeId.value = query?.storeId || getPageQueryParam('storeId')
@@ -182,4 +216,5 @@ onMounted(() => {
 .amount { font-size: 28rpx; color: #333; font-weight: 600; }
 .qty { font-size: 24rpx; color: #999; }
 .empty { text-align: center; padding: 80rpx 0; color: #999; }
+.load-more { text-align: center; padding: 24rpx 0 40rpx; font-size: 24rpx; color: #1677ff; }
 </style>

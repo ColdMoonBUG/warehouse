@@ -196,7 +196,7 @@ import { ref, computed, onMounted } from 'vue'
 import { onLoad, onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
 import { useReferenceStore } from '@/store/reference'
-import { getStock, saveReturn, postReturn, isOwnedStore, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId, getProductSaleQty, getSalespersonDisplayName } from '@/api'
+import { getStock, saveReturn, postReturn, isOwnedStore, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId, getProductSaleQty, getSalespersonDisplayName, getServerFeatures, submitReturnDoc, newDocId } from '@/api'
 import type { Store, Product, Warehouse, ReturnDoc, ReturnLine, StockItem } from '@/types'
 import { genId, formatProductQuickPickLabel, formatProductPackageSummary, calcQty, deriveBagQty, normalizeCount, normalizeBoxPackQty, formatStockPreview, getProductStockQty, toStockQtyMap, todayLocalDate } from '@/utils'
 import { printReturnA4, checkPrinterConnected, navigateToPrinterSettings } from '@/utils/bluetooth-printer'
@@ -250,6 +250,10 @@ const printCopies = ref(1)
 const submitting = ref(false)
 const previewDate = ref('')
 const prefillMode = ref(false)
+// 新版后端一次提交用的退单 id：失败重试时保持不变，避免网络超时后重复开单
+const pendingReturnId = ref('')
+// 从已关联销单的退单“根据此单重建”时，新退单要重新关联到原销单
+const relinkSaleId = ref('')
 const addedProductOrder = ref(new Map<string, number>())
 const canvasId = CANVAS_ID
 const canvasWidthPx = PAGE_WIDTH_DOTS
@@ -685,6 +689,14 @@ async function doSubmit(): Promise<ReturnDoc | null> {
     lines,
   } as ReturnDoc
   try {
+    const features = await getServerFeatures()
+    if (features.has('return.submit')) {
+      // 保存+过账在后端一个事务里完成；重试用同一个 id，已过账的不会再过一次
+      if (!pendingReturnId.value) pendingReturnId.value = newDocId()
+      const posted = await submitReturnDoc({ ...draft, id: pendingReturnId.value }, draft.lines, relinkSaleId.value || undefined)
+      pendingReturnId.value = ''
+      return { ...posted, payType: payType.value }
+    }
     const saved = await saveReturn(draft, draft.lines)
     await postReturn(saved.id)
     return saved
@@ -767,6 +779,7 @@ function tryRestorePrefill() {
       : null
     payType.value = data.payType === 'cash' ? 'cash' : 'card'
     remark.value = data.sourceCode ? `[重建自${data.sourceCode}]` : ''
+    relinkSaleId.value = data.saleDocId || ''
 
     const newQtyMap: Record<string, QtyInput> = {}
     const newPriceMap: Record<string, number> = {}

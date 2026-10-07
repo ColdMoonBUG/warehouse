@@ -287,7 +287,7 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { onLoad, onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
 import { useReferenceStore } from '@/store/reference'
-import { getStock, saveSale, postSale, linkSaleReturn, saveReturn, postReturn, isOwnedStore, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId, getProductSaleQty, settleSale, getSaleDetail, getSalespersonDisplayName, getReturnDetail } from '@/api'
+import { getStock, saveSale, postSale, linkSaleReturn, saveReturn, postReturn, isOwnedStore, isSameSalespersonId, getSessionSalespersonId, getWarehouseSalespersonId, getProductSaleQty, settleSale, getSaleDetail, getSalespersonDisplayName, getReturnDetail, getServerFeatures, submitSaleBundle, newDocId } from '@/api'
 import type { Store, Product, SaleDoc, SaleLine, ReturnDoc, ReturnLine, Warehouse, StockItem } from '@/types'
 import { genId, formatProductQuickPickLabel, formatProductPackageSummary, calcQty, deriveBagQty, normalizeCount, normalizeBoxPackQty, formatStockPreview, getProductStockQty, toStockQtyMap, COMMISSION_RATE, todayLocalDate, debounce } from '@/utils'
 import { printSaleA4, printCombinedA4, checkPrinterConnected, navigateToPrinterSettings } from '@/utils/bluetooth-printer'
@@ -347,6 +347,8 @@ const returnAddedProductOrder = ref(new Map<string, number>())
 
 // 非响应式提交锁，防止快速连点导致的重复提交
 let _submitLock = false
+// 本页已成功提交：之后不再自动保存草稿（否则延迟触发的自动保存会多建一张空草稿）
+let _pageSubmitted = false
 
 const canvasId = CANVAS_ID
 const canvasWidthPx = PAGE_WIDTH_DOTS
@@ -363,6 +365,8 @@ const SORT_MODE_KEY = 'wh_sale_sort_mode'
 
 // 后端草稿单 ID（创建后复用同一条记录，避免重复生成）
 const autoDraftId = ref('')
+// 随单退货的单据 ID：新版后端一次提交时由 App 预先生成，失败重试时保持不变，保证不会重复开单
+const pendingReturnId = ref('')
 interface SaleDraft {
   storeId: string
   warehouseId: string
@@ -947,6 +951,18 @@ async function doSubmit(docType: 'sale' | 'gift' = 'sale'): Promise<{ saleDoc: S
     return null
   }
 
+  let features: Set<string>
+  try {
+    features = await getServerFeatures()
+  } catch (e: any) {
+    uni.showToast({ title: e.message || '网络异常，请重试', icon: 'none' })
+    return null
+  }
+  if (features.has('sale.submit')) {
+    return submitAtomically(docType, lines)
+  }
+
+  // ---- 旧版后端：沿用原来的分步提交 ----
   const saleDraft = {
     ...(autoDraftId.value ? { id: autoDraftId.value } : {}),
     salespersonId: currentSalespersonId(),
@@ -1005,12 +1021,81 @@ async function doSubmit(docType: 'sale' | 'gift' = 'sale'): Promise<{ saleDoc: S
       await linkSaleReturn(savedSale.id, savedReturn.id)
     }
 
+    _pageSubmitted = true
     clearDraft()
     return { saleDoc: postedSale, returnDoc: postedReturn }
   } catch (e: any) {
     uni.showToast({ title: e.message || '生成失败', icon: 'none' })
     return null
   }
+}
+
+function buildReturnLines(): ReturnLine[] {
+  return returnSelectedProducts.value
+    .map((p, index) => ({
+      id: genId(),
+      productId: p.id,
+      boxQty: normalizeCount(returnQtyMap.value[p.id]?.boxQty),
+      qty: normalizeCount(returnQtyMap.value[p.id]?.qty),
+      price: p.salePrice || 0,
+      lineNo: index + 1,
+    }))
+    .filter(line => line.qty > 0)
+}
+
+/**
+ * 新版后端：销单、现金收款、随单退货、关联在一个请求、一个事务里完成。
+ * 两张单的 id 在 App 里预先生成；网络超时后再点一次会用同样的 id 重试，
+ * 后端发现已经过账就直接返回原单，不会重复开单、重复扣库存。
+ */
+async function submitAtomically(docType: 'sale' | 'gift', lines: SaleLine[]): Promise<{ saleDoc: SaleDoc; returnDoc: ReturnDoc | null } | null> {
+  if (!autoDraftId.value) autoDraftId.value = newDocId()
+  const returnLines = showReturnSection.value && returnTotalQty.value > 0 ? buildReturnLines() : []
+  if (returnLines.length && !pendingReturnId.value) pendingReturnId.value = newDocId()
+  const date = todayLocalDate()
+  const saleDoc = {
+    id: autoDraftId.value,
+    salespersonId: currentSalespersonId(),
+    storeId: currentStoreId(),
+    warehouseId: currentWarehouseId(),
+    date,
+    status: 'draft',
+    docType,
+    paymentType: payType.value === 'cash' ? 'cash' : 'bill',
+    lines,
+  } as SaleDoc
+  const returnDoc = returnLines.length ? {
+    id: pendingReturnId.value,
+    salespersonId: currentSalespersonId(),
+    storeId: currentStoreId(),
+    fromWarehouseId: currentWarehouseId(),
+    returnType: 'vehicle_return',
+    date,
+    status: 'draft',
+    lines: returnLines,
+  } as ReturnDoc : null
+  try {
+    const result = await submitSaleBundle(saleDoc, returnDoc)
+    if (result.replayed) {
+      // 上一次提交其实已经成功（只是没收到结果），以服务器上已保存的内容为准
+      uni.showToast({ title: '该单已提交过，按已提交内容处理', icon: 'none' })
+    } else {
+      result.saleDoc.lines = lines
+      if (result.returnDoc) result.returnDoc.lines = returnLines
+    }
+    _pageSubmitted = true
+    clearDraft()
+    pendingReturnId.value = ''
+    return { saleDoc: result.saleDoc, returnDoc: result.returnDoc }
+  } catch (e: any) {
+    uni.showToast({ title: e.message || '生成失败', icon: 'none', duration: 3000 })
+    return null
+  }
+}
+
+// 销退列表是 tabBar 页面，redirectTo 打不开 tabBar 页（会直接失败、停在本页），要用 switchTab
+function backToSalesList() {
+  uni.switchTab({ url: '/pages/sales/index', fail: () => uni.redirectTo({ url: '/pages/sales/index' }) })
 }
 
 async function submitAndPrint() {
@@ -1091,7 +1176,7 @@ async function submitAndPrint() {
 
   submitting.value = false
   setTimeout(() => {
-    uni.redirectTo({ url: '/pages/sales/index' })
+    backToSalesList()
   }, 400)
 }
 
@@ -1099,7 +1184,7 @@ async function submitOnly() {
   if (_submitLock) return
   if (submittedResult.value) {
     uni.showToast({ title: '该销单已提交', icon: 'none' })
-    setTimeout(() => { uni.redirectTo({ url: '/pages/sales/index' }) }, 400)
+    setTimeout(() => { backToSalesList() }, 400)
     return
   }
   if (!(await guardNetwork('提交销单'))) return
@@ -1112,7 +1197,7 @@ async function submitOnly() {
   submittedResult.value = result
   uni.showToast({ title: '销单已确认', icon: 'success' })
   setTimeout(() => {
-    uni.redirectTo({ url: '/pages/sales/index' })
+    backToSalesList()
   }, 400)
 }
 
@@ -1137,7 +1222,7 @@ async function submitGift() {
       if (!result) return
       uni.showToast({ title: '赠送单已确认', icon: 'success' })
       setTimeout(() => {
-        uni.redirectTo({ url: '/pages/sales/index' })
+        backToSalesList()
       }, 400)
     },
   })
@@ -1145,6 +1230,8 @@ async function submitGift() {
 
 // --- 草稿保存/恢复 ---
 function saveDraftNow() {
+  // 提交成功后延迟触发的保存会把刚清掉的本地草稿又写回去，下次进来会提示“恢复草稿”导致重复开单
+  if (_pageSubmitted) return
   if (!selectedStore.value && !selectedWarehouse.value && Object.keys(qtyMap.value).length === 0) return
   const draft: SaleDraft = {
     storeId: selectedStore.value?.id || '',
@@ -1167,6 +1254,13 @@ const debouncedSaveDraft = debounce(saveDraftNow, 500)
 // 自动同步草稿到后端（超市+至少一件商品时触发）
 async function autoSaveDraftToServer() {
   if (!selectedStore.value) return
+  // 正在提交或已经提交成功时不再写草稿，避免与提交并发、避免提交后又多建一张草稿
+  if (_submitLock || _pageSubmitted) return
+  // 新版后端支持 App 预生成 id：草稿和最终提交的是同一张单，不会留下多余的草稿
+  if (!autoDraftId.value) {
+    const features = await getServerFeatures().catch(() => null)
+    if (features?.has('doc.save.clientId')) autoDraftId.value = newDocId()
+  }
   const lines: SaleLine[] = selectedProducts.value
     .map(p => ({
       id: genId(),

@@ -48,7 +48,7 @@
         <view class="actions">
           <button class="btn-create" @tap="goCreate">创建销单</button>
         </view>
-        <view v-if="filteredSales.length === 0" class="empty">暂无销单</view>
+        <view v-if="filteredSales.length === 0" class="empty">{{ current.loading ? '加载中...' : (current.error || '暂无销单') }}</view>
         <view v-for="doc in filteredSales" :key="doc.id" class="sale-card" @tap="goDetail(doc)">
           <view class="row">
             <text class="code">{{ doc.code }}</text>
@@ -70,7 +70,7 @@
         <view class="actions">
           <button class="btn-create" @tap="goReturnCreate">创建退货单</button>
         </view>
-        <view v-if="filteredReturns.length === 0" class="empty">暂无退货单</view>
+        <view v-if="filteredReturns.length === 0" class="empty">{{ current.loading ? '加载中...' : (current.error || '暂无退货单') }}</view>
         <view v-for="doc in filteredReturns" :key="doc.id" class="sale-card" @tap="goReturnDetail(doc.id)">
           <view class="row">
             <text class="code">{{ doc.code }}</text>
@@ -88,8 +88,7 @@
       </view>
 
       <view v-else>
-        <view v-if="unsettledLoading" class="empty">加载中...</view>
-        <view v-else-if="filteredUnsettledDocs.length === 0" class="empty">暂无未收款销单</view>
+        <view v-if="filteredUnsettledDocs.length === 0" class="empty">{{ current.loading ? '加载中...' : (current.error || '暂无未收款销单') }}</view>
         <view v-for="doc in filteredUnsettledDocs" :key="doc.id" class="sale-card">
           <view class="row">
             <text class="code">{{ doc.code }}</text>
@@ -110,26 +109,50 @@
           </view>
         </view>
       </view>
+
+      <view v-if="current.list.length > 0" class="list-footer">
+        <text v-if="current.loading">加载中...</text>
+        <text v-else-if="current.list.length < current.total" class="load-more" @tap="loadMore">已显示 {{ current.list.length }} / {{ current.total }}，点击加载更多</text>
+        <text v-else>共 {{ current.total }} 张</text>
+      </view>
     </view>
   </view>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { onShow } from '@dcloudio/uni-app'
+import { computed, reactive, ref, watch } from 'vue'
+import { onReachBottom, onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/store/user'
-import { getReturns, getSales, getSessionSalespersonId, getStores, getUnsettledSales, isSameSalespersonId, settleSale } from '@/api'
+import { getSessionSalespersonId, getStores, queryReturns, querySales, queryUnsettledSales, settleSale } from '@/api'
+import type { DocPage, DocQuery } from '@/api'
 import type { ReturnDoc, SaleDoc, Store } from '@/types'
-import { formatDate } from '@/utils'
+import { debounce, formatDate } from '@/utils'
+import { readListCache, writeListCache } from '@/utils/list-cache'
+
+type Tab = 'sale' | 'return' | 'unsettled'
+interface TabState {
+  list: any[]
+  total: number
+  page: number
+  loading: boolean
+  error: string
+  key: string
+  seq: number
+}
+
+// 每次只向服务器要一页（50 张）当前筛选范围内、当前业务员的单据，不再把全部历史单据拉到手机上
+const PAGE_SIZE = 50
 
 const userStore = useUserStore()
-const activeTab = ref<'sale'|'return'|'unsettled'>('sale')
-const sales = ref<SaleDoc[]>([])
-const returns = ref<ReturnDoc[]>([])
+const activeTab = ref<Tab>('sale')
 const stores = ref<Store[]>([])
 const searchKeyword = ref('')
-const unsettledDocs = ref<SaleDoc[]>([])
-const unsettledLoading = ref(false)
+const tabs = reactive<Record<Tab, TabState>>({
+  sale: { list: [], total: 0, page: 0, loading: false, error: '', key: '', seq: 0 },
+  return: { list: [], total: 0, page: 0, loading: false, error: '', key: '', seq: 0 },
+  unsettled: { list: [], total: 0, page: 0, loading: false, error: '', key: '', seq: 0 },
+})
+const current = computed(() => tabs[activeTab.value])
 const rangeMode = ref<'7d' | '30d' | 'custom'>('7d')
 const customStart = ref('')
 const customEnd = ref('')
@@ -170,21 +193,16 @@ function normalizeRange() {
   }
 }
 
-function inDateWindow(value: string, startDaysAgo: number) {
-  const docDate = parseLocalDate(value)
-  if (!docDate) return false
-  const start = startOfToday()
-  start.setDate(start.getDate() - startDaysAgo)
-  return docDate.getTime() >= start.getTime()
-}
-
-function inCustomRange(value: string) {
-  const docDate = parseLocalDate(value)
+/** 当前日期筛选对应的查询范围（与原来的“最近 N 天”口径一致：只限制起始日） */
+function rangeDates(): Pick<DocQuery, 'startDate' | 'endDate'> {
+  if (rangeMode.value === '7d') return { startDate: daysAgoString(6) }
+  if (rangeMode.value === '30d') return { startDate: daysAgoString(29) }
   const start = parseLocalDate(customStart.value)
   const end = parseLocalDate(customEnd.value)
-  if (!docDate || !start || !end) return true
-  return docDate.getTime() >= start.getTime() && docDate.getTime() <= end.getTime()
+  if (!start || !end) return {}
+  return { startDate: customStart.value, endDate: customEnd.value }
 }
+
 function setRangeMode(mode: '7d' | '30d' | 'custom') {
   rangeMode.value = mode
   if (mode === 'custom') {
@@ -210,68 +228,102 @@ const rangeSummaryText = computed(() => {
   return `${customStart.value || '开始日期'} 至 ${customEnd.value || '结束日期'}`
 })
 
-function inCurrentRange(date: string) {
-  if (!date) return false
-  if (rangeMode.value === '7d') {
-    return inDateWindow(date, 6)
-  }
-  if (rangeMode.value === '30d') {
-    return inDateWindow(date, 29)
-  }
-  if (!customStart.value || !customEnd.value) return true
-  return inCustomRange(date)
+const filteredSales = computed(() => tabs.sale.list as SaleDoc[])
+const filteredReturns = computed(() => tabs.return.list as ReturnDoc[])
+const filteredUnsettledDocs = computed(() => tabs.unsettled.list as SaleDoc[])
+
+function buildQuery(): DocQuery {
+  const query: DocQuery = { ...rangeDates(), limit: PAGE_SIZE }
+  const keyword = searchKeyword.value.trim()
+  if (keyword) query.keyword = keyword
+  if (!userStore.isAdmin) query.salespersonId = getSessionSalespersonId(userStore.currentUser)
+  return query
 }
 
-function filterBySearch<T extends { code?: string }>(list: T[]) {
-  const key = searchKeyword.value.trim().toLowerCase()
-  if (!key) return list
-  return list.filter(item => (item.code || '').toLowerCase().includes(key))
+function fetchPage(tab: Tab, query: DocQuery): Promise<DocPage<any>> {
+  if (tab === 'sale') return querySales(query)
+  if (tab === 'return') return queryReturns(query)
+  return queryUnsettledSales(query)
 }
 
-const filteredSales = computed(() => filterBySearch(sales.value.filter(doc => inCurrentRange(doc.date))))
-const filteredReturns = computed(() => filterBySearch(returns.value.filter(doc => inCurrentRange(doc.date))))
-const filteredUnsettledDocs = computed(() => filterBySearch(unsettledDocs.value.filter(doc => inCurrentRange(doc.date))))
+/** 加载某个页签；reset=true 从第一页重新查（先显示缓存，后台刷新），否则加载下一页 */
+async function loadTab(tab: Tab, reset = true) {
+  const state = tabs[tab]
+  const query = buildQuery()
+  const key = `${tab}|${userStore.currentUser?.accountId || ''}|${JSON.stringify(query)}`
+  if (reset) {
+    const cached = readListCache<any>(key)
+    if (cached) {
+      state.list = cached.list
+      state.total = cached.total
+      state.page = cached.page
+    } else if (state.key !== key) {
+      state.list = []
+      state.total = 0
+      state.page = 0
+    }
+    state.key = key
+  } else if (state.loading || state.list.length >= state.total) {
+    return
+  }
+  // 只采用最后一次请求的结果，先发后到的旧结果直接丢弃
+  const seq = ++state.seq
+  state.loading = true
+  state.error = ''
+  try {
+    if (reset) {
+      // 重新查询时把已经展开的页数一次取回，避免“加载更多”的位置被重置
+      const pages = Math.min(Math.max(1, state.page), 10)
+      const res = await fetchPage(tab, { ...query, page: 1, limit: PAGE_SIZE * pages })
+      if (seq !== state.seq) return
+      state.list = res.list
+      state.total = res.total
+      state.page = pages
+    } else {
+      const res = await fetchPage(tab, { ...query, page: state.page + 1 })
+      if (seq !== state.seq) return
+      state.list = [...state.list, ...res.list]
+      state.total = res.total
+      state.page += 1
+    }
+    writeListCache(key, { list: state.list, total: state.total, page: state.page })
+  } catch (e: any) {
+    if (seq === state.seq) {
+      state.error = `加载失败：${e?.message || '网络异常'}`
+      if (state.list.length) uni.showToast({ title: state.error, icon: 'none' })
+    }
+  } finally {
+    if (seq === state.seq) state.loading = false
+  }
+}
+
+function reloadActiveTab() {
+  loadTab(activeTab.value, true)
+}
+
+function loadMore() {
+  loadTab(activeTab.value, false)
+}
+
+const debouncedReload = debounce(reloadActiveTab, 400)
+
+watch([rangeMode, customStart, customEnd], () => reloadActiveTab())
+watch(searchKeyword, () => debouncedReload())
 
 function switchTab(tab: 'sale' | 'return' | 'unsettled') {
   activeTab.value = tab
   searchKeyword.value = ''
-  if (tab === 'unsettled') loadUnsettled()
+  reloadActiveTab()
 }
 
 function goReturnCreate() { uni.navigateTo({ url: '/pages/return/create' }) }
 function goReturnDetail(id: string) { uni.navigateTo({ url: `/pages/return/detail?id=${id}` }) }
 
-function totalReturnQty(doc: ReturnDoc) { return doc.lines.reduce((sum, line) => sum + line.qty, 0) }
-function totalReturnAmount(doc: ReturnDoc) { return doc.lines.reduce((sum, line) => sum + line.qty * line.price, 0) }
-
-const listReturns = async () => {
-  const docs = await getReturns()
-  const currentSalespersonId = getSessionSalespersonId(userStore.currentUser)
-  returns.value = userStore.isAdmin ? docs : docs.filter(doc => isSameSalespersonId(doc.salespersonId, currentSalespersonId))
-}
-
-const listSales = async () => {
-  const saleList = await getSales()
-  const currentSalespersonId = getSessionSalespersonId(userStore.currentUser)
-  sales.value = userStore.isAdmin ? saleList : saleList.filter(doc => isSameSalespersonId(doc.salespersonId, currentSalespersonId))
-}
-
-const loadAll = async () => {
-  stores.value = await getStores()
-  await Promise.all([listSales(), listReturns()])
-}
+function totalReturnQty(doc: ReturnDoc) { return doc.totalQty ?? doc.lines.reduce((sum, line) => sum + line.qty, 0) }
+function totalReturnAmount(doc: ReturnDoc) { return Number(doc.totalAmount ?? doc.lines.reduce((sum, line) => sum + line.qty * line.price, 0)) }
 
 async function loadUnsettled() {
-  unsettledLoading.value = true
-  try {
-    const docs = await getUnsettledSales()
-    const currentSalespersonId = getSessionSalespersonId(userStore.currentUser)
-    unsettledDocs.value = userStore.isAdmin ? docs : docs.filter(doc => isSameSalespersonId(doc.salespersonId, currentSalespersonId))
-  } catch {
-    unsettledDocs.value = []
-  } finally {
-    unsettledLoading.value = false
-  }
+  await loadTab('unsettled', true)
 }
 
 function doSettle(doc: SaleDoc) {
@@ -323,15 +375,16 @@ function statusClass(doc: SaleDoc) {
 }
 
 function totalQty(doc: SaleDoc) {
-  return doc.lines.reduce((sum, line) => sum + line.qty, 0)
+  return doc.totalQty ?? doc.lines.reduce((sum, line) => sum + line.qty, 0)
 }
 
 function totalAmount(doc: SaleDoc) {
-  return doc.lines.reduce((sum, line) => sum + line.qty * line.price, 0)
+  return Number(doc.totalAmount ?? doc.lines.reduce((sum, line) => sum + line.qty * line.price, 0))
 }
 
+const storeNameMap = computed(() => new Map(stores.value.map(store => [store.id, store.name])))
 function getStoreName(id: string) {
-  return stores.value.find(store => store.id === id)?.name || id
+  return storeNameMap.value.get(id) || id
 }
 
 onShow(() => {
@@ -340,9 +393,14 @@ onShow(() => {
     uni.reLaunch({ url: '/pages/login/index' })
     return
   }
+  const rangeChanged = rangeMode.value !== '7d'
   setRangeMode('7d')
-  loadAll()
+  getStores().then(list => { stores.value = list }).catch(() => {})
+  // 日期范围被重置时由 watch 触发查询，这里只处理未变化的情况，避免重复请求
+  if (!rangeChanged) reloadActiveTab()
 })
+
+onReachBottom(() => loadMore())
 </script>
 
 <style lang="scss" scoped>
@@ -593,6 +651,17 @@ onShow(() => {
   text-align: center;
   padding: 60rpx 0;
   color: #999;
+}
+
+.list-footer {
+  text-align: center;
+  padding: 24rpx 0 40rpx;
+  font-size: 24rpx;
+  color: #999;
+}
+
+.load-more {
+  color: #1677ff;
 }
 
 .sale-card {

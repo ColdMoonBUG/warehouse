@@ -115,7 +115,17 @@ export interface SaleDoc {
   remark?: string
   status: DocStatus
   docType?: 'sale' | 'gift'
+  paymentType?: 'cash' | 'bill'
+  settled?: number
+  settledAt?: string
   returnDocId?: string
+  /** 关联退单的单号/状态（新版后端回填，只读） */
+  returnDocCode?: string
+  returnDocStatus?: DocStatus
+  /** 列表不带明细时由后端汇总 */
+  totalQty?: number
+  totalAmount?: number
+  lineCount?: number
   lines: SaleLine[]
   createdAt: string
 }
@@ -206,6 +216,13 @@ export interface ReturnDoc {
   remark?: string
   status: DocStatus
   payType?: 'cash' | 'card'
+  /** 引用本退单的销单（新版后端回填，只读） */
+  saleDocId?: string
+  saleDocCode?: string
+  saleDocStatus?: DocStatus
+  totalQty?: number
+  totalAmount?: number
+  lineCount?: number
   lines: ReturnLine[]
   createdAt: string
 }
