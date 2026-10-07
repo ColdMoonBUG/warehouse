@@ -58,6 +58,9 @@ public class FinanceController {
     @Autowired
     private StoreMapper storeMapper;
 
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
     @GetMapping("/store-summaries")
     public Result<List<StoreCommissionSummaryVO>> storeSummaries(
             @RequestParam(required = false) String date,
@@ -213,10 +216,27 @@ public class FinanceController {
         for (CommissionSettlement settlement : settlements) {
             latestSettlementMap.putIfAbsent(settlement.getSalespersonId(), settlement);
         }
+        // 未结提成直接在数据库里按业务员+类型汇总，不再把全部历史流水读进内存
+        Map<String, CommissionSummaryVO> totals = new LinkedHashMap<>();
+        jdbcTemplate.query(
+            "SELECT salesperson_id, biz_type, COALESCE(SUM(commission_amount), 0) amt, COUNT(*) cnt"
+                + " FROM wh_commission_ledger WHERE settlement_id IS NULL GROUP BY salesperson_id, biz_type",
+            rs -> {
+                CommissionSummaryVO vo = totals.computeIfAbsent(rs.getString("salesperson_id"), k -> emptySummary());
+                BigDecimal amount = defaultAmount(rs.getBigDecimal("amt"));
+                if (isSaleCommissionBizType(rs.getString("biz_type"))) {
+                    vo.setSaleAmount(vo.getSaleAmount().add(amount));
+                } else {
+                    vo.setReturnAmount(vo.getReturnAmount().add(amount));
+                }
+                vo.setLedgerCount(vo.getLedgerCount() + rs.getInt("cnt"));
+            });
         List<CommissionSummaryVO> result = new ArrayList<>();
         for (Account salesperson : salespersons) {
-            List<CommissionLedger> unsettledLedgers = listUnsettledLedgers(salesperson.getId());
-            CommissionSummaryVO item = buildSummary(salesperson, unsettledLedgers);
+            CommissionSummaryVO item = totals.getOrDefault(salesperson.getId(), emptySummary());
+            item.setSalespersonId(salesperson.getId());
+            item.setSalespersonName(salesperson.getDisplayName());
+            item.setTotalAmount(item.getSaleAmount().add(item.getReturnAmount()));
             CommissionSettlement latest = latestSettlementMap.get(salesperson.getId());
             if (latest != null) {
                 item.setLastSettlementId(latest.getId());
@@ -296,6 +316,13 @@ public class FinanceController {
         Map<String, ReturnDoc> returnMap = returnDocs.stream()
             .collect(Collectors.toMap(ReturnDoc::getId, d -> d, (a, b) -> a, LinkedHashMap::new));
 
+        // 销单关联的退单单号（只读展示）
+        Set<String> linkedReturnIds = saleDocs.stream().map(SaleDoc::getReturnDocId)
+            .filter(id -> id != null && !id.isEmpty()).collect(Collectors.toSet());
+        Map<String, String> linkedReturnCodes = linkedReturnIds.isEmpty() ? new LinkedHashMap<>()
+            : returnDocMapper.selectBatchIds(linkedReturnIds).stream()
+                .collect(Collectors.toMap(ReturnDoc::getId, ReturnDoc::getCode, (a, b) -> a, LinkedHashMap::new));
+
         // 查门店
         Set<String> storeIds = new LinkedHashSet<>();
         saleDocs.forEach(d -> { if (d.getStoreId() != null) storeIds.add(d.getStoreId()); });
@@ -329,6 +356,7 @@ public class FinanceController {
                 vo.setStoreName(storeNameMap.getOrDefault(sale.getStoreId(), "-"));
                 vo.setDocStatus(sale.getStatus());
                 vo.setReturnDocId(sale.getReturnDocId());
+                vo.setReturnDocCode(linkedReturnCodes.get(sale.getReturnDocId()));
             } else if (ret != null) {
                 vo.setDocType("return");
                 vo.setDocCode(ret.getCode());
@@ -539,9 +567,12 @@ public class FinanceController {
             return new ArrayList<>();
         }
 
+        Set<String> todayDocIds = new LinkedHashSet<>(saleDocIds);
+        todayDocIds.addAll(returnDocIds);
         return commissionLedgerMapper.selectList(
             new LambdaQueryWrapper<CommissionLedger>()
                 .eq(CommissionLedger::getSalespersonId, salespersonId)
+                .in(CommissionLedger::getDocId, todayDocIds)
                 .orderByDesc(CommissionLedger::getCreatedAt)
         ).stream().filter(ledger -> {
             if (isSaleCommissionBizType(ledger.getBizType())) {
@@ -653,25 +684,83 @@ public class FinanceController {
         return items;
     }
 
-    private CommissionSummaryVO buildSummary(Account salesperson, List<CommissionLedger> unsettledLedgers) {
+    private CommissionSummaryVO emptySummary() {
         CommissionSummaryVO vo = new CommissionSummaryVO();
-        vo.setSalespersonId(salesperson.getId());
-        vo.setSalespersonName(salesperson.getDisplayName());
-        BigDecimal saleAmount = BigDecimal.ZERO;
-        BigDecimal returnAmount = BigDecimal.ZERO;
-        for (CommissionLedger ledger : unsettledLedgers) {
-            BigDecimal amount = defaultAmount(ledger.getCommissionAmount());
-            if (isSaleCommissionBizType(ledger.getBizType())) {
-                saleAmount = saleAmount.add(amount);
-            } else {
-                returnAmount = returnAmount.add(amount);
-            }
-        }
-        vo.setSaleAmount(saleAmount);
-        vo.setReturnAmount(returnAmount);
-        vo.setTotalAmount(saleAmount.add(returnAmount));
-        vo.setLedgerCount(unsettledLedgers.size());
+        vo.setSaleAmount(BigDecimal.ZERO);
+        vo.setReturnAmount(BigDecimal.ZERO);
+        vo.setTotalAmount(BigDecimal.ZERO);
+        vo.setLedgerCount(0);
         return vo;
+    }
+
+    /**
+     * 按单据日期统计某业务员在区间内的提成（含已结清、未结清、作废冲销）。
+     * 流水对应的原单已不存在时归入 undated，金额单列，不猜测所属日期。金额单位：分。
+     */
+    @GetMapping("/wage")
+    public Result<Map<String, Object>> wage(@RequestParam String salespersonId,
+                                            @RequestParam String startDate,
+                                            @RequestParam String endDate,
+                                            HttpSession session) {
+        Result<Map<String, Object>> auth = rejectIfNotAdmin(session);
+        if (auth != null) {
+            return auth;
+        }
+        String start = LocalDate.parse(startDate).toString();
+        String end = LocalDate.parse(endDate).toString();
+        String saleTypes = "'sale','void_sale','gift','void_gift'";
+        Map<String, long[]> daily = new java.util.TreeMap<>();
+        List<Map<String, Object>> undated = new ArrayList<>();
+        long[] undatedTotal = {0};
+        jdbcTemplate.query(
+            "SELECT l.id, l.doc_id, l.biz_type, l.commission_amount, l.created_at,"
+                + " CASE WHEN l.biz_type IN (" + saleTypes + ") THEN s.doc_date ELSE r.doc_date END doc_date"
+                + " FROM wh_commission_ledger l"
+                + " LEFT JOIN wh_sale_doc s ON s.id = l.doc_id AND l.biz_type IN (" + saleTypes + ")"
+                + " LEFT JOIN wh_return_doc r ON r.id = l.doc_id AND l.biz_type NOT IN (" + saleTypes + ")"
+                + " WHERE l.salesperson_id = ?",
+            rs -> {
+                long cents = defaultAmount(rs.getBigDecimal("commission_amount")).movePointRight(2)
+                    .setScale(0, java.math.RoundingMode.HALF_UP).longValue();
+                String docDate = rs.getString("doc_date");
+                if (docDate == null) {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("id", rs.getString("id"));
+                    item.put("docId", rs.getString("doc_id"));
+                    item.put("bizType", rs.getString("biz_type"));
+                    item.put("createdAt", rs.getString("created_at"));
+                    item.put("commissionAmount", defaultAmount(rs.getBigDecimal("commission_amount")));
+                    undated.add(item);
+                    undatedTotal[0] += cents;
+                    return;
+                }
+                String day = docDate.length() >= 10 ? docDate.substring(0, 10) : docDate;
+                if (day.compareTo(start) < 0 || day.compareTo(end) > 0) {
+                    return;
+                }
+                long[] row = daily.computeIfAbsent(day, k -> new long[2]);
+                row[isSaleCommissionBizType(rs.getString("biz_type")) ? 0 : 1] += cents;
+            },
+            salespersonId);
+        List<Map<String, Object>> rows = new ArrayList<>();
+        long total = 0;
+        for (Map.Entry<String, long[]> e : daily.entrySet()) {
+            long sale = e.getValue()[0];
+            long returns = e.getValue()[1];
+            total += sale + returns;
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("date", e.getKey());
+            row.put("sale", BigDecimal.valueOf(sale, 2));
+            row.put("returns", BigDecimal.valueOf(returns, 2));
+            row.put("total", BigDecimal.valueOf(sale + returns, 2));
+            rows.add(row);
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("rows", rows);
+        result.put("total", total);
+        result.put("undated", undated);
+        result.put("undatedTotal", undatedTotal[0]);
+        return Result.ok(result);
     }
 
     private boolean isSaleCommissionBizType(String bizType) {
@@ -811,6 +900,8 @@ public class FinanceController {
         private String storeName;
         private String docStatus;
         private String returnDocId;  // 销单关联的退单ID
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+        private String returnDocCode;
         private BigDecimal saleCommission;
         private BigDecimal returnCommission;
         private BigDecimal netCommission;

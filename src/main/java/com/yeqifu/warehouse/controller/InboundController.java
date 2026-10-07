@@ -1,19 +1,26 @@
 package com.yeqifu.warehouse.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.yeqifu.warehouse.common.BizException;
 import com.yeqifu.warehouse.common.IdUtils;
+import com.yeqifu.warehouse.common.QueryUtils;
 import com.yeqifu.warehouse.common.Result;
-import com.yeqifu.warehouse.common.RuntimeModeManager;
 import com.yeqifu.warehouse.entity.*;
 import com.yeqifu.warehouse.mapper.*;
+import com.yeqifu.warehouse.service.StockLedgerService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.interceptor.TransactionAspectSupport;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/inbound")
@@ -26,19 +33,33 @@ public class InboundController {
     @Autowired
     private InboundLineMapper inboundLineMapper;
     @Autowired
-    private StockMapper stockMapper;
-    @Autowired
-    private LedgerMapper ledgerMapper;
+    private StockLedgerService stockLedgerService;
 
-    @Autowired
-    private RuntimeModeManager runtimeModeManager;
-
+    /** 不带参数时返回全部（与旧版一致）；可选 startDate/endDate（单据日期）、status 缩小范围。 */
     @GetMapping("/list")
-    public Result<List<InboundDoc>> list() {
-        List<InboundDoc> docs = inboundDocMapper.selectList(new LambdaQueryWrapper<InboundDoc>().orderByDesc(InboundDoc::getCreatedAt));
-        for (InboundDoc doc : docs) {
-            List<InboundLine> lines = inboundLineMapper.selectList(new LambdaQueryWrapper<InboundLine>().eq(InboundLine::getDocId, doc.getId()));
-            doc.setLines(lines);
+    public Result<List<InboundDoc>> list(@RequestParam(required = false) String startDate,
+                                         @RequestParam(required = false) String endDate,
+                                         @RequestParam(required = false) String status) {
+        java.sql.Date start = QueryUtils.parseDate(startDate, "开始日期");
+        java.sql.Date end = QueryUtils.parseDate(endDate, "结束日期");
+        List<String> states = QueryUtils.csv(status);
+        List<InboundDoc> docs = inboundDocMapper.selectList(new LambdaQueryWrapper<InboundDoc>()
+            .ge(start != null, InboundDoc::getDocDate, start)
+            .le(end != null, InboundDoc::getDocDate, end)
+            .in(!states.isEmpty(), InboundDoc::getStatus, states)
+            .orderByDesc(InboundDoc::getCreatedAt));
+        if (!docs.isEmpty()) {
+            Map<String, List<InboundLine>> byDoc = new HashMap<>();
+            List<String> ids = docs.stream().map(InboundDoc::getId).collect(Collectors.toList());
+            for (int i = 0; i < ids.size(); i += 500) {
+                inboundLineMapper.selectList(new LambdaQueryWrapper<InboundLine>()
+                        .in(InboundLine::getDocId, ids.subList(i, Math.min(ids.size(), i + 500)))
+                        .orderByAsc(InboundLine::getId))
+                    .forEach(l -> byDoc.computeIfAbsent(l.getDocId(), k -> new ArrayList<>()).add(l));
+            }
+            for (InboundDoc doc : docs) {
+                doc.setLines(byDoc.getOrDefault(doc.getId(), Collections.emptyList()));
+            }
         }
         return Result.ok(docs);
     }
@@ -63,14 +84,22 @@ public class InboundController {
         }
         vo.setLines(lines);
         normalizeLines(lines);
-        if (doc.getStatus() == null || doc.getStatus().isEmpty()) doc.setStatus("draft");
         if (doc.getDocDate() == null) doc.setDocDate(new Date());
+        doc.setStatus("draft");
+        doc.setCreatedAt(null);
+        doc.setUpdatedAt(null);
 
-        if (doc.getId() == null || doc.getId().isEmpty()) {
-            doc.setId(IdUtils.randomId());
+        InboundDoc existing = QueryUtils.hasText(doc.getId()) ? inboundDocMapper.selectById(doc.getId()) : null;
+        if (existing == null) {
+            if (!QueryUtils.hasText(doc.getId())) {
+                doc.setId(IdUtils.randomId());
+            }
             doc.setCode(IdUtils.genCode("IN"));
             inboundDocMapper.insert(doc);
         } else {
+            if (!"draft".equals(existing.getStatus())) {
+                return Result.error("单据" + existing.getCode() + "已" + ("posted".equals(existing.getStatus()) ? "过账" : "作废") + "，不能再修改");
+            }
             inboundDocMapper.updateById(doc);
             inboundLineMapper.delete(new LambdaQueryWrapper<InboundLine>().eq(InboundLine::getDocId, doc.getId()));
         }
@@ -84,52 +113,46 @@ public class InboundController {
         return Result.ok(doc);
     }
 
+    // 业务校验失败抛 BizException，由事务拦截器回滚、ApiExceptionHandler 转成 {code:-1,msg}（原因见 SaleController）
     @PostMapping("/post/{id}")
     @Transactional
     public Result<Void> post(@PathVariable String id) {
-        try {
-            InboundDoc doc = inboundDocMapper.selectById(id);
-            if (doc == null || !"draft".equals(doc.getStatus())) {
-                return Result.error("单据状态异常");
-            }
-            List<InboundLine> lines = inboundLineMapper.selectList(new LambdaQueryWrapper<InboundLine>().eq(InboundLine::getDocId, id));
-            for (InboundLine line : lines) {
-                applyStockDelta(MAIN_WAREHOUSE_ID, line.getProductId(), line.getQty());
-                insertLedger("inbound", id, MAIN_WAREHOUSE_ID, line.getProductId(), line.getQty());
-            }
-            doc.setStatus("posted");
-            inboundDocMapper.updateById(doc);
-            return Result.ok();
-        } catch (RuntimeException e) {
-            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
-            return Result.error(e.getMessage());
+        InboundDoc doc = inboundDocMapper.selectById(id);
+        if (doc == null || !"draft".equals(doc.getStatus())) {
+            return Result.error("单据状态异常");
         }
+        claimStatus(id, "draft", "posted");
+        List<InboundLine> lines = inboundLineMapper.selectList(new LambdaQueryWrapper<InboundLine>().eq(InboundLine::getDocId, id));
+        for (InboundLine line : lines) {
+            stockLedgerService.applyStockDelta(MAIN_WAREHOUSE_ID, line.getProductId(), line.getQty());
+            stockLedgerService.insertLedger("inbound", id, MAIN_WAREHOUSE_ID, line.getProductId(), line.getQty());
+        }
+        return Result.ok();
     }
 
     @PostMapping("/void/{id}")
     @Transactional
     public Result<Void> voidDoc(@PathVariable String id) {
-        try {
-            InboundDoc doc = inboundDocMapper.selectById(id);
-            if (doc == null || !"posted".equals(doc.getStatus())) {
-                return Result.error("只能作废已过账单据");
-            }
-            List<InboundLine> lines = inboundLineMapper.selectList(new LambdaQueryWrapper<InboundLine>().eq(InboundLine::getDocId, id));
-            for (InboundLine line : lines) {
-                applyStockDelta(MAIN_WAREHOUSE_ID, line.getProductId(), -line.getQty());
-                insertLedger("inbound", id, MAIN_WAREHOUSE_ID, line.getProductId(), -line.getQty());
-            }
-            doc.setStatus("voided");
-            int updated = inboundDocMapper.update(doc,
-                new LambdaQueryWrapper<InboundDoc>().eq(InboundDoc::getId, id).eq(InboundDoc::getStatus, "posted"));
-            // 必须抛异常：直接 return 会让事务正常提交，而上面已写入的库存流水/提成冲账会被保留，
-            // 造成并发双击作废时重复冲账。抛出后由下方 catch 统一 setRollbackOnly 回滚。
-            if (updated == 0) throw new RuntimeException("单据状态已变更，请刷新");
-            return Result.ok();
-        } catch (RuntimeException e) {
-            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
-            return Result.error(e.getMessage());
+        InboundDoc doc = inboundDocMapper.selectById(id);
+        if (doc == null || !"posted".equals(doc.getStatus())) {
+            return Result.error("只能作废已过账单据");
         }
+        claimStatus(id, "posted", "voided");
+        List<InboundLine> lines = inboundLineMapper.selectList(new LambdaQueryWrapper<InboundLine>().eq(InboundLine::getDocId, id));
+        for (InboundLine line : lines) {
+            stockLedgerService.applyStockDelta(MAIN_WAREHOUSE_ID, line.getProductId(), -line.getQty());
+            stockLedgerService.insertLedger("inbound", id, MAIN_WAREHOUSE_ID, line.getProductId(), -line.getQty());
+        }
+        return Result.ok();
+    }
+
+    /** 条件更新抢占状态：并发重复过账/作废时只有一次成功，其余抛错回滚。 */
+    private void claimStatus(String id, String from, String to) {
+        int updated = inboundDocMapper.update(null, new LambdaUpdateWrapper<InboundDoc>()
+            .set(InboundDoc::getStatus, to)
+            .eq(InboundDoc::getId, id)
+            .eq(InboundDoc::getStatus, from));
+        if (updated == 0) throw new BizException("单据状态已变更，请刷新");
     }
 
     private void normalizeLines(List<InboundLine> lines) {
@@ -141,40 +164,6 @@ public class InboundController {
                 line.setQty(0);
             }
         }
-    }
-
-    private void applyStockDelta(String warehouseId, String productId, Integer delta) {
-        if (runtimeModeManager.useUnlimitedInventory(warehouseId)) {
-            return;
-        }
-        LambdaQueryWrapper<Stock> qw = new LambdaQueryWrapper<Stock>()
-            .eq(Stock::getWarehouseId, warehouseId)
-            .eq(Stock::getProductId, productId);
-        Stock stock = stockMapper.selectOne(qw);
-        int cur = stock == null || stock.getQty() == null ? 0 : stock.getQty();
-        int next = cur + (delta == null ? 0 : delta);
-        if (next < 0) throw new RuntimeException("库存不足");
-        if (stock == null) {
-            Stock s = new Stock();
-            s.setWarehouseId(warehouseId);
-            s.setProductId(productId);
-            s.setQty(next);
-            stockMapper.insert(s);
-        } else {
-            stock.setQty(next);
-            stockMapper.update(stock, qw);
-        }
-    }
-
-    private void insertLedger(String bizType, String docId, String warehouseId, String productId, Integer qty) {
-        Ledger ledger = new Ledger();
-        ledger.setId(IdUtils.randomId());
-        ledger.setBizType(bizType);
-        ledger.setDocId(docId);
-        ledger.setWarehouseId(warehouseId);
-        ledger.setProductId(productId);
-        ledger.setQty(qty);
-        ledgerMapper.insert(ledger);
     }
 
     @lombok.Data

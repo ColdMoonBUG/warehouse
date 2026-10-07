@@ -64,12 +64,16 @@ public class StockController {
             return Result.ok(list);
         }
 
+        java.util.Map<String, Warehouse> warehouseById = new java.util.HashMap<>();
+        for (Warehouse w : warehouseMapper.selectList(new LambdaQueryWrapper<>())) {
+            warehouseById.put(w.getId(), w);
+        }
         List<Stock> filtered = new ArrayList<>();
         for (Stock item : list) {
             if (item == null || item.getWarehouseId() == null || item.getWarehouseId().isEmpty()) {
                 continue;
             }
-            Warehouse warehouse = warehouseMapper.selectById(item.getWarehouseId());
+            Warehouse warehouse = warehouseById.get(item.getWarehouseId());
             if (warehouse == null) {
                 continue;
             }

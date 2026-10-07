@@ -74,7 +74,9 @@ public class TestToolController {
     // 1. 一键填满业务员车库库存
     // ============================================================
     @PostMapping("/fill-vehicle-stock")
-    public Result<Map<String, Object>> fillVehicleStock(@RequestParam(defaultValue = "999999") int qty) {
+    public Result<Map<String, Object>> fillVehicleStock(@RequestParam(defaultValue = "999999") int qty,
+                                                        javax.servlet.http.HttpSession session) {
+        if (!isAdmin(session)) return Result.error("仅管理员可操作");
         int rows = jdbc.update(
             "INSERT INTO wh_stock (warehouse_id, product_id, qty) " +
             "SELECT w.id, p.id, ? FROM wh_warehouse w CROSS JOIN wh_product p " +
@@ -97,7 +99,8 @@ public class TestToolController {
     // ============================================================
     @PostMapping("/clear-business-data")
     @Transactional
-    public Result<Map<String, Object>> clearBusinessData() throws IOException {
+    public Result<Map<String, Object>> clearBusinessData(javax.servlet.http.HttpSession session) throws IOException {
+        if (!isAdmin(session)) return Result.error("仅管理员可操作");
         String filename = "pre_clear_" + timestamp() + ".sql";
         File backupFile = new File(resolveBackupDir(), filename);
         exportTables(backupFile, CLEAR_TABLES);
@@ -122,7 +125,8 @@ public class TestToolController {
     // 3. 列出备份文件
     // ============================================================
     @GetMapping("/backups")
-    public Result<List<Map<String, Object>>> listBackups() {
+    public Result<List<Map<String, Object>>> listBackups(javax.servlet.http.HttpSession session) {
+        if (!isAdmin(session)) return Result.error("仅管理员可操作");
         File dir = resolveBackupDir();
         File[] files = dir.listFiles((f, name) -> name.endsWith(".sql"));
         List<Map<String, Object>> list = new ArrayList<>();
@@ -143,7 +147,8 @@ public class TestToolController {
     // 4. 手动全量备份
     // ============================================================
     @PostMapping("/backup-now")
-    public Result<Map<String, Object>> backupNow() throws IOException {
+    public Result<Map<String, Object>> backupNow(javax.servlet.http.HttpSession session) throws IOException {
+        if (!isAdmin(session)) return Result.error("仅管理员可操作");
         String filename = "full_" + timestamp() + ".sql";
         File backupFile = new File(resolveBackupDir(), filename);
         exportTables(backupFile, FULL_BACKUP_TABLES);
@@ -183,6 +188,10 @@ public class TestToolController {
     // ============================================================
     // 内部工具
     // ============================================================
+    private boolean isAdmin(javax.servlet.http.HttpSession session) {
+        return "admin".equals(session.getAttribute("warehouseAccountRole"));
+    }
+
     private File resolveBackupDir() {
         File dir = new File(backupDir);
         if (!dir.exists() && !dir.mkdirs()) {

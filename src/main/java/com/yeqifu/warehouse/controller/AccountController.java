@@ -110,10 +110,10 @@ public class AccountController {
         if (account.getStatus() != null && !account.getStatus().isEmpty()) {
             current.setStatus(account.getStatus());
         }
-        if (account.getPasswordHash() != null && !account.getPasswordHash().isEmpty()) {
+        if (isRealHash(account.getPasswordHash())) {
             current.setPasswordHash(account.getPasswordHash());
         }
-        if (account.getGestureHash() != null && !account.getGestureHash().isEmpty()) {
+        if (isRealHash(account.getGestureHash())) {
             current.setGestureHash(account.getGestureHash());
         }
         accountMapper.updateById(current);
@@ -135,8 +135,16 @@ public class AccountController {
         return Result.error("系统仅保留固定账户，不允许删除");
     }
 
+    /** 列表接口输出的是掩码，前端原样回传时不能覆盖真实哈希。 */
+    private boolean isRealHash(String hash) {
+        return hash != null && !hash.isEmpty() && !com.yeqifu.warehouse.common.MaskedValueSerializer.MASK.equals(hash);
+    }
+
     @PostMapping("/setGesture")
     public Result<Void> setGesture(@RequestBody Account req) {
+        if (com.yeqifu.warehouse.common.MaskedValueSerializer.MASK.equals(req.getGestureHash())) {
+            return Result.error("手势密码无效");
+        }
         Account account = accountMapper.selectById(req.getId());
         if (account != null) {
             account.setGestureHash(req.getGestureHash());
@@ -147,6 +155,9 @@ public class AccountController {
 
     @PostMapping("/setPassword")
     public Result<Void> setPassword(@RequestBody Account req) {
+        if (com.yeqifu.warehouse.common.MaskedValueSerializer.MASK.equals(req.getPasswordHash())) {
+            return Result.error("密码无效");
+        }
         Account account = accountMapper.selectById(req.getId());
         if (account != null) {
             account.setPasswordHash(req.getPasswordHash());
