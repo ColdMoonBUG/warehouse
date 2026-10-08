@@ -62,13 +62,31 @@ shiro:
 #修改端口号为8088
 server:
   port: 8888
+  # 接口返回的 JSON 压缩后传输，手机走公网时数据量通常只有原来的 1/5~1/10
+  compression:
+    enabled: true
+    mime-types: application/json,application/javascript,text/html,text/css,text/plain
+    min-response-size: 2048
   servlet:
     session:
       timeout: 30d
+      # 正常重启（发版/回退）后保留登录状态，业务员不用重新登录
+      persistent: true
+
+logging:
+  file:
+    # 滚动日志：单个 20MB，保留 14 天、总量不超过 500MB；线上出问题时把这个文件发回来即可
+    name: logs/warehouse.log
+    max-size: 20MB
+    max-history: 14
+    total-size-cap: 500MB
 
 # 应用自定义配置
 app:
+  version: 2.0.0
   # 备份目录（相对路径 = Spring Boot 启动目录；可改成绝对路径如 D:/warehouse_backup）
   backup-dir: ./backup
+  # 超过该耗时（毫秒）的接口会记一条 WARN 日志（logger: api.slow）
+  slow-request-ms: 1500
 
 

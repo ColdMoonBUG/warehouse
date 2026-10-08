@@ -1,20 +1,25 @@
 import request from '@/utils/request'
 import type { InboundDoc, ReturnDoc } from '@/types'
 
-export async function getAllInbounds(): Promise<InboundDoc[]> {
-  const res = await request.get('/inbound/list')
+export interface StatsRange {
+  startDate?: string
+  endDate?: string
+}
+
+export async function getAllInbounds(range: StatsRange = {}): Promise<InboundDoc[]> {
+  const res = await request.get('/inbound/list', { params: { ...range } })
   return res.data || []
 }
 
 // 退货单全量拉取：后端 /return/list 默认每页 50，必须翻页，否则统计只算到最近 50 张
 // 兜底：任一页失败时，返回已成功获取的部分数据，不让整个统计页崩掉
-export async function getAllReturns(): Promise<ReturnDoc[]> {
+export async function getAllReturns(range: StatsRange = {}): Promise<ReturnDoc[]> {
   const PAGE_SIZE = 200
   const MAX_PAGES = 100 // 安全上限，防止后端 total 异常导致死循环
   const all: ReturnDoc[] = []
   try {
     for (let page = 1; page <= MAX_PAGES; page++) {
-      const res: any = await request.get('/return/list', { params: { page, limit: PAGE_SIZE } })
+      const res: any = await request.get('/return/list', { params: { page, limit: PAGE_SIZE, ...range } })
       const list: ReturnDoc[] = res?.data || []
       all.push(...list)
       const total = Number(res?.count) || 0

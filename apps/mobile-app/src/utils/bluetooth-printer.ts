@@ -298,7 +298,8 @@ let _connStateHandler: ((res: any) => void) | null = null
 let resultBuffer: number[] = []
 let jsonBuffer: string | null = null
 
-uni.onBLECharacteristicValueChange((res: any) => {
+// H5 等没有蓝牙接口的平台上该方法不存在，模块加载时直接调用会报错并导致整个页面白屏
+;(typeof uni.onBLECharacteristicValueChange === 'function' ? uni.onBLECharacteristicValueChange : () => {}).call(uni, (res: any) => {
   if (!currentSession) return
   const { characteristicId, value } = res
 

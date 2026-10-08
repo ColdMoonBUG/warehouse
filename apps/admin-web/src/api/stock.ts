@@ -1,5 +1,6 @@
 import request from '@/utils/request'
 import { toPersistedPackLine } from '@/utils/pack'
+import { cleanParams } from '@/utils/params'
 import type { Warehouse, StockItem, InboundDoc, InboundLine, TransferDoc, TransferLine } from '@/types'
 
 export async function getWarehouses(): Promise<Warehouse[]> {
@@ -12,8 +13,15 @@ export async function getStock(warehouseId?: string): Promise<StockItem[]> {
   return res.data
 }
 
-export async function getInbounds(): Promise<InboundDoc[]> {
-  const res = await request.get('/inbound/list')
+export interface DateRangeFilter {
+  startDate?: string
+  endDate?: string
+  status?: string
+}
+
+/** 不传参数时返回全部入库单（旧行为）；报表请传日期范围，只取需要的部分。 */
+export async function getInbounds(filter: DateRangeFilter = {}): Promise<InboundDoc[]> {
+  const res = await request.get('/inbound/list', { params: cleanParams({ ...filter }) })
   return res.data
 }
 
@@ -38,8 +46,12 @@ export async function voidInbound(id: string) {
   await request.post(`/inbound/void/${id}`)
 }
 
-export async function getTransfers(): Promise<TransferDoc[]> {
-  const res = await request.get('/transfer/list')
+/**
+ * 不传参数时返回全部出库单并计算“出库后剩余”（旧行为，较慢）。
+ * 列表/报表不需要剩余量时传 withRemaining: false；可按日期、仓库（调出或调入）缩小范围。
+ */
+export async function getTransfers(filter: DateRangeFilter & { warehouseId?: string; withRemaining?: boolean } = {}): Promise<TransferDoc[]> {
+  const res = await request.get('/transfer/list', { params: cleanParams({ ...filter }) })
   return res.data
 }
 

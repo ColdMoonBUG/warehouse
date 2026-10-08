@@ -38,17 +38,15 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getCommissionSettlements, getCommissionSettlementDetail, getUnsettledCommissionLedgers } from '@/api/finance'
-import { getReportSales, getReportReturns } from '@/api/reporting'
-import { getSaleById } from '@/api/sale'
-import { getReturnById } from '@/api/return'
-import { docDay, monthRange, inRange } from '@/utils/reporting'
+import { getWage } from '@/api/finance'
+import { monthRange } from '@/utils/reporting'
 import type { CommissionSummary, CommissionLedger } from '@/types'
 const props = defineProps<{ accounts: CommissionSummary[] }>()
 const accountId = ref('')
 const range = ref<[string, string] | null>(monthRange())
 const loading = ref(false)
 const result = ref<{ label: string; total: number; undated: CommissionLedger[]; undatedTotal: number; rows: { date: string; sale: number; returns: number; total: number }[] } | null>(null)
+// 按单据日期归集提成在后端完成（流水关联原单日期），不再把全部销单/退单拉到浏览器里拼。
 async function query() {
   if (!accountId.value || !range.value) return void ElMessage.warning('请选择账户和日期范围')
   const id = accountId.value
@@ -56,44 +54,14 @@ async function query() {
   loading.value = true
   result.value = null
   try {
-    const [history, sales, returns] = await Promise.all([getCommissionSettlements(), getReportSales(), getReportReturns()])
-    const ledgers = new Map<string, CommissionLedger>()
-    // 不按结清日期筛选：本期单据可能在其他月份结清。
-    for (const settlement of history.filter(s => s.salespersonId === id)) {
-      const detail = await getCommissionSettlementDetail(settlement.id)
-      detail.ledgers.forEach(l => ledgers.set(l.id, l))
+    const wage = await getWage(id, dates[0], dates[1])
+    result.value = {
+      label: `${props.accounts.find(a => a.salespersonId === id)?.salespersonName || id} · ${dates.join(' 至 ')}`,
+      total: Number(wage.total) || 0,
+      undated: wage.undated || [],
+      undatedTotal: Number(wage.undatedTotal) || 0,
+      rows: (wage.rows || []).map(r => ({ date: r.date, sale: Number(r.sale), returns: Number(r.returns), total: Number(r.total) })),
     }
-    // 最后读未结流水，避免结清期间把同一笔流水重复计入。
-    ;(await getUnsettledCommissionLedgers(id)).forEach(l => ledgers.set(l.id, l))
-    const saleDates = new Map(sales.map(d => [d.id, docDay(d)]))
-    const returnDates = new Map(returns.map(d => [d.id, docDay(d)]))
-    // 列表缺失时再查原单详情；仍无日期的历史流水单独展示，不猜测所属期间。
-    const checked = new Set<string>()
-    for (const l of ledgers.values()) {
-      if (l.salespersonId !== id) continue
-      const isSale = ['sale', 'void_sale', 'gift', 'void_gift'].includes(l.bizType)
-      const dateMap = isSale ? saleDates : returnDates
-      const key = `${isSale ? 'sale' : 'return'}:${l.docId}`
-      if (dateMap.get(l.docId) || checked.has(key)) continue
-      checked.add(key)
-      if (!l.docId) continue
-      const original = await (isSale ? getSaleById(l.docId) : getReturnById(l.docId))
-      if (original && docDay(original)) dateMap.set(l.docId, docDay(original))
-    }
-    const undated: CommissionLedger[] = []
-    const daily = new Map<string, { sale: number; returns: number }>()
-    for (const l of ledgers.values()) {
-      if (l.salespersonId !== id) continue
-      const isSale = ['sale', 'void_sale', 'gift', 'void_gift'].includes(l.bizType)
-      const date = (isSale ? saleDates : returnDates).get(l.docId)
-      if (!date) { undated.push(l); continue }
-      if (!inRange(date, dates)) continue
-      const row = daily.get(date) || { sale: 0, returns: 0 }
-      row[isSale ? 'sale' : 'returns'] += Math.round(Number(l.commissionAmount || 0) * 100)
-      daily.set(date, row)
-    }
-    const rows = [...daily].sort(([a], [b]) => a.localeCompare(b)).map(([date, r]) => ({ date, sale: r.sale / 100, returns: r.returns / 100, total: (r.sale + r.returns) / 100 }))
-    result.value = { label: `${props.accounts.find(a => a.salespersonId === id)?.salespersonName || id} · ${dates.join(' 至 ')}`, undated, undatedTotal: undated.reduce((sum, l) => sum + Math.round(Number(l.commissionAmount || 0) * 100), 0), total: [...daily.values()].reduce((s, r) => s + r.sale + r.returns, 0), rows }
   } catch (e: any) { ElMessage.error(e.message || '工资查询失败') }
   finally { loading.value = false }
 }

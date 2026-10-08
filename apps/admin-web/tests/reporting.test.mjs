@@ -38,16 +38,17 @@ test('销售净额：按退货日期扣款、负数、停用账户、回仓及�
   assert.equal(state.grandTotal.value, 800)
   assert.equal(state.dailyRows.value.find(r => r.date === dates[1]).dayTotal, -200)
 })
-test('工资包括已结和未结、作废冲销，并按单据日期而非结清日期汇总', async () => {
-  const ledger = (id, docId, amount, bizType = 'sale') => ({ id, docId, salespersonId: 'a', commissionAmount: amount, bizType })
+test('工资：展示后端按单据日期汇总的结果（合计单位分，明细单位元）', async () => {
+  let called
   const state = load('components/WageQuery.vue', 'query, accountId, range, result', {
-    '@/api/reporting': { getReportSales: async () => [doc('s', dates[0]), doc('v', dates[0], { status: 'voided' })], getReportReturns: async () => [doc('r', dates[1])] },
-    '@/api/finance': { getCommissionSettlements: async () => [{ id: 'settled', salespersonId: 'a', createdAt: '2026-08-01' }], getCommissionSettlementDetail: async () => ({ ledgers: [ledger('1', 's', 100), ledger('2', 'v', 50)] }), getUnsettledCommissionLedgers: async () => [ledger('1', 's', 100), ledger('3', 'v', -50, 'void_sale'), ledger('4', 'r', -20, 'return')] }
+    '@/api/finance': { getWage: async (...a) => { called = a; return { rows: [{ date: dates[0], sale: 100, returns: 0, total: 100 }, { date: dates[1], sale: 0, returns: -20, total: -20 }], total: 8000, undated: [], undatedTotal: 0 } } }
   })
   state.accountId.value = 'a'; state.range.value = dates
   await state.query()
+  assert.deepEqual([...called], ['a', ...dates])
   assert.equal(state.result.value.total, 8000)
   assert.equal(state.result.value.rows[1].total, -20)
+  assert.equal(state.result.value.label, '甲 · 2026-07-01 至 2026-07-03')
 })
 test('重复单据：按超市和日期分组，跨账户计入，排除作废及范围外单据', async () => {
   const state = load('components/DuplicateDocs.vue', 'query, range, groups', {
@@ -73,43 +74,24 @@ test('报表完整分页，失败不降级为部分统计', async () => {
   let page = 0
   const api = load('api/reporting.ts', 'getReportSales', { '@/utils/request': { get: async () => ({ data: ++page === 1 ? Array.from({ length: 200 }, (_, i) => ({ id: String(i) })) : [{ id: 'last' }] }) } })
   assert.equal((await api.getReportSales()).length, 201)
+  let params
+  const ranged = load('api/reporting.ts', 'getReportSales', { '@/utils/request': { get: async (_, opts) => { params = opts.params; return { data: [] } } } })
+  await ranged.getReportSales({ startDate: dates[0], endDate: dates[1], withLines: false })
+  assert.deepEqual(JSON.parse(JSON.stringify(params)), { page: 1, limit: 200, startDate: dates[0], endDate: dates[1], withLines: false })
   const bad = load('api/reporting.ts', 'getReportSales', { '@/utils/request': { get: async (_, { params }) => { if (params.page === 2) throw new Error('offline'); return { data: Array.from({ length: 200 }, (_, i) => ({ id: String(i) })) } } } })
   await assert.rejects(bad.getReportSales(), /offline/)
 })
-test('缺失原单日期不阻断工资查询，已知日期和待核对金额分别展示', async () => {
+test('工资：原单已删除的流水作为待核对单列，不计入小计', async () => {
   const state = load('components/WageQuery.vue', 'query, accountId, range, result', {
-    '@/api/reporting': { getReportSales: async () => [doc('s', dates[0])], getReportReturns: async () => [] },
-    '@/api/finance': {
-      getCommissionSettlements: async () => [],
-      getUnsettledCommissionLedgers: async () => [
-        { id: '1', docId: 's', salespersonId: 'a', commissionAmount: 100, bizType: 'sale' },
-        { id: '2', docId: 'deleted', salespersonId: 'a', commissionAmount: -20, bizType: 'return', createdAt: dates[0] },
-      ]
-    }
+    '@/api/finance': { getWage: async () => ({
+      rows: [{ date: dates[0], sale: 100, returns: 0, total: 100 }], total: 10000,
+      undated: [{ id: '2', docId: 'deleted', salespersonId: 'a', commissionAmount: -20, bizType: 'return', createdAt: dates[0] }], undatedTotal: -2000,
+    }) }
   })
   state.accountId.value = 'a'; state.range.value = dates; await state.query()
   assert.equal(state.result.value.total, 10000)
   assert.equal(state.result.value.undatedTotal, -2000)
   assert.equal(state.result.value.undated.length, 1)
   assert.equal(state.result.value.rows.length, 1)
-  // 再查没有有效单据的期间仍保留待核对提示，不能误报完整工资为零。
-  state.range.value = ['2020-01-01', '2020-01-02']; await state.query()
-  assert.equal(state.result.value.total, 0)
-  assert.equal(state.result.value.undated.length, 1)
-})
-test('缺失列表单据可从详情恢复日期，同一原单只查询一次', async () => {
-  let calls = 0
-  const state = load('components/WageQuery.vue', 'query, accountId, range, result', {
-    '@/api/reporting': { getReportSales: async () => [], getReportReturns: async () => [] },
-    '@/api/sale': { getSaleById: async () => { calls++; return doc('missing', dates[0]) } },
-    '@/api/finance': { getCommissionSettlements: async () => [], getUnsettledCommissionLedgers: async () => [
-      { id: '1', docId: 'missing', salespersonId: 'a', commissionAmount: 100, bizType: 'sale' },
-      { id: '2', docId: 'missing', salespersonId: 'a', commissionAmount: -100, bizType: 'void_sale' }
-    ] }
-  })
-  state.accountId.value = 'a'; state.range.value = dates; await state.query()
-  assert.equal(state.result.value.total, 0)
-  assert.equal(state.result.value.undated.length, 0)
-  assert.equal(calls, 1)
 })
 test('所有场景未触发查询错误', () => assert.deepEqual(errors, []))

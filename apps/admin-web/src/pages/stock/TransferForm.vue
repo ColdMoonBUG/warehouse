@@ -85,7 +85,7 @@
 import { ref, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getTransferById, getTransfers, saveTransfer, postTransfer, voidTransfer, getWarehouses } from '@/api/stock'
+import { getTransferById, saveTransfer, postTransfer, voidTransfer, getWarehouses } from '@/api/stock'
 import { getProducts } from '@/api/product'
 import { getPackSize, normalizePackLine, productPackLabel } from '@/utils/pack'
 import type { TransferDoc, TransferLine, Warehouse, Product } from '@/types'
@@ -138,13 +138,16 @@ function onProductChange(row: TransferLine) {
   updateLine(row)
 }
 
+async function reloadDoc() {
+  if (!doc.value.id) return
+  const detail = await getTransferById(doc.value.id)
+  if (detail) applyDoc(detail)
+}
+
 async function saveDraft() {
   const saved = await saveTransfer(doc.value, doc.value.lines)
   if (saved) applyDoc(saved as TransferDoc)
-  if (!doc.value.id) {
-    const list = await getTransfers()
-    if (list[0]) applyDoc(list[0])
-  }
+  await reloadDoc()
   ElMessage.success('草稿已保存')
 }
 
@@ -154,15 +157,9 @@ async function post() {
   if (!doc.value.lines.length) { ElMessage.error('请添加明细'); return }
   const saved = await saveTransfer(doc.value, doc.value.lines)
   if (saved) applyDoc(saved as TransferDoc)
-  if (!doc.value.id) {
-    const list = await getTransfers()
-    if (list[0]) applyDoc(list[0])
-  }
   try {
     await postTransfer(doc.value.id)
-    const list2 = await getTransfers()
-    const u2 = list2.find(d => d.id === doc.value.id)
-    if (u2) applyDoc(u2)
+    await reloadDoc()
     ElMessage.success('过账成功')
   } catch(e: any) {
     ElMessage.error(e.message || '过账失败')
@@ -172,9 +169,7 @@ async function post() {
 async function voidDoc() {
   await ElMessageBox.confirm('确认作废？库存将自动反冲。','提示',{type:'warning'})
   await voidTransfer(doc.value.id)
-  const list = await getTransfers()
-  const u = list.find(d => d.id === doc.value.id)
-  if (u) applyDoc(u)
+  await reloadDoc()
   ElMessage.success('已作废并反冲库存')
 }
 

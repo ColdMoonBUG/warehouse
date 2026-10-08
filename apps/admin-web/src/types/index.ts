@@ -75,11 +75,16 @@ export interface SaleDoc {
   status: DocStatus
   docType?: 'sale' | 'gift'
   returnDocId?: string
+  /** 关联退单的单号/状态（后端回填，只读） */
+  returnDocCode?: string
+  returnDocStatus?: DocStatus
   settled?: number
   settledAt?: string
   settledBy?: string
   totalQty?: number
   totalAmount?: number
+  /** 列表不带明细时的品种数 */
+  lineCount?: number
   lines: SaleLine[]
   createdAt: string
 }
@@ -266,6 +271,13 @@ export interface ReturnDoc {
   toWarehouseId?: string
   remark?: string
   status: DocStatus
+  totalQty?: number
+  totalAmount?: number
+  lineCount?: number
+  /** 引用本退单的销单（后端回填，只读） */
+  saleDocId?: string
+  saleDocCode?: string
+  saleDocStatus?: DocStatus
   lines: ReturnLine[]
   createdAt: string
 }
@@ -278,6 +290,7 @@ export interface UnsettledDocVO {
   storeName?: string
   docStatus?: string
   returnDocId?: string
+  returnDocCode?: string
   saleCommission: number
   returnCommission: number
   netCommission: number

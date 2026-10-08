@@ -2,6 +2,7 @@ import type { Account, Session, Store, SaleDoc, Salesperson, SalespersonLocation
 import { SESSION_KEY, SESSION_DAYS, BASE_URL, USE_MOCK } from '@/utils/config'
 import { simpleHash, formatDate, todayLocalDate } from '@/utils'
 import { accountDb, storeDb, saleDb, warehouseDb, productDb, supplierDb, genId, now } from '@/mock/storage'
+import { clearListCache } from '@/utils/list-cache'
 const RETURN_STORAGE_KEY = 'wh_return'
 const JSESSIONID_KEY = 'wh_jsessionid'
 
@@ -76,6 +77,10 @@ function loadDocLineOrder(docType: 'sale' | 'return', docId: string): string[] {
 }
 
 function sortLinesByStoredOrder<T extends { id: string; lineNo?: number }>(docType: 'sale' | 'return', docId: string, lines: T[] = []): T[] {
+  if (!lines.length) return lines
+  // 有行号的明细后端已按行号排好；只有老单（无行号）才需要读本机记录的录入顺序。
+  // 每读一次本地存储都要走原生桥，列表里几百张单逐张读会明显卡顿。
+  if (lines.every(line => typeof line.lineNo === 'number' && line.lineNo > 0)) return sortLinesByLineNo(lines)
   const storedOrder = loadDocLineOrder(docType, docId)
   if (!storedOrder.length) return sortLinesByLineNo(lines)
   const orderMap = new Map(storedOrder.map((lineId, index) => [lineId, index]))
@@ -420,7 +425,7 @@ export function getSalespersonDisplayName(
 }
 
 
-function request<T>(url: string, method: 'GET' | 'POST', data?: any): Promise<T> {
+function request<T>(url: string, method: 'GET' | 'POST', data?: any, options: { timeout?: number; raw?: boolean } = {}): Promise<T> {
   const fullUrl = `${BASE_URL}${url}`
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (jsessionid) {
@@ -431,7 +436,7 @@ function request<T>(url: string, method: 'GET' | 'POST', data?: any): Promise<T>
       url: fullUrl,
       method,
       data,
-      timeout: 10000,
+      timeout: options.timeout || 10000,
       header: headers,
       success: (res) => {
         const resHeader = (res.header || {}) as Record<string, string>
@@ -446,7 +451,7 @@ function request<T>(url: string, method: 'GET' | 'POST', data?: any): Promise<T>
         }
         const body = res.data as ApiResult<T>
         if (body && body.code === 200) {
-          resolve(body.data)
+          resolve(options.raw ? (body as unknown as T) : body.data)
         } else {
           reject(new Error(body?.msg || `请求失败(${res.statusCode})`))
         }
@@ -634,6 +639,8 @@ export function logout() {
   uni.removeStorageSync(SESSION_KEY)
   clearJsessionid()
   clearReferenceDataCache()
+  clearListCache()
+  forgetServerFeatures()
 }
 
 export async function getAccounts(includeInactive = false): Promise<Account[]> {
@@ -927,8 +934,10 @@ export async function voidInbound(id: string) {
   await request<void>(`/api/inbound/void/${id}`, 'POST')
 }
 
-export async function getTransfers(): Promise<TransferDoc[]> {
-  return request<TransferDoc[]>('/api/transfer/list', 'GET')
+/** withRemaining=false 时后端不计算“出库后剩余”（列表不显示剩余量时用，旧后端会忽略该参数） */
+export async function getTransfers(options: { withRemaining?: boolean } = {}): Promise<TransferDoc[]> {
+  const query = options.withRemaining === false ? '?withRemaining=false' : ''
+  return request<TransferDoc[]>(`/api/transfer/list${query}`, 'GET')
 }
 
 export async function getTransferDetail(id: string): Promise<TransferDoc | null> {
@@ -1152,16 +1161,18 @@ export async function linkSaleReturn(saleId: string, returnDocId: string): Promi
   await request<void>(`/api/sale/linkReturn/${saleId}?returnDocId=${encodeURIComponent(returnDocId)}`, 'POST')
 }
 
-export async function voidSale(id: string): Promise<void> {
+/** 返回后端附带的提示（新版后端作废销单时会连带作废关联退单，失败时在这里提示），没有则为空串 */
+export async function voidSale(id: string): Promise<string> {
   if (USE_MOCK) {
     const list = saleDb.list()
     const doc = list.find(d => d.id === id)
     if (!doc || doc.status !== 'posted') throw new Error('只能作废已过账单据')
     doc.status = 'voided'
     saleDb.save(list)
-    return
+    return ''
   }
-  await request<void>(`/api/sale/void/${id}`, 'POST')
+  const res = await request<ApiResult<void>>(`/api/sale/void/${id}`, 'POST', undefined, { raw: true })
+  return res?.msg && res.msg !== '操作成功' ? res.msg : ''
 }
 
 export async function getStoreSaleQty(days = 30): Promise<Record<string, number>> {
@@ -1288,4 +1299,170 @@ export async function settleSale(id: string): Promise<void> {
     return
   }
   await request<void>(`/api/sale/settle/${id}`, 'POST')
+}
+
+// ===================== 新版后端能力 =====================
+// 新版后端提供 /api/meta/info 声明支持的能力；旧版后端没有这个接口（404），
+// 这时 App 全部走原来的接口和流程。所以 App 和后端可以分别升级、分别回退。
+
+export type ServerFeature = 'sale.list.filter' | 'sale.submit' | 'return.submit' | 'sale.void.cascade' | 'doc.save.clientId'
+
+let featuresPromise: Promise<Set<string>> | null = null
+
+export function getServerFeatures(): Promise<Set<string>> {
+  if (USE_MOCK) return Promise.resolve(new Set<string>())
+  if (!featuresPromise) {
+    featuresPromise = request<{ features?: string[] }>('/api/meta/info', 'GET', undefined, { timeout: 8000 })
+      .then(info => new Set(Array.isArray(info?.features) ? info.features : []))
+      .catch((error: any) => {
+        if (/HTTP 404/.test(error?.message || '')) return new Set<string>()
+        featuresPromise = null
+        throw error
+      })
+  }
+  return featuresPromise
+}
+
+export async function hasServerFeature(name: ServerFeature): Promise<boolean> {
+  return (await getServerFeatures()).has(name)
+}
+
+/** 后端在 App 运行期间被回退成旧版时，清掉能力缓存，之后的调用自动走旧流程 */
+function forgetServerFeatures() {
+  featuresPromise = null
+}
+
+function isNotFound(error: any) {
+  return /HTTP 404/.test(error?.message || '')
+}
+
+/** 32 位十六进制单据 id，客户端预先生成，网络超时后用同一个 id 重试不会重复开单 */
+export function newDocId(): string {
+  let id = ''
+  for (let i = 0; i < 32; i++) id += Math.floor(Math.random() * 16).toString(16)
+  return id
+}
+
+export interface DocQuery {
+  salespersonId?: string
+  storeId?: string
+  /** draft/posted/voided，销单另支持 unsettled（已过账未收款）/ settled */
+  status?: string
+  returnType?: 'vehicle_return' | 'warehouse_return'
+  startDate?: string
+  endDate?: string
+  /** 单号/门店/备注 */
+  keyword?: string
+  page?: number
+  limit?: number
+}
+
+export interface DocPage<T> {
+  list: T[]
+  total: number
+}
+
+function toQueryString(params: Record<string, unknown>) {
+  return Object.keys(params)
+    .filter(key => params[key] !== undefined && params[key] !== null && params[key] !== '')
+    .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(String(params[key]))}`)
+    .join('&')
+}
+
+function matchesDocQuery(doc: { salespersonId?: string; storeId?: string; date?: string; code?: string; status?: string; settled?: number; returnType?: string }, q: DocQuery) {
+  if (q.salespersonId && !isSameSalespersonId(doc.salespersonId, q.salespersonId)) return false
+  if (q.storeId && doc.storeId !== q.storeId) return false
+  if (q.returnType && doc.returnType !== q.returnType) return false
+  if (q.startDate && (doc.date || '') < q.startDate) return false
+  if (q.endDate && (doc.date || '') > q.endDate) return false
+  if (q.keyword && !(doc.code || '').toLowerCase().includes(q.keyword.toLowerCase())) return false
+  if (q.status) {
+    const ok = q.status.split(',').some(s => {
+      if (s === 'unsettled') return doc.status === 'posted' && !doc.settled
+      if (s === 'settled') return doc.status === 'posted' && !!doc.settled
+      return doc.status === s
+    })
+    if (!ok) return false
+  }
+  return true
+}
+
+function pageOf<T>(list: T[], q: DocQuery): DocPage<T> {
+  const limit = q.limit || 50
+  const start = ((q.page || 1) - 1) * limit
+  return { list: list.slice(start, start + limit), total: list.length }
+}
+
+/**
+ * 按条件分页查询（列表用，不含明细，带 totalQty/totalAmount/lineCount）。
+ * 新后端在服务器上筛选，只传当前页；旧后端退回“拉全部再在手机上筛选”的老办法。
+ */
+async function queryDocs<T extends { lineCount?: number }>(
+  path: string,
+  q: DocQuery,
+  normalize: (doc: T) => T,
+  legacy: () => Promise<T[]>,
+): Promise<DocPage<T>> {
+  if (!USE_MOCK && (await hasServerFeature('sale.list.filter'))) {
+    try {
+      const params = { ...q, page: q.page || 1, limit: q.limit || 50, withLines: false }
+      const res = await request<ApiResult<T[]>>(`${path}?${toQueryString(params)}`, 'GET', undefined, { raw: true })
+      const list = Array.isArray(res?.data) ? res.data : []
+      // 不认识筛选参数的旧后端会返回带明细、没有 lineCount 的全部单据：说明后端已回退，改走旧流程
+      if (!list.some(doc => doc.lineCount === undefined)) {
+        return { list: list.map(normalize), total: Number(res?.count || 0) }
+      }
+      forgetServerFeatures()
+    } catch (error) {
+      if (!isNotFound(error)) throw error
+      forgetServerFeatures()
+    }
+  }
+  return pageOf((await legacy()).filter(doc => matchesDocQuery(doc as any, q)), q)
+}
+
+export function querySales(q: DocQuery): Promise<DocPage<SaleDoc>> {
+  return queryDocs<SaleDoc>('/api/sale/list', q, normalizeSaleDoc, () => getSales(q.storeId))
+}
+
+export function queryReturns(q: DocQuery): Promise<DocPage<ReturnDoc>> {
+  return queryDocs<ReturnDoc>('/api/return/list', q, normalizeReturnDoc, () => getReturns())
+}
+
+export function queryUnsettledSales(q: DocQuery): Promise<DocPage<SaleDoc>> {
+  return queryDocs<SaleDoc>('/api/sale/unsettled', { ...q, status: undefined }, normalizeSaleDoc, () => getUnsettledSales())
+}
+
+/**
+ * 销单（+ 随单退货）一次提交：后端在一个事务里保存、过账、现金收款、过账退单并关联。
+ * sale.id / returnDoc.id 必须由调用方预先生成并在重试时保持不变。
+ */
+export async function submitSaleBundle(sale: SaleDoc, returnDoc: ReturnDoc | null): Promise<{ saleDoc: SaleDoc; returnDoc: ReturnDoc | null; replayed: boolean }> {
+  const saleBody = toPersistedSaleDoc({ ...sale, lines: toPersistedPackLines(sale.lines) })
+  const returnBody = returnDoc ? toPersistedReturnDoc({ ...returnDoc, lines: toPersistedPackLines(returnDoc.lines) }) : null
+  const result = await request<{ sale: SaleDoc; returnDoc: ReturnDoc | null; replayed?: boolean }>('/api/sale/submit', 'POST', {
+    doc: { ...saleBody, lines: undefined },
+    lines: saleBody.lines,
+    returnDoc: returnBody ? { ...returnBody, lines: undefined } : null,
+    returnLines: returnBody ? returnBody.lines : [],
+  }, { timeout: 20000 })
+  saveDocLineOrder('sale', saleBody.id, saleBody.lines || [])
+  if (returnBody) saveDocLineOrder('return', returnBody.id, returnBody.lines || [])
+  return {
+    saleDoc: normalizeSaleDoc(result.sale),
+    returnDoc: result.returnDoc ? normalizeReturnDoc(result.returnDoc) : null,
+    replayed: !!result.replayed,
+  }
+}
+
+/** 退单一次提交（保存+过账，可选关联销单），doc.id 由调用方预先生成，可安全重试 */
+export async function submitReturnDoc(doc: ReturnDoc, lines: ReturnDoc['lines'], linkSaleId?: string): Promise<ReturnDoc> {
+  const body = toPersistedReturnDoc({ ...doc, lines: toPersistedPackLines(lines) })
+  const result = await request<{ returnDoc: ReturnDoc }>('/api/return/submit', 'POST', {
+    doc: { ...body, lines: undefined },
+    lines: body.lines,
+    linkSaleId,
+  }, { timeout: 20000 })
+  saveDocLineOrder('return', body.id, body.lines || [])
+  return normalizeReturnDoc(result.returnDoc)
 }

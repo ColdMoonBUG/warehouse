@@ -23,7 +23,7 @@
       <div class="meta-row" v-if="doc.status === 'posted'">
         <div class="meta-item">结清时间：{{ doc.settledAt || '-' }}</div>
         <div class="meta-item">结清人：{{ doc.settledBy || '-' }}</div>
-        <div class="meta-item">关联退单：{{ doc.returnDocId || '-' }}</div>
+        <div class="meta-item">关联退单：<DocLink type="return" :id="doc.returnDocId" :code="doc.returnDocCode" :status="doc.returnDocStatus" /></div>
       </div>
 
       <el-form :model="doc" label-width="80px" :disabled="doc.status !== 'draft'">
@@ -174,6 +174,7 @@ import { getProducts } from '@/api/product'
 import { getStock, getWarehouses } from '@/api/stock'
 import { getStores } from '@/api/store'
 import { normalizePackLine, productPackLabel } from '@/utils/pack'
+import DocLink from '@/components/DocLink.vue'
 import type { Account, Product, SaleDoc, SaleLine, Store, Warehouse } from '@/types'
 import dayjs from 'dayjs'
 
@@ -215,7 +216,7 @@ const currentWarehouse = computed(() => warehouses.value.find(w => w.id === doc.
 const currentSalespersonName = computed(() => getSalespersonName(salespersonAccounts.value, doc.value.salespersonId || currentWarehouse.value?.salespersonId))
 const canSettle = computed(() => doc.value.status === 'posted' && !doc.value.settled)
 const canUnsettle = computed(() => doc.value.status === 'posted' && !!doc.value.settled && session?.role === 'admin')
-const canCreateReturn = computed(() => doc.value.status === 'posted' && !doc.value.returnDocId)
+const canCreateReturn = computed(() => doc.value.status === 'posted' && (!doc.value.returnDocId || doc.value.returnDocStatus === 'voided'))
 
 function getProduct(productId: string) {
   return products.value.find(p => p.id === productId)
@@ -363,11 +364,19 @@ function goCreateReturn() {
 }
 
 async function voidDoc() {
-  await ElMessageBox.confirm('确认作废？', '提示', { type: 'warning' })
-  await voidSale(doc.value.id)
+  const linkedReturn = doc.value.returnDocId && doc.value.returnDocStatus === 'posted'
+  await ElMessageBox.confirm(
+    linkedReturn
+      ? `作废后库存和提成自动回退。关联退单 ${doc.value.returnDocCode || ''} 也会一并作废。确认作废？`
+      : '作废后库存和提成自动回退，确认作废？',
+    '提示',
+    { type: 'warning' }
+  )
+  const warning = await voidSale(doc.value.id)
   const detail = await getSaleById(doc.value.id)
   if (detail) applyDoc(detail)
-  ElMessage.success('已作废')
+  if (warning) ElMessage.warning(warning)
+  else ElMessage.success('已作废')
 }
 
 async function loadDetail(id: string) {

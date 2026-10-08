@@ -147,7 +147,7 @@
 
             <!-- 关联退单提示 -->
             <div v-if="doc.returnDocId" class="linked-return-tip">
-              🔗 关联退单：{{ doc.returnDocId.slice(-12) }}（已包含在退货抵扣中）
+              🔗 关联退单：<DocLink type="return" :id="doc.returnDocId" :code="doc.returnDocCode || doc.returnDocId.slice(-12)" />（已包含在退货抵扣中）
             </div>
           </div>
         </div>
@@ -214,6 +214,7 @@
 <script setup lang="ts">
 import { onMounted, ref, computed } from 'vue'
 import WageQuery from '@/components/WageQuery.vue'
+import DocLink from '@/components/DocLink.vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { refreshSession } from '@/api/auth'

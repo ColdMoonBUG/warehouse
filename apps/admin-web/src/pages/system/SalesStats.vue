@@ -192,9 +192,10 @@ async function loadData() {
         return (order[a.displayName] ?? 9) - (order[b.displayName] ?? 9)
       })
 
-    // 2. 拉取范围内所有已过账销单（分页，每次200）
+    // 2. 只拉统计范围内的单据，且不带明细（只用到合计金额）
     const { start, end } = getDateRange()
-    const [sales, returns] = await Promise.all([getReportSales(), getReportReturns()])
+    const range = { startDate: start, endDate: end, withLines: false }
+    const [sales, returns] = await Promise.all([getReportSales(range), getReportReturns(range)])
     const eligible = (d: { status: string; date: string }) => d.status === 'posted' && docDay(d) >= start && docDay(d) <= end
     const allDocs = sales.filter(eligible)
     const returnDocs = returns.filter(d => eligible(d) && d.returnType === 'vehicle_return')

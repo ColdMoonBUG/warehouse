@@ -92,7 +92,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getInboundById, getInbounds, saveInbound, postInbound, voidInbound } from '@/api/stock'
+import { getInboundById, saveInbound, postInbound, voidInbound } from '@/api/stock'
 import { getSuppliers } from '@/api/supplier'
 import { getProducts } from '@/api/product'
 import { getPackSize, normalizePackLine, productPackLabel } from '@/utils/pack'
@@ -163,13 +163,16 @@ function calcExpDate(row: InboundLine) {
   if (p && row.mfgDate) row.expDate = dayjs(row.mfgDate).add(p.shelfDays,'day').format('YYYY-MM-DD')
 }
 
+async function reloadDoc() {
+  if (!doc.value.id) return
+  const detail = await getInboundById(doc.value.id)
+  if (detail) applyDoc(detail)
+}
+
 async function saveDraft() {
   const saved = await saveInbound(doc.value, doc.value.lines)
   if (saved) applyDoc(saved as InboundDoc)
-  if (!doc.value.id) {
-    const list = await getInbounds()
-    if (list[0]) applyDoc(list[0])
-  }
+  await reloadDoc()
   ElMessage.success('草稿已保存')
 }
 
@@ -178,23 +181,15 @@ async function post() {
   if (!doc.value.lines.length) { ElMessage.error('请添加明细'); return }
   const saved = await saveInbound(doc.value, doc.value.lines)
   if (saved) applyDoc(saved as InboundDoc)
-  if (!doc.value.id) {
-    const list = await getInbounds()
-    if (list[0]) applyDoc(list[0])
-  }
   await postInbound(doc.value.id)
-  const listAfterPost = await getInbounds()
-  const u = listAfterPost.find(d => d.id === doc.value.id)
-  if (u) applyDoc(u)
+  await reloadDoc()
   ElMessage.success('过账成功')
 }
 
 async function voidDoc() {
   await ElMessageBox.confirm('确认作废？库存将自动反冲。','提示',{type:'warning'})
   await voidInbound(doc.value.id)
-  const list = await getInbounds()
-  const u = list.find(d => d.id === doc.value.id)
-  if (u) applyDoc(u)
+  await reloadDoc()
   ElMessage.success('已作废并反冲库存')
 }
 

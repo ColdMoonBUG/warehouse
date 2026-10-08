@@ -58,7 +58,7 @@ function goBack() { uni.navigateBack() }
 onShow(async () => {
   userStore.init()
   if (!guard()) return
-  list.value = await getTransfers()
+  list.value = await getTransfers({ withRemaining: false })
 })
 </script>
 

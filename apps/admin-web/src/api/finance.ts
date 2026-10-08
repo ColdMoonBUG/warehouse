@@ -41,3 +41,20 @@ export async function getStoreCommissionDetail(storeId: string): Promise<Commiss
   const res = await request.get(`/finance/commission/store-detail/${storeId}`)
   return res.data || []
 }
+
+export interface WageResult {
+  /** 按单据日期汇总，单位：元 */
+  rows: { date: string; sale: number; returns: number; total: number }[]
+  /** 区间内合计，单位：分 */
+  total: number
+  /** 原单已不存在、无法确定日期的流水 */
+  undated: CommissionLedger[]
+  /** undated 合计，单位：分 */
+  undatedTotal: number
+}
+
+/** 后端按单据日期统计某业务员区间内的提成（含已结清、未结清、作废冲销）。 */
+export async function getWage(salespersonId: string, startDate: string, endDate: string): Promise<WageResult> {
+  const res = await request.get('/finance/commission/wage', { params: { salespersonId, startDate, endDate } })
+  return res.data
+}

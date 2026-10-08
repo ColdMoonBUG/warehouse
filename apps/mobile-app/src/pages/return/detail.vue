@@ -11,6 +11,7 @@
         <view v-if="doc.returnType !== 'warehouse_return'" class="row"><text class="label">超市</text><text class="value">{{ storeName }}</text></view>
         <view class="row"><text class="label">业务员</text><text class="value">{{ salespersonName }}</text></view>
         <view class="row"><text class="label">类型</text><text class="value">{{ typeText }}</text></view>
+        <view v-if="doc.saleDocCode" class="row"><text class="label">关联销单</text><text class="value">{{ doc.saleDocCode }}{{ doc.saleDocStatus === 'voided' ? '（已作废）' : '' }}</text></view>
       </view>
 
       <view class="card">
@@ -122,6 +123,8 @@ async function voidAndRebuild() {
           toWarehouseId: source.toWarehouseId || '',
           payType: source.payType || 'card',
           sourceCode: source.code,
+          // 原退单关联了销单时，新退单提交后重新关联到该销单（新版后端支持）
+          saleDocId: source.saleDocStatus === 'posted' ? source.saleDocId : '',
           lines: source.lines.map(line => ({
             productId: line.productId,
             qty: line.qty,

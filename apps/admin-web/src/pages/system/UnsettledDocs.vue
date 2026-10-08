@@ -8,6 +8,13 @@
         </div>
       </template>
 
+      <div class="filter-row">
+        <el-select v-model="filterEmp" clearable placeholder="业务员" style="width:140px" @change="reload">
+          <el-option v-for="a in accounts" :key="a.id" :label="a.displayName" :value="a.id" />
+        </el-select>
+        <el-date-picker v-model="filterDate" type="daterange" value-format="YYYY-MM-DD" start-placeholder="开始" end-placeholder="结束" style="width:240px" @change="reload" />
+        <span class="summary">共 {{ total }} 张未收款</span>
+      </div>
       <el-table v-loading="loading" :data="docs" border stripe>
         <el-table-column prop="code" label="单号" min-width="180" />
         <el-table-column label="超市" min-width="140">
@@ -29,8 +36,10 @@
             <el-tag v-else size="small">销售</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="关联退单" width="120">
-          <template #default="{ row }">{{ row.returnDocId || '-' }}</template>
+        <el-table-column label="关联退单" min-width="170">
+          <template #default="{ row }">
+            <DocLink type="return" :id="row.returnDocId" :code="row.returnDocCode" :status="row.returnDocStatus" />
+          </template>
         </el-table-column>
         <el-table-column label="操作" width="220">
           <template #default="{ row }">
@@ -39,6 +48,17 @@
           </template>
         </el-table-column>
       </el-table>
+      <div class="pager">
+        <el-pagination
+          v-model:current-page="page"
+          v-model:page-size="pageSize"
+          :total="total"
+          :page-sizes="[50, 100, 200]"
+          layout="total, sizes, prev, pager, next"
+          @current-change="loadData"
+          @size-change="reload"
+        />
+      </div>
     </el-card>
   </div>
 </template>
@@ -49,12 +69,24 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { getUnsettledSales, settleSale } from '@/api/sale'
 import { getSalespersonAccounts } from '@/api/auth'
 import { getStores } from '@/api/store'
+import DocLink from '@/components/DocLink.vue'
 import type { Account, SaleDoc, Store } from '@/types'
 
 const loading = ref(false)
 const docs = ref<SaleDoc[]>([])
 const stores = ref<Store[]>([])
 const accounts = ref<Account[]>([])
+// 以前只显示最近 50 张未收款单；现在可翻页、按业务员和日期筛选
+const total = ref(0)
+const page = ref(1)
+const pageSize = ref(50)
+const filterEmp = ref('')
+const filterDate = ref<[string, string] | null>(null)
+
+function reload() {
+  page.value = 1
+  return loadData()
+}
 
 function storeName(id: string) {
   return stores.value.find(s => s.id === id)?.name || id
@@ -74,11 +106,17 @@ async function loadData() {
   loading.value = true
   try {
     const [saleResult, storeList, accountList] = await Promise.all([
-      getUnsettledSales(),
+      getUnsettledSales(page.value, pageSize.value, {
+        salespersonId: filterEmp.value,
+        startDate: filterDate.value?.[0],
+        endDate: filterDate.value?.[1],
+        withLines: false,
+      }),
       getStores(),
       getSalespersonAccounts(),
     ])
     docs.value = saleResult.list
+    total.value = saleResult.total
     stores.value = storeList
     accounts.value = accountList
   } catch (e: any) {
@@ -108,4 +146,7 @@ onMounted(loadData)
   justify-content: space-between;
   align-items: center;
 }
+.filter-row { display:flex; gap:12px; margin-bottom:12px; flex-wrap:wrap; align-items:center; }
+.summary { color:#64748b; font-size:13px; }
+.pager { display:flex; justify-content:flex-end; margin-top:12px; }
 </style>

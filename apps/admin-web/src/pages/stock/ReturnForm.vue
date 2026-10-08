@@ -15,6 +15,12 @@
           </div>
         </div>
       </template>
+      <div class="meta-row" v-if="linkedSale.id">
+        <div class="meta-item">
+          {{ doc.saleDocId ? '关联销单' : '将关联到销单' }}：
+          <DocLink type="sale" :id="linkedSale.id" :code="linkedSale.code" :status="linkedSale.status" />
+        </div>
+      </div>
       <el-form :model="doc" label-width="90px" :disabled="doc.status!=='draft'">
         <el-row :gutter="16">
           <el-col :span="isMobile?24:8">
@@ -163,11 +169,13 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getReturnById, saveReturn, postReturn, voidReturn } from '@/api/return'
+import { getReturnById, saveReturn, submitReturn, voidReturn } from '@/api/return'
 import { getSalespersonAccounts, getSalespersonName, getSession } from '@/api/auth'
-import { getSaleById, linkSaleReturn } from '@/api/sale'
+import { getSaleById } from '@/api/sale'
+import DocLink from '@/components/DocLink.vue'
+import { newDocId } from '@/utils/id'
 import { getStores } from '@/api/store'
 import { getProducts } from '@/api/product'
 import { getWarehouses } from '@/api/stock'
@@ -176,7 +184,13 @@ import type { ReturnDoc, ReturnLine, Account, Store, Product, Warehouse } from '
 import dayjs from 'dayjs'
 
 const route = useRoute()
+const router = useRouter()
 const session = getSession()
+/** 从销单“新建关联退货”进入时的来源销单，或已关联的销单 */
+const sourceSale = ref<{ id: string; code?: string; status?: string } | null>(null)
+const linkedSale = computed(() => doc.value.saleDocId
+  ? { id: doc.value.saleDocId, code: doc.value.saleDocCode, status: doc.value.saleDocStatus }
+  : (sourceSale.value || { id: '' }))
 const salespersonAccounts = ref<Account[]>([])
 const stores = ref<Store[]>([])
 const products = ref<Product[]>([])
@@ -263,10 +277,17 @@ function syncStoreFromSalesperson() {
   doc.value.storeId = availableStores.value[0]?.id || ''
 }
 
+/** 新单首次保存后把地址换成单据 id（保留 saleId），刷新或返回再进来都不会丢失关联来源 */
+function rememberDocInRoute(id: string) {
+  if (route.params.id === id) return
+  router.replace({ path: `/stock/return/${id}`, query: route.query })
+}
+
 async function saveDraft() {
   const saved = await saveReturn(doc.value, doc.value.lines)
   if (saved) applyDoc(saved as ReturnDoc)
   ElMessage.success('草稿已保存')
+  rememberDocInRoute(doc.value.id)
 }
 
 async function post() {
@@ -275,16 +296,14 @@ async function post() {
   if (!doc.value.lines.length) { ElMessage.error('请添加明细'); return }
   if (!doc.value.fromWarehouseId) { ElMessage.error('请选择来源车库'); return }
   if (doc.value.returnType === 'warehouse_return' && !doc.value.toWarehouseId) { ElMessage.error('请选择目标仓库'); return }
-  const saved = await saveReturn(doc.value, doc.value.lines)
-  if (saved) applyDoc(saved as ReturnDoc)
-  await postReturn(doc.value.id)
-  const detail = await getReturnById(doc.value.id)
-  if (detail) applyDoc(detail)
+  // 保存、过账、关联销单在后端一个事务里完成；失败时什么都不会留下，重试也不会重复过账
+  if (!doc.value.id) doc.value.id = newDocId()
   const saleId = route.query.saleId as string | undefined
-  if (saleId) {
-    await linkSaleReturn(saleId, doc.value.id)
-  }
+  const posted = await submitReturn(doc.value, doc.value.lines, saleId)
+  const detail = await getReturnById(posted.id)
+  if (detail) applyDoc(detail)
   ElMessage.success(saleId ? '过账成功，已关联销单' : '过账成功')
+  rememberDocInRoute(posted.id)
 }
 
 function amountSum() {
@@ -295,7 +314,11 @@ function commissionSum() {
 }
 
 async function voidDoc() {
-  await ElMessageBox.confirm('确认作废？','提示',{type:'warning'})
+  await ElMessageBox.confirm(
+    doc.value.saleDocId
+      ? `作废后库存和提成自动回退；关联销单 ${doc.value.saleDocCode || ''} 不受影响，需要时可在销单里重新“新建关联退货”。确认作废？`
+      : '作废后库存和提成自动回退，确认作废？',
+    '提示', { type: 'warning' })
   await voidReturn(doc.value.id)
   const detail = await getReturnById(doc.value.id)
   if (detail) applyDoc(detail)
@@ -303,10 +326,16 @@ async function voidDoc() {
 }
 
 async function loadDetail(id: string) {
+  sourceSale.value = null
   if (id && id !== 'new') {
     const detail = await getReturnById(id)
     if (detail) {
       applyDoc(detail)
+      const saleId = route.query.saleId as string | undefined
+      if (saleId && !detail.saleDocId) {
+        const sale = await getSaleById(saleId)
+        if (sale) sourceSale.value = { id: sale.id, code: sale.code, status: sale.status }
+      }
       return
     }
   }
@@ -328,6 +357,7 @@ async function loadDetail(id: string) {
       doc.value.salespersonId = sale.salespersonId
       doc.value.storeId = sale.storeId
       doc.value.fromWarehouseId = sale.warehouseId || vehicleWarehouses.value[0]?.id || ''
+      sourceSale.value = { id: sale.id, code: sale.code, status: sale.status }
     }
   }
 
@@ -377,6 +407,8 @@ onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 }
 .header-left { display:flex; align-items:center; gap:12px; }
 .header-actions { display:flex; gap:8px; }
+.meta-row { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:12px; color:#64748b; font-size:13px; }
+.meta-item { padding:8px 12px; background:var(--el-fill-color-light); border-radius:6px; }
 .section-row { margin:12px 0; display:flex; justify-content:space-between; align-items:center; }
 .total-row { text-align:right; padding:12px 0; font-weight:600; font-size:15px; display:flex; justify-content:flex-end; gap:16px; flex-wrap:wrap; }
 .total-row .commission { color:#fca5a5; }
