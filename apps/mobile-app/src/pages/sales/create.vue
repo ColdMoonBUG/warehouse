@@ -951,13 +951,8 @@ async function doSubmit(docType: 'sale' | 'gift' = 'sale'): Promise<{ saleDoc: S
     return null
   }
 
-  let features: Set<string>
-  try {
-    features = await getServerFeatures()
-  } catch (e: any) {
-    uni.showToast({ title: e.message || '网络异常，请重试', icon: 'none' })
-    return null
-  }
+  // 能力探测失败时返回的是空集合，这里直接按旧流程分步提交，不再拦下整次开单
+  const features = await getServerFeatures()
   if (features.has('sale.submit')) {
     return submitAtomically(docType, lines)
   }
@@ -1258,8 +1253,8 @@ async function autoSaveDraftToServer() {
   if (_submitLock || _pageSubmitted) return
   // 新版后端支持 App 预生成 id：草稿和最终提交的是同一张单，不会留下多余的草稿
   if (!autoDraftId.value) {
-    const features = await getServerFeatures().catch(() => null)
-    if (features?.has('doc.save.clientId')) autoDraftId.value = newDocId()
+    const features = await getServerFeatures()
+    if (features.has('doc.save.clientId')) autoDraftId.value = newDocId()
   }
   const lines: SaleLine[] = selectedProducts.value
     .map(p => ({

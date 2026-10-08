@@ -1315,9 +1315,12 @@ export function getServerFeatures(): Promise<Set<string>> {
     featuresPromise = request<{ features?: string[] }>('/api/meta/info', 'GET', undefined, { timeout: 8000 })
       .then(info => new Set(Array.isArray(info?.features) ? info.features : []))
       .catch((error: any) => {
+        // 404 说明后端确定没有这个接口（旧版），本次会话固定走旧流程，不再重复探测
         if (/HTTP 404/.test(error?.message || '')) return new Set<string>()
+        // 超时、断网等不确定的失败：这一次先按旧后端处理，但不缓存结果，
+        // 下次调用重新探测，这样网络恢复或后端刚上线时能自动用上新流程
         featuresPromise = null
-        throw error
+        return new Set<string>()
       })
   }
   return featuresPromise
@@ -1330,10 +1333,6 @@ export async function hasServerFeature(name: ServerFeature): Promise<boolean> {
 /** 后端在 App 运行期间被回退成旧版时，清掉能力缓存，之后的调用自动走旧流程 */
 function forgetServerFeatures() {
   featuresPromise = null
-}
-
-function isNotFound(error: any) {
-  return /HTTP 404/.test(error?.message || '')
 }
 
 /** 32 位十六进制单据 id，客户端预先生成，网络超时后用同一个 id 重试不会重复开单 */
@@ -1413,8 +1412,9 @@ async function queryDocs<T extends { lineCount?: number }>(
         return { list: list.map(normalize), total: Number(res?.count || 0) }
       }
       forgetServerFeatures()
-    } catch (error) {
-      if (!isNotFound(error)) throw error
+    } catch {
+      // 新接口这条路失败（404、超时、网络问题都一样）：退回旧流程，
+      // 旧流程再失败才把错误抛给页面，页面提示的就是真正取不到数据
       forgetServerFeatures()
     }
   }
